@@ -1,37 +1,24 @@
-# config.yaml
-# 配置文件：Polymarket-Deribit 套利参数示例
-# 支持多市场，可由 main.py 循环读取
-
-markets:
-  - polymarket:
-      market_id: "btc-above-114k"
-      condition_id: "0x91e677d31dcf1459255890e496cbb5309e989ba9ac911e389e6151afc3b6df3c"
-      yes_price: 0.95        # Polymarket YES 价格 # todo: 修改为实际价格
-      comment: "BTC 是否高于 108,000"
+events:
+  - name: "BTC > 108k"
+    polymarket:
+      event_title: "Bitcoin above ___ on October 24?"
+      market_title: "108,000"
 
     deribit:
-      spot_price: 111024.39  # 当前 BTC 现货价格 (USD) # todo: 修改为实际价格
       k1_strike: 107000
       k2_strike: 109000
-      k1_option_price: 0.0389   # BTC 计价 # todo: 修改为实际价格
-      k2_option_price: 0.0208   # BTC 计价 # todo: 修改为实际价格
 
-    investment: 5000          # 投入本金 USD
-    slippage: 0.0             # 无滑点
+    investment: 5000       # USD
+    slippage: 0.0          # 可选：0 = 不考虑滑点
 
-
-  - polymarket:
-      market_id: "btc-above-114k"
-      condition_id: "0xac76ad792d5ea352b5103a630bb9beb3373dff81a8af816e42b6cb884b33364d"
-      yes_price: 0.79
-      comment: "BTC 是否高于 110,000"
+  - name: "BTC > 110k"
+    polymarket:
+      event_title: "Bitcoin above ___ on October 24?"
+      market_title: "110,000"
 
     deribit:
-      spot_price: 111024.39
       k1_strike: 109000
       k2_strike: 111000
-      k1_option_price: 0.0208
-      k2_option_price: 0.0045
 
     investment: 1000
-    slippage: 0.0015          # 0.15% 滑点
+    slippage: 0.0015       # 0.15% 滑点
