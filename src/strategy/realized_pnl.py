@@ -17,6 +17,8 @@ from .expected_value import (
 class RealizedInputs:
     poly_price_at_t: float  # 某节点Poly YES价格（用于平仓）
     deribit_settlement_px: Optional[float] = None  # 结算时标的价（如已结算）
+    outcome_yes: Optional[bool] = None  # 事件结果（如已揭晓）
+    long: bool = True  # 策略方向 （True=多Deribit，False=空Deribit）
     open_cost_usd: float = 0.0
     carry_cost_to_t_usd: float = 0.0
     close_cost_at_t_usd: float = 0.0
@@ -37,20 +39,17 @@ def realized_unrealized_pnl_strategy_A_to_E(
 
     # Poly 已实现部分（用节点价格平仓近似）
     # 做多 YES 的近似已实现 P&L：
-    poly_realized = poly_pnl_yes(realized_in.poly_price_at_t, realized_in.poly_price_at_t > 0.5, inv)
-
-    deribit_realized = 0.0
-    deribit_unrealized = 0.0
-    # 若C/D/E节点，Deribit 通常已结算，可在此填入行权价值（略）
+    if realized_in.outcome_yes is not None:
+        poly_realized = poly_pnl_yes(ev_in.poly_yes_price, realized_in.outcome_yes, inv)
+    else:
+        poly_realized = inv * (realized_in.poly_price_at_t - ev_in.poly_yes_price)
+    
+    # Deribit部分
     if realized_in.deribit_settlement_px is not None:
-        # 使用到期垂直价差价值（合约 × 单位行权价值）作为已实现
-        # 这里无法从 position_info 唯一区分多空，做一个通用处理：
-        contracts_short = position_info.get("contracts_short", 0.0)
-        contracts_long = position_info.get("contracts_long", 0.0)
-        payoff = max(realized_in.deribit_settlement_px - ev_in.K1, 0.0) - max(
-            realized_in.deribit_settlement_px - ev_in.K2, 0.0
-        )
-        deribit_realized = payoff * (contracts_long - contracts_short)
+        payoff = max(realized_in.deribit_settlement_px - ev_in.K1, 0.0) - max(realized_in.deribit_settlement_px - ev_in.K2, 0.0)
+        deribit_realized = payoff * position_info.get("contracts_long" if realized_in.long else "contracts_short", 0.0)
+        if not realized_in.long:
+            deribit_realized *= -1
 
     realized_costs = realized_in.open_cost_usd + realized_in.carry_cost_to_t_usd + realized_in.close_cost_at_t_usd
     realized_pnl = poly_realized + deribit_realized - realized_costs
@@ -59,7 +58,14 @@ def realized_unrealized_pnl_strategy_A_to_E(
     if realized_in.deribit_settlement_px is None:
         # 用当前条件重新估计剩余Deribit期望
         deribit_unrealized = deribit_vertical_expected_payoff(
-            ev_in.S, ev_in.K1, ev_in.K2, max(ev_in.T, 1e-9), ev_in.sigma, ev_in.r, long=position_info.get("contracts_long", 0.0) > 0
+            ev_in.S, 
+            ev_in.K1, 
+            ev_in.K2, 
+            ev_in.K_poly,
+            max(ev_in.T, 1e-9), 
+            ev_in.sigma, 
+            ev_in.r, 
+            long=position_info.get("contracts_long", 0.0) > 0
         )
 
     # 预计未来成本（示意：尚未发生的 carry + close）此处由上层传入或另算

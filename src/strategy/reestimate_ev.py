@@ -11,6 +11,7 @@ def reestimate_ev(
     S: float,
     K1: float,
     K2: float,
+    k_poly: float,
     T_remaining: float,
     sigma: float,
     r: float,
@@ -21,5 +22,14 @@ def reestimate_ev(
     """重估EV_t = 已实现盈亏_t + E[剩余头寸_P&L] - 预计未来成本_t
     这里的 E[剩余头寸_P&L] 用期望到期价值近似。
     """
-    exp_val = deribit_vertical_expected_payoff(S, K1, K2, max(T_remaining, 1e-9), sigma, r, long=long)
+    exp_val = deribit_vertical_expected_payoff(
+        S, 
+        K1, 
+        K2,
+        k_poly,
+        max(T_remaining, 1e-9), 
+        sigma, 
+        r, 
+        long=long
+    )
     return realized_pnl_to_t + exp_val * contracts - expected_future_cost

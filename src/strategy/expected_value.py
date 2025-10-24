@@ -15,7 +15,7 @@ from .position_calculator import (
     strategy1_position_contracts,
     strategy2_position_contracts,
 )
-from .robability_engine import interval_probabilities
+from .probability_engine import interval_probabilities
 
 
 # ================================
@@ -50,15 +50,16 @@ class EVInputs:
     slippage_rate_close: float = 0.001  # 缺省千分之一
 
 
-def poly_pnl_yes(no_yes_price: float, outcome_yes: bool, inv_base_usd: float) -> float:
-    """Polymarket P&L(以USD计)。假设投入 inv_base_usd 用于买入 YES：
-    - 若事件为Yes,收益 ≈ inv_base_usd * (1/price - 1)
-    - 若事件为No,损失 ≈ -inv_base_usd
-    注：这里按线性近似（单位头寸化），可按需要替换为更精细的资金曲线。
+def poly_pnl_yes(yes_price: float, outcome_yes: bool, inv_base_usd: float, slippage_rate: float = 0.0) -> float:
+    """Polymarket YES 头寸的近似 P&L(USD).
+
+    线性近似假设：价格恒定，不考虑 AMM 滑点。
+    若需要，可传入 slippage_rate (0-1)，模拟流动性影响。
     """
-    price = max(1e-9, min(1.0, no_yes_price))
+    price = max(1e-9, min(1.0, yes_price))
+    effective_price = price * (1 + slippage_rate if outcome_yes else 1 - slippage_rate)
     if outcome_yes:
-        return inv_base_usd * (1.0 / price - 1.0)
+        return inv_base_usd * (1.0 / effective_price - 1.0)
     else:
         return -inv_base_usd
 
@@ -76,14 +77,19 @@ def _poly_pnl_no(price_no: float, outcome_yes: bool, inv_base_usd: float) -> flo
 
 
 def deribit_vertical_expected_payoff(
-    S: float, K1: float, K2: float, T: float, sigma: float, r: float, long: bool
+    S: float, 
+    K1: float, 
+    K2: float, 
+    K_poly: float, 
+    T: float, 
+    sigma: float, 
+    r: float, 
+    long: bool
 ) -> float:
     """用分段中点近似计算到期时垂直价差的期望行权价值(USD,未扣期权价)。
     注意：严格解析解较复杂，这里采用文档建议的区间概率 x 中点行权价值近似。
     """
     # 区间与中点：(-inf, K1), (K1, K_poly≈K1与K2的中点替代), (K_poly, K2), (K2, inf)
-    # 若未提供K_poly，在调用侧可设为 (K1+K2)/2
-    K_poly = 0.5 * (K1 + K2)
     probs = interval_probabilities(S, K1, K_poly, K2, T, sigma, r)
 
     # 选择代表性价格点（中点/代表值）
@@ -122,7 +128,14 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
 
     # 预期行权盈亏（使用垂直价差到期价值的期望 × 合约）
     exp_exercise = deribit_vertical_expected_payoff(
-        ev_in.S, ev_in.K1, ev_in.K2, ev_in.T, ev_in.sigma, ev_in.r, long=False
+        ev_in.S, 
+        ev_in.K1, 
+        ev_in.K2, 
+        ev_in.K_poly,
+        ev_in.T, 
+        ev_in.sigma, 
+        ev_in.r, 
+        long=False
     ) * contracts_short
 
     # Deribit 预期 P&L
@@ -175,7 +188,14 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
     contracts_long, cost_deribit_usd = strategy2_position_contracts(pos_in, poly_no_entry)
 
     exp_exercise = deribit_vertical_expected_payoff(
-        ev_in.S, ev_in.K1, ev_in.K2, ev_in.T, ev_in.sigma, ev_in.r, long=True
+        ev_in.S, 
+        ev_in.K1, 
+        ev_in.K2, 
+        ev_in.K_poly,
+        ev_in.T, 
+        ev_in.sigma, 
+        ev_in.r, 
+        long=True
     ) * contracts_long
 
     # Deribit 预期 P&L（支付成本，获得到期价值的期望）
