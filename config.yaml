@@ -1,0 +1,13 @@
+# config.yaml
+polymarket:
+  market_id: "btc-above-114k"
+  yes_price: 0.12
+
+deribit:
+  spot_price: 60000
+  k1_strike: 113000
+  k2_strike: 115000
+  k1_option_price: 0.015  # BTC
+  k2_option_price: 0.008  # BTC
+
+investment: 5000

@@ -1,0 +1,4 @@
+__pycache__/
+docs/todo.md
+.venv/
+.env
