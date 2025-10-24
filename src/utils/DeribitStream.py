@@ -71,15 +71,17 @@ class DeribitStream:
         }))
 
     def start(self):
-        asyncio.get_event_loop().run_until_complete(self._connect())
+        loop = asyncio.new_event_loop()     # 创建新的事件循环
+        asyncio.set_event_loop(loop)        # 绑定到当前线程
+        loop.run_until_complete(self._connect())   # 运行推流
 
     @staticmethod
     def find_option_instrument(strike: float, call: bool = True):
         """
-        根据行权价找到最近的可行权价期权，并选取最近到期（T最小）的 Call/Put。
+        根据行权价找到最近的可行权价期权, 并选取最近到期(T最小)的 Call/Put。
         """
         url = "https://www.deribit.com/api/v2/public/get_instruments"
-        params = {"currency": "BTC", "kind": "option", "expired": False}
+        params = {"currency": "BTC", "kind": "option", "expired": "false"}
         r = requests.get(url, params=params).json()
         instruments = r["result"]
 
