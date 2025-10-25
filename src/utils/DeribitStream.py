@@ -1,6 +1,5 @@
 import asyncio
 import json
-import time
 
 import requests
 import websockets
@@ -13,16 +12,18 @@ class DeribitStream:
         self.on_index_price = on_index_price
         self.on_option_quote = on_option_quote
         self.connected = False
+        self.instruments_to_sub = set()
 
     async def _connect(self):
         while True:
             try:
                 print("🔗 Connecting to Deribit WebSocket...")
                 async with websockets.connect(DERIBIT_WS, ping_interval=20) as ws:
+                    self.ws = ws   # ✅ 保存 ws 实例
                     self.connected = True
                     print("✅ Connected to Deribit WebSocket")
 
-                    # 订阅 BTC 指数行情
+                    # ✅ 订阅 BTC 指数价格
                     await ws.send(json.dumps({
                         "jsonrpc": "2.0",
                         "id": 1,
@@ -32,32 +33,49 @@ class DeribitStream:
                         }
                     }))
 
-                    # 可根据 K1/K2 自动加订阅
-                    # 例如 BTC-107000 到期 Call:
-                    # await self.subscribe_option(ws, "BTC-107000-20240202-C")
+                    # ✅ 等 main 传入合约后再订阅（延迟发）
+                    await asyncio.sleep(1)
 
+                    # ⭐ 在这里自动订阅 K1/K2 期权盘口
+                    if hasattr(self, "instruments_to_sub"):
+                        for inst in self.instruments_to_sub:
+                            print(f"📡 Subscribing order book: {inst}")
+                            await ws.send(json.dumps({
+                                "jsonrpc": "2.0",
+                                "id": 2,
+                                "method": "public/subscribe",
+                                "params": {
+                                    "channels": [f"book.{inst}.none.1.100ms"]
+                                }
+                            }))
+
+                    # === 保持实时接收 ===
                     while True:
                         msg = await ws.recv()
                         data = json.loads(msg)
 
-                        # 处理指数推送
+                        # 指数回调
                         if "params" in data and "deribit_price_index" in data["params"]["channel"]:
                             index_price = data["params"]["data"]["price"]
                             if self.on_index_price:
                                 self.on_index_price(index_price)
 
-                        # 处理期权盘口
-                        if "params" in data and "book" in data["params"]["channel"]:
-                            inst = data["params"]["data"]["instrument_name"]
-                            bid = data["params"]["data"]["best_bid_price"]
-                            ask = data["params"]["data"]["best_ask_price"]
+                        # 期权盘口回调
+                        if "params" in data and "book." in data["params"]["channel"]:
+                            book = data["params"]["data"]
+                            bids = book.get("bids", [])
+                            asks = book.get("asks", [])
+                            bid = bids[0][0] if bids else None
+                            ask = asks[0][0] if asks else None
+                            mid = (bid + ask) / 2 if bid and ask else None
+
                             if self.on_option_quote:
-                                self.on_option_quote(inst, bid, ask)
+                                self.on_option_quote(inst, bid, ask, mid)
 
             except Exception as e:
-                print("⚠️ WebSocket Error, reconnecting in 3s...", e)
+                print("⚠️ WebSocket Error, reconnecting in 3s:", e)
                 self.connected = False
-                time.sleep(3)
+                await asyncio.sleep(3)
 
     async def subscribe_option(self, ws, instrument_name: str):
         """订阅期权盘口（bid/ask价格实时更新）"""
