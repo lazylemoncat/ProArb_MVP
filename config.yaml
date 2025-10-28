@@ -1,24 +1,59 @@
+# === 全局参数 ===
+thresholds:
+  ev_spread_min: 0.05      # 套利触发阈值（例如 5%）
+  check_interval_sec: 120  # 刷新间隔（秒）
+
 events:
   - name: "BTC > 108k"
     polymarket:
-      event_title: "Bitcoin above ___ on October 24?"
+      event_title: "Bitcoin above ___ on October 29?"
       market_title: "108,000"
 
     deribit:
       k1_strike: 107000
       k2_strike: 109000
 
-    investment: 5000       # USD
-    slippage: 0.0          # 可选：0 = 不考虑滑点
-
   - name: "BTC > 110k"
     polymarket:
-      event_title: "Bitcoin above ___ on October 24?"
+      event_title: "Bitcoin above ___ on October 29?"
       market_title: "110,000"
 
     deribit:
       k1_strike: 109000
       k2_strike: 111000
 
-    investment: 1000
-    slippage: 0.0015       # 0.15% 滑点
+  - name: "BTC > 112k"
+    polymarket:
+      event_title: "Bitcoin above ___ on October 29?"
+      market_title: "112,000"
+
+    deribit:
+      k1_strike: 111000
+      k2_strike: 113000
+
+  - name: "BTC > 114k"
+    polymarket:
+      event_title: "Bitcoin above ___ on October 29?"
+      market_title: "114,000"
+
+    deribit:
+      k1_strike: 113000
+      k2_strike: 115000
+
+  - name: "BTC > 116k"
+    polymarket:
+      event_title: "Bitcoin above ___ on October 29?"
+      market_title: "116,000"
+
+    deribit:
+      k1_strike: 115000
+      k2_strike: 117000
+      
+  - name: "BTC > 118k"
+    polymarket:
+      event_title: "Bitcoin above ___ on October 29?"
+      market_title: "118,000"
+
+    deribit:
+      k1_strike: 117000
+      k2_strike: 119000

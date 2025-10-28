@@ -28,6 +28,22 @@ Polymarket 与 Deribit 存在期权套利机会，可以获得净正收益。
     - Sharpe > 1.5
     - 最大回撤 < 30%
 
+---
+【新增】
+
+**Polymarket 滑点计算公式**：Slippage = (Ave Price - Current Price)/Current Price * 100%
+
+**Deribit 期权手续费计算通用式**: Fee = MIN( BaseFee , 12.5% * OptionPrice ) × Amount
+- BaseFee：0.0003 BTC（BTC期权）或 0.0003 ETH（ETH期权）每份合约
+- OptionPrice：每份期权的成交价格（以标的币种计价）
+- Amount：成交合约数
+- Fee = MIN(0.0003 * IndexPrice, 0.125 * OptionPrice) × Contracts（对于 USDC 结算的 BTC / ETH 期权）
+- IndexPrice：BTC 指数价
+- OptionPrice ：成交价格
+- Amount ：成交合约数
+
+分别计算每笔手续费后免除低的那笔手续费
+---
 🔗 **相关链接**：
 
 - 数据流程图:<img width="1148" height="1504" alt="image" src="https://github.com/user-attachments/assets/e325b0d2-0199-43c0-b7d8-f1132662f444" />
@@ -80,3 +96,8 @@ Polymarket 与 Deribit 存在期权套利机会，可以获得净正收益。
 - **技术成功**：系统稳定运行，数据准确
 - **业务成功**：至少2个策略净EV > $100
 - **产品成功**：用户能理解并执行推荐策略
+
+[代码仓库](https://github.com/lazylemoncat/ProArb_MVP)
+
+
+

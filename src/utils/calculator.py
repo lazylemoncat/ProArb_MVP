@@ -24,6 +24,8 @@ def calculate_pnl(poly_price, deribit_prob, investment, costs):
     return pnl
 
 
-def estimate_costs(investment, tx_fee_rate=0.001, base_fee=5):
-    """基础成本估算: 交易费 + 固定费用"""
-    return investment * tx_fee_rate + base_fee
+def estimate_costs(investment: float, slippage: float = 0.01, fee_rate: float = 0.001) -> float:
+    """估算交易成本，包括滑点与手续费"""
+    slippage_cost = investment * slippage
+    fee_cost = investment * fee_rate
+    return slippage_cost + fee_cost
