@@ -74,7 +74,7 @@ def main(config_path="config.yaml"):
                 market_data = PolymarketAPI.get_market_by_id(market_id)
                 outcome_prices = market_data.get("outcomePrices")
 
-                yes_price = no_price = None
+                yes_price = no_price = 0
                 if outcome_prices:
                     try:
                         prices = eval(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
@@ -91,7 +91,7 @@ def main(config_path="config.yaml"):
                     console.print(f"⏳ [yellow]{title} 期权盘口暂时无报价，跳过[/yellow]")
                     continue
 
-                # ✅ 批量拉取 Deribit 数据后筛选 K1/K2
+                # === 批量拉取 Deribit 数据后筛选 K1/K2
                 deribit_list = get_deribit_option_data(currency="BTC")
                 k1_name = instruments_map[title]["k1"]
                 k2_name = instruments_map[title]["k2"]
@@ -99,13 +99,17 @@ def main(config_path="config.yaml"):
                 k1_info = next((d for d in deribit_list if d.get("instrument_name") == k1_name), {})
                 k2_info = next((d for d in deribit_list if d.get("instrument_name") == k2_name), {})
 
-                k1_iv = float(k1_info.get("mark_iv") or 0.0)
-                k2_iv = float(k2_info.get("mark_iv") or 0.0)
-                k1_fee = float(k1_info.get("fee") or 0.0)
-                k2_fee = float(k2_info.get("fee") or 0.0)
+                k1_iv  = float(k1_info.get("mark_iv") or 0.0)
+                k2_iv  = float(k2_info.get("mark_iv") or 0.0)
+                k1_fee = float(k1_info.get("fee")     or 0.0)
+                k2_fee = float(k2_info.get("fee")     or 0.0)
 
-                volatility = (k1_iv + k2_iv) / 2 if (k1_iv and k2_iv) else (k1_iv or k2_iv or 0.6)
-                deribit_fee = max(k1_fee, k2_fee)
+                # ✅ 统一定义 mark_iv（用于展示/记录），并用于后续 volatility
+                _iv_pool = [v for v in (k1_iv, k2_iv) if v > 0]
+                mark_iv = sum(_iv_pool) / len(_iv_pool) if _iv_pool else 0.6   # fallback
+
+                volatility = mark_iv                  # ✅ 用 mark_iv 作为波动率
+                deribit_fee = max(k1_fee, k2_fee)     # 保守取较大手续费
 
                 # ✅ 概率计算
                 k1_strike = data['deribit']['k1_strike']
@@ -113,17 +117,8 @@ def main(config_path="config.yaml"):
                 time_to_expiry = 8 / 365
                 rate = 0.05
                 deribit_prob = bs_probability(spot, (k1_strike + k2_strike) / 2, time_to_expiry, volatility, rate)
-
-                # ✅ Polymarket 滑点
                 tokens = PolymarketAPI.get_clob_token_ids_by_market(market_id)
                 yes_token_id = tokens["yes_token_id"]
-
-                try:
-                    result = get_polymarket_slippage_sync(yes_token_id, 1000)
-                    slippage = result.get("slippage_pct", 0) / 100
-                except Exception as e:
-                    console.print(f"⚠️ [yellow]获取 Polymarket 滑点失败: {e}[/yellow]")
-                    slippage = 0.01
 
                 timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -140,12 +135,19 @@ def main(config_path="config.yaml"):
                 table.add_row("Fee (K1/K2)", f"{k1_fee:.6f} / {k2_fee:.6f}")
                 table.add_row("Vol Used", f"{volatility:.3f}")
                 table.add_row("Deribit Prob", f"{deribit_prob:.4f}")
-                table.add_row("Slippage", f"{slippage:.4f}")
 
                 console.print(table)
 
                 # ✅ 多投资金额策略计算
                 for investment in INVESTMENTS:
+                    # ✅ Polymarket 滑点
+                    try:
+                        result = get_polymarket_slippage_sync(yes_token_id, investment)
+                        slippage = float(result.get("slippage_pct", 0)) / 100
+                    except Exception as e:
+                        console.print(f"⚠️ [yellow]获取 Polymarket 滑点失败: {e}[/yellow]")
+                        slippage = 0.01
+
                     costs = estimate_costs(investment, slippage=slippage, fee_rate=deribit_fee)
                     pnl_yes = calculate_pnl(yes_price, deribit_prob, investment, costs)
                     pnl_no = calculate_pnl(1 - no_price, 1 - deribit_prob, investment, costs)
@@ -160,23 +162,25 @@ def main(config_path="config.yaml"):
                         "timestamp": timestamp,
                         "market_title": title,
                         "investment": investment,
-                        "yes_price": yes_price,
-                        "no_price": no_price,
                         "spot": spot,
+                        "poly_yes_price": yes_price,
+                        "poly_no_price": no_price,
+                        "deribit_prob": deribit_prob,
+                        "volatility_used": volatility,
+                        "mark_iv": mark_iv,
+                        "deribit_fee": deribit_fee,
+                        "polymarket_slippage": slippage,
+                        "total_costs": costs,
+                        "expected_pnl_yes": pnl_yes,
+                        "expected_pnl_no": pnl_no,
                         "k1_mid": k1_mid,
                         "k2_mid": k2_mid,
                         "k1_mark_iv": k1_iv,
                         "k2_mark_iv": k2_iv,
                         "k1_fee": k1_fee,
                         "k2_fee": k2_fee,
-                        "deribit_fee_used": deribit_fee,
-                        "volatility_used": volatility,
-                        "deribit_prob": deribit_prob,
-                        "slippage": slippage,
-                        "expected_pnl_yes": pnl_yes,
-                        "expected_pnl_no": pnl_no,
-                        "suggest_yes": "ARBITRAGE" if pnl_yes > 0 else "No Trade",
-                        "suggest_no": "ARBITRAGE" if pnl_no > 0 else "No Trade",
+                        "direction_yes": "Buy YES on Polymarket" if pnl_yes > 0 else "No Trade",
+                        "direction_no": "Buy NO on Polymarket" if pnl_no > 0 else "No Trade"
                     })
 
                 console.rule("[bold magenta]Next Market[/bold magenta]")
