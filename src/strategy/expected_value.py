@@ -40,11 +40,13 @@ class EVInputs:
     call_k2_ask_btc: float
     call_k1_ask_btc: float
     call_k2_bid_btc: float
+    call_k1_mark_btc: float
+    call_k2_mark_btc: float
     btc_usd: float
 
     # 头寸与成本
     inv_base_usd: float
-    margin_requirement_usd: float
+    margin_requirement_usd: float = 0.0
 
     # 平仓滑点
     slippage_rate_close: float = 0.001  # 缺省千分之一
@@ -122,9 +124,27 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
         call_k2_ask_btc=ev_in.call_k2_ask_btc,
         call_k1_ask_btc=ev_in.call_k1_ask_btc,
         call_k2_bid_btc=ev_in.call_k2_bid_btc,
+        call_k1_mark_btc=ev_in.call_k1_mark_btc,
+        call_k2_mark_btc=ev_in.call_k2_mark_btc,
         btc_usd=ev_in.btc_usd,
     )
     contracts_short, income_deribit_usd = strategy1_position_contracts(pos_in)
+    if contracts_short <= 0:
+        return {
+            "contracts_short": 0.0,
+            "e_deribit": 0.0,
+            "e_poly": 0.0,
+            "open_cost": 0.0,
+            "carry_cost": 0.0,
+            "close_cost": 0.0,
+            "total_cost": 0.0,
+            "margin_requirement": 0.0,
+            "total_ev": 0.0,
+        }
+
+    # 垂直价差最大亏损 = (K2 - K1) - 收到权利金
+    max_loss_per_contract = max(0.0, (ev_in.K2 - ev_in.K1) - income_deribit_usd)
+    margin_requirement = max_loss_per_contract * contracts_short
 
     # 预期行权盈亏（使用垂直价差到期价值的期望 × 合约）
     exp_exercise = deribit_vertical_expected_payoff(
@@ -154,7 +174,7 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
         contracts_short, ev_in.call_k1_bid_btc, ev_in.call_k2_ask_btc, ev_in.btc_usd, cost_params
     )
     carry_cost = carrying_cost_usd(
-        ev_in.margin_requirement_usd,
+        margin_requirement,
         ev_in.inv_base_usd,
         days_held=ev_in.T * 365.0,
         r=cost_params.risk_free_rate,
@@ -171,6 +191,7 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
         "carry_cost": carry_cost,
         "close_cost": close_cost,
         "total_cost": total_cost,
+        "margin_requirement": margin_requirement,
         "total_ev": total_ev,
     }
 
@@ -183,14 +204,28 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
         call_k2_ask_btc=ev_in.call_k2_ask_btc,
         call_k1_ask_btc=ev_in.call_k1_ask_btc,
         call_k2_bid_btc=ev_in.call_k2_bid_btc,
+        call_k1_mark_btc=ev_in.call_k1_mark_btc,
+        call_k2_mark_btc=ev_in.call_k2_mark_btc,
         btc_usd=ev_in.btc_usd,
     )
     contracts_long, cost_deribit_usd = strategy2_position_contracts(pos_in, poly_no_entry)
+    if contracts_long <= 0:
+        return {
+            "contracts_long": 0.0,
+            "e_deribit": 0.0,
+            "e_poly": 0.0,
+            "open_cost": 0.0,
+            "carry_cost": 0.0,
+            "close_cost": 0.0,
+            "total_cost": 0.0,
+            "margin_requirement": 0.0,
+            "total_ev": 0.0,
+        }
 
     exp_exercise = deribit_vertical_expected_payoff(
-        ev_in.S, 
-        ev_in.K1, 
-        ev_in.K2, 
+        ev_in.S,
+        ev_in.K1,
+        ev_in.K2,
         ev_in.K_poly,
         ev_in.T, 
         ev_in.sigma, 
@@ -212,8 +247,10 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
     open_cost = opening_cost_usd(
         contracts_long, ev_in.call_k1_ask_btc, ev_in.call_k2_bid_btc, ev_in.btc_usd, cost_params
     )
+    margin_requirement = cost_deribit_usd * contracts_long
+
     carry_cost = carrying_cost_usd(
-        ev_in.margin_requirement_usd,
+        margin_requirement,
         ev_in.inv_base_usd,
         days_held=ev_in.T * 365.0,
         r=cost_params.risk_free_rate,
@@ -230,5 +267,6 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
         "carry_cost": carry_cost,
         "close_cost": close_cost,
         "total_cost": total_cost,
+        "margin_requirement": margin_requirement,
         "total_ev": total_ev,
     }

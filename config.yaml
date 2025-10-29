@@ -1,4 +1,11 @@
 # === 全局参数 ===
+output_csv: "data/results.csv"
+investment_levels:
+  - 1000
+  - 5000
+  - 10000
+  - 20000
+  - 50000
 thresholds:
   ev_spread_min: 0.05      # 套利触发阈值（例如 5%）
   check_interval_sec: 120  # 刷新间隔（秒）
