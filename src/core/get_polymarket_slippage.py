@@ -24,13 +24,15 @@ async def get_polymarket_slippage(asset_id: str, amount_usd: float) -> dict[str,
 
             # 如果是列表，取第一个元素
             if isinstance(data, list):
+                if len(data) == 0:
+                    raise ValueError("Received empty data list from Polymarket WebSocket")
                 data = data[0]
 
             # 找到订单簿数据
             if data.get("event_type") == "book" and data.get("asset_id") == asset_id:
                 asks = data.get("asks", [])
                 if not asks:
-                    return {"error": "No asks available"}
+                    raise ValueError("No asks data available in the order book")
 
                 # 确保 asks 按价格升序排序
                 asks = sorted(asks, key=lambda x: float(x["price"]))
@@ -57,7 +59,7 @@ async def get_polymarket_slippage(asset_id: str, amount_usd: float) -> dict[str,
                         break
 
                 if total_size == 0:
-                    return {"error": "Insufficient liquidity"}
+                    raise ValueError("Unable to buy any shares with the given amount")
 
                 avg_price = total_cost / total_size
                 best_price = float(asks[0]["price"])

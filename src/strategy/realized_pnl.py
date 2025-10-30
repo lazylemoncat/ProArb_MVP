@@ -1,5 +1,3 @@
-# src/strategy/realized_pnl.py
-
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -10,9 +8,7 @@ from .expected_value import (
 )
 
 
-# ================================
 # 5. 事后实际盈亏（时间节点框架）
-# ================================
 @dataclass
 class RealizedInputs:
     poly_price_at_t: float  # 某节点Poly YES价格（用于平仓）
@@ -36,6 +32,7 @@ def realized_unrealized_pnl_strategy_A_to_E(
     注：此处提供框架和计算骨架；具体 Deribit 已实现/未实现需结合实际持仓与结算规则。
     """
     inv = ev_in.inv_base_usd
+    deribit_unrealized = 0.0
 
     # Poly 已实现部分（用节点价格平仓近似）
     # 做多 YES 的近似已实现 P&L：

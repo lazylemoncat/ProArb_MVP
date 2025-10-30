@@ -1,19 +1,4 @@
-# src/strategy/cost_model.py
-
-from dataclasses import dataclass
-
-
-# ================================
-# 3. 成本模型
-# ================================
-@dataclass
-class CostParams:
-    deribit_fee_cap_btc: float = 0.0003  # 单腿费用上限 (BTC)
-    deribit_fee_rate: float = 0.125  # 费用 = min(cap, rate * 期权价格)
-    gas_open_usd: float = 0.025  # 开仓 Gas USD
-    gas_close_usd: float = 0.025  # 平仓 Gas USD
-    margin_requirement_usd: float = 0.0  # 初始保证金（USD等价）
-    risk_free_rate: float = 0.05  # 年化无风险利率
+from .cost_models import CostParams
 
 
 def deribit_option_fee_usd(
@@ -24,7 +9,18 @@ def deribit_option_fee_usd(
     fee_cap_btc: float,
     fee_rate: float,
 ) -> float:
-    """Deribit 两腿期权的费用(USD)"""
+    """
+    计算 Deribit 两腿期权的费用(USD)
+    Args:
+        price1_btc(float): 第一腿期权合约的每份合约价格(以 BTC 计价)
+        price2_btc(float): 第二腿期权合约的每份合约价格(以 BTC 计价)
+        contracts(float): 交易的合约数量
+        btc_usd(float): 计算时的 BTC 兑 USD 汇率
+        fee_cap_btc(float): 单腿期权合约的手续费上限(以 BTC 计价)
+        fee_rate(float): Deribit 的期权交易费率(比例费率)
+    Returns:
+        Deribit 两腿期权的费用(USD)
+    """
     leg1 = min(fee_cap_btc, fee_rate * price1_btc)
     leg2 = min(fee_cap_btc, fee_rate * price2_btc)
     return (leg1 + leg2) * contracts * btc_usd
@@ -59,7 +55,3 @@ def carrying_cost_usd(
 def closing_cost_usd(inv_base_usd: float, slippage_rate: float, gas_close_usd: float) -> float:
     slippage_cost = inv_base_usd * max(0.0, slippage_rate)
     return slippage_cost + gas_close_usd
-
-
-def total_cost_usd(open_cost: float, carry_cost: float, close_cost: float) -> float:
-    return open_cost + carry_cost + close_cost

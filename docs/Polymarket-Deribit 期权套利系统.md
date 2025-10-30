@@ -43,6 +43,68 @@ Polymarket 与 Deribit 存在期权套利机会，可以获得净正收益。
 - Amount ：成交合约数
 
 分别计算每笔手续费后免除低的那笔手续费
+
+---
+**【新增】**
+
+**保证金**：使用 API 提供的保证金计算接口 /private/get_account_summary , 传入头寸，选择的 S:PM 模型下接受需要的 初始保证金 (Initial Margin, IM)，
+
+**C_fund 计算公式将变为**：
+<img width="830" height="122" alt="image" src="https://github.com/user-attachments/assets/51529545-08c5-40e2-b35e-00854a11be67" />
+
+**重新计算“净EV”**:（与策略计算文档中的公式一致）
+<img width="900" height="86" alt="image" src="https://github.com/user-attachments/assets/b706f7bf-2a64-49a7-9a25-6b7728673764" />
+
+**策略盈亏分析图 (Payoff Diagram)**
+
+1. 定义价格范围:
+
+* 设定一个围绕行权价的终点价格区间作为X轴。
+
+* 例如: x_axis_prices = range(110000, 118000, step=100)
+
+2. 计算盈亏数据:
+
+* 遍历 x_axis_prices 中的每一个价格点。
+
+* 调用 Calculate_Payoff() 函数计算出对应的组合盈亏（Y轴数据）。
+
+* y_axis_pnl = [Calculate_Payoff(price) for price in x_axis_prices]
+
+3. 绘制图表:
+
+* 使用绘图库（如 Matplotlib, Plotly）将 x_axis_prices 和 y_axis_pnl 绘制成线图。
+
+* 关键标注:
+
+    -- 绘制一条 Y=0 的水平虚线作为盈亏平衡线。
+
+    -- 在 K_low, K_high, K_polymarket 的位置绘制垂直虚线，并加以说明。
+
+    -- 图表标题、X轴标签（终点价格）、Y轴标签（组合盈亏）必须清晰。
+
+**结果表展示的参数**：
+
+market_title
+
+timestamp
+
+investment
+
+spot
+
+poly_yes_price vs. deribit_prob
+
+expected_pnl_yes
+
+total_costs
+
+EV
+
+IM
+
+EV / IM
+
 ---
 🔗 **相关链接**：
 

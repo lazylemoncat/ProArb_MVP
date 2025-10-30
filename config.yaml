@@ -1,12 +1,15 @@
 # === 全局参数 ===
 thresholds:
-  ev_spread_min: 0.05      # 套利触发阈值（例如 5%）
-  check_interval_sec: 120  # 刷新间隔（秒）
+  OUTPUT_CSV: "data/results.csv"                  # 数据保存地址
+  ev_spread_min: 0.05                             # 套利触发阈值（例如 5%）
+  check_interval_sec: 120                         # 刷新间隔（秒）
+  INVESTMENTS: [1000, 5000, 10000, 20000, 50000]  # 起始资金
+  MARGIN_USD: 1000                                # 保证金
 
 events:
   - name: "BTC > 108k"
     polymarket:
-      event_title: "Bitcoin above ___ on October 29?"
+      event_title: "Bitcoin above ___ on October 31?"
       market_title: "108,000"
 
     deribit:
@@ -15,7 +18,7 @@ events:
 
   - name: "BTC > 110k"
     polymarket:
-      event_title: "Bitcoin above ___ on October 29?"
+      event_title: "Bitcoin above ___ on October 31?"
       market_title: "110,000"
 
     deribit:
@@ -24,7 +27,7 @@ events:
 
   - name: "BTC > 112k"
     polymarket:
-      event_title: "Bitcoin above ___ on October 29?"
+      event_title: "Bitcoin above ___ on October 31?"
       market_title: "112,000"
 
     deribit:
@@ -33,7 +36,7 @@ events:
 
   - name: "BTC > 114k"
     polymarket:
-      event_title: "Bitcoin above ___ on October 29?"
+      event_title: "Bitcoin above ___ on October 31?"
       market_title: "114,000"
 
     deribit:
@@ -42,7 +45,7 @@ events:
 
   - name: "BTC > 116k"
     polymarket:
-      event_title: "Bitcoin above ___ on October 29?"
+      event_title: "Bitcoin above ___ on October 310?"
       market_title: "116,000"
 
     deribit:
@@ -51,7 +54,7 @@ events:
       
   - name: "BTC > 118k"
     polymarket:
-      event_title: "Bitcoin above ___ on October 29?"
+      event_title: "Bitcoin above ___ on October 31?"
       market_title: "118,000"
 
     deribit:

@@ -1,12 +1,8 @@
-# src/strategy/position_calculator.py
-
 from dataclasses import dataclass
 from typing import Tuple
 
 
-# ================================
 # 2. 头寸规模计算（两类策略）
-# ================================
 @dataclass
 class PositionInputs:
     inv_base_usd: float  # Polymarket 投入基数

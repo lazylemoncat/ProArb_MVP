@@ -1,11 +1,7 @@
-# src/strategy/reestimate_ev.py
-
 from .expected_value import deribit_vertical_expected_payoff
 
-# ================================
-# 6. 持仓期间预期重估（统一接口）
-# ================================
 
+# 6. 持仓期间预期重估（统一接口）
 def reestimate_ev(
     realized_pnl_to_t: float,
     S: float,

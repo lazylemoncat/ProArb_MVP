@@ -1,15 +1,12 @@
-# src/strategy/expected_value.py
-
 from dataclasses import dataclass
 from typing import Dict
 
-from .cost_model import (
-    CostParams,
+from .cost_usd import (
     carrying_cost_usd,
     closing_cost_usd,
     opening_cost_usd,
-    total_cost_usd,
 )
+from .cost_models import CostParams
 from .position_calculator import (
     PositionInputs,
     strategy1_position_contracts,
@@ -160,7 +157,10 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
         r=cost_params.risk_free_rate,
     )
     close_cost = closing_cost_usd(ev_in.inv_base_usd, ev_in.slippage_rate_close, cost_params.gas_close_usd)
-    total_cost = total_cost_usd(open_cost, carry_cost, close_cost)
+    # 持仓期间成本
+    carry_cost_to_t_usd = ev_in.margin_requirement_usd * ev_in.r * ev_in.T
+
+    total_cost = open_cost + carry_cost + close_cost + carry_cost_to_t_usd
 
     total_ev = e_poly + e_deribit - total_cost
     return {
@@ -219,7 +219,10 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
         r=cost_params.risk_free_rate,
     )
     close_cost = closing_cost_usd(ev_in.inv_base_usd, ev_in.slippage_rate_close, cost_params.gas_close_usd)
-    total_cost = total_cost_usd(open_cost, carry_cost, close_cost)
+    # 持仓期间成本
+    carry_cost_to_t_usd = ev_in.margin_requirement_usd * ev_in.r * ev_in.T
+
+    total_cost = open_cost + carry_cost+ close_cost + carry_cost_to_t_usd
 
     total_ev = e_poly + e_deribit - total_cost
     return {

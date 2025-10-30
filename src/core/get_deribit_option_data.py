@@ -9,33 +9,36 @@ def get_deribit_option_data(
     amount=1
 ):
     """
-    获取 Deribit 期权数据并计算 mark_iv 和手续费。
+    获取 Deribit 期权数据并计算 mark_iv、手续费、Bid/Ask。
     """
-    
     url = f"https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency={currency}&kind={kind}"
     response = requests.get(url)
     data = response.json()
-    
+
     results = []
     for item in data.get("result", []):
         option_name = item.get("instrument_name")
         mark_iv = item.get("mark_iv", None)
-        option_price = item.get("last") or 0.0  # 防止 None 报错
+        bid_price = item.get("bid_price", 0.0)
+        ask_price = item.get("ask_price", 0.0)
+        option_price = item.get("last") or 0.0
         index_price = item.get("underlying_price") or 0.0
 
-        # 计算手续费
+        # ✅ 手续费计算（保持原逻辑）
         if not usdc_settled:
             base_fee = base_fee_btc if currency == "BTC" else base_fee_eth
             fee = min(base_fee, 0.125 * option_price) * amount
         else:
             fee = min(0.0003 * index_price, 0.125 * option_price) * amount
-        
+
         results.append({
             "instrument_name": option_name,
             "mark_iv": mark_iv,
+            "bid_price": bid_price,
+            "ask_price": ask_price,
             "fee": fee
         })
-    
+
     return results
 
 
