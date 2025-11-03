@@ -3,6 +3,7 @@ import json
 
 import requests
 import websockets
+from typing import Literal
 
 DERIBIT_WS = "wss://www.deribit.com/ws/api/v2"
 
@@ -94,12 +95,12 @@ class DeribitStream:
         loop.run_until_complete(self._connect())   # 运行推流
 
     @staticmethod
-    def find_option_instrument(strike: float, call: bool = True):
+    def find_option_instrument(strike: float, currency: Literal["BTC", "ETH"] = "BTC", call: bool = True):
         """
         根据行权价找到最近的可行权价期权, 并选取最近到期(T最小)的 Call/Put。
         """
         url = "https://www.deribit.com/api/v2/public/get_instruments"
-        params = {"currency": "BTC", "kind": "option", "expired": "false"}
+        params = {"currency": currency, "kind": "option", "expired": "false"}
         r = requests.get(url, params=params).json()
         instruments = r["result"]
 

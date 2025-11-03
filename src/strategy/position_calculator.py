@@ -21,7 +21,7 @@ def strategy1_position_contracts(inputs: PositionInputs) -> Tuple[float, float]:
     """
     income_deribit_usd = (inputs.call_k1_bid_btc - inputs.call_k2_ask_btc) * inputs.btc_usd
     if income_deribit_usd == 0:
-        raise ValueError("Income from Deribit vertical spread is zero, cannot calculate contracts.")
+        return 0.0, income_deribit_usd
     if income_deribit_usd < 0:
         return 0.0, income_deribit_usd
     contracts = inputs.inv_base_usd / income_deribit_usd

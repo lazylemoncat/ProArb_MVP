@@ -25,5 +25,8 @@ class ResultRecord:
     ev_yes: float   # 策略一（做多YES）的EV
     ev_no: float    # 策略二（做空YES/做多NO）的EV
 
+    suggest1: str
+    suggest2: str
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

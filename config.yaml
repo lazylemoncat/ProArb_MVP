@@ -8,8 +8,9 @@ thresholds:
 
 events:
   - name: "BTC > 108k"
+    asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on October 31?"
+      event_title: "Bitcoin above ___ on November 3?"
       market_title: "108,000"
 
     deribit:
@@ -17,8 +18,9 @@ events:
       k2_strike: 109000
 
   - name: "BTC > 110k"
+    asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on October 31?"
+      event_title: "Bitcoin above ___ on November 3?"
       market_title: "110,000"
 
     deribit:
@@ -26,8 +28,9 @@ events:
       k2_strike: 111000
 
   - name: "BTC > 112k"
+    asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on October 31?"
+      event_title: "Bitcoin above ___ on November 3?"
       market_title: "112,000"
 
     deribit:
@@ -35,8 +38,9 @@ events:
       k2_strike: 113000
 
   - name: "BTC > 114k"
+    asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on October 31?"
+      event_title: "Bitcoin above ___ on November 3?"
       market_title: "114,000"
 
     deribit:
@@ -44,8 +48,9 @@ events:
       k2_strike: 115000
 
   - name: "BTC > 116k"
+    asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on October 310?"
+      event_title: "Bitcoin above ___ on November 3?"
       market_title: "116,000"
 
     deribit:
@@ -53,10 +58,31 @@ events:
       k2_strike: 117000
       
   - name: "BTC > 118k"
+    asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on October 31?"
+      event_title: "Bitcoin above ___ on November 3?"
       market_title: "118,000"
 
     deribit:
       k1_strike: 117000
       k2_strike: 119000
+
+  - name: "Ethereum > 3800"
+    asset: "ETH"
+    polymarket:
+      event_title: "Ethereum above ___ on November 3?"
+      market_title: "3,800"
+
+    deribit:
+      k1_strike: 3775
+      k2_strike: 3800
+  
+  - name: "Ethereum > 3900"
+    asset: "ETH"
+    polymarket:
+      event_title: "Ethereum above ___ on November 3?"
+      market_title: "3,900"
+
+    deribit:
+      k1_strike: 3875
+      k2_strike: 3925
