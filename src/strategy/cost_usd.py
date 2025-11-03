@@ -1,4 +1,4 @@
-from .cost_models import CostParams
+from .models import CostParams
 
 
 def deribit_option_fee_usd(

@@ -21,19 +21,16 @@ from rich.table import Table
 from core.deribit_api import get_spot_price, get_testnet_initial_margin
 from core.DeribitStream import DeribitStream
 from core.get_deribit_option_data import get_deribit_option_data
-from core.get_polymarket_slippage import get_polymarket_slippage, get_polymarket_slippage_sync
+from core.get_polymarket_slippage import get_polymarket_slippage
 from core.PolymarketAPI import PolymarketAPI
-from strategy.cost_models import (
-    CostParams,  # 注意：只有 deribit_fee_cap_btc / deribit_fee_rate / gas_open_usd / gas_close_usd / margin_requirement_usd / risk_free_rate
-)
 from strategy.expected_value import (
     EVInputs,
     expected_values_strategy1,
     expected_values_strategy2,
 )
+from strategy.models import CostParams
 
-# 若你已有 BS 概率函数，可解开这一行；没有也不影响策略计算
-# from strategy.probability_engine import bs_probability_gt
+from strategy.probability_engine import bs_probability_gt
 from utils.dataloader import load_manual_data
 from utils.save_result import save_result_csv
 
@@ -149,8 +146,13 @@ async def main(config_path="config.yaml"):
                 T = 8.0 / 365.0
                 r = 0.05
 
-                # 若你有 BS 概率函数，可用之；这里先用一个简单近似
-                deribit_prob = 1.0 if spot > K_poly else 0.0
+                deribit_prob = bs_probability_gt(
+                    S=spot,
+                    K=K_poly,
+                    T=T,
+                    sigma=mark_iv,
+                    r=r
+                )
 
                 # === 时间戳 ===
                 timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -193,7 +195,6 @@ async def main(config_path="config.yaml"):
                                         client_secret=client_secret,
                                         amount=inv / spot,
                                         instrument_name=inst_k1,
-                                        currency=asset
                                     )
                     )
 

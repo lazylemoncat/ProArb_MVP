@@ -24,12 +24,12 @@ def get_deribit_option_data(
         option_price = item.get("last") or 0.0
         index_price = item.get("underlying_price") or 0.0
 
-        # ✅ 手续费计算（保持原逻辑）
+        # 手续费计算
         if not usdc_settled:
             base_fee = base_fee_btc if currency == "BTC" else base_fee_eth
-            fee = min(base_fee, 0.125 * option_price) * amount
+            fee = max(base_fee, 0.125 * option_price) * amount
         else:
-            fee = min(0.0003 * index_price, 0.125 * option_price) * amount
+            fee = max(0.0003 * index_price, 0.125 * option_price) * amount
 
         results.append({
             "instrument_name": option_name,

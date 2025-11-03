@@ -22,24 +22,27 @@ def get_spot_price(symbol: Literal["btc_usd", "eth_usd"]="btc_usd"):
     return r["result"]["index_price"]
 
 
-def get_option_mid_price(instrument_name: str):
-    """获取期权盘口中间价(mid)"""
-    url = f"{BASE_URL}/public/get_order_book"
-    params = {"instrument_name": instrument_name}
-    r = requests.get(url, params=params).json()
+async def get_mid_price_by_orderbook(websocket: ClientConnection, deribit_user_id, instrument_name: str):
+    msg = {
+        "id": deribit_user_id,
+        "jsonrpc": "2.0",
+        "method": "public/get_order_book",
+        "params": {
+            "depth": 5,
+            "instrument_name": instrument_name
+        }
+    }
+    await websocket.send(json.dumps(msg))
+    response = await websocket.recv()
+    data = json.loads(response).get("result")
 
-    book = r["result"]
-    bid = book.get("best_bid_price")
-    ask = book.get("best_ask_price")
+    bid = data.get("best_bid_price")
+    ask = data.get("best_ask_price")
 
     if bid and ask:
         return (bid + ask) / 2
-    elif bid:
-        return bid
-    elif ask:
-        return ask
     else:
-        return None
+        return data.get("mark_price")
 
 async def deribit_websocket_auth(websocket: ClientConnection, deribit_user_id: str, client_id: str, client_secret: str):
     msg = {
@@ -102,14 +105,29 @@ async def close_position(websocket: ClientConnection, user_id: str, amount: int,
     response = await websocket.recv()
     return response
 
-async def get_testnet_initial_margin(user_id, client_id, client_secret, amount, instrument_name, currency="BTC"):
+async def get_margins(websocket, user_id, amount, instrument_name, price):
+    msg = {
+            "id": user_id,
+            "jsonrpc":"2.0",
+            "method":"private/get_margins",
+            "params":{
+                "amount": amount,
+                "instrument_name": instrument_name,
+                "price": price
+            }
+        }
+    await websocket.send(json.dumps(msg))
+    response = await websocket.recv()
+    initial_margin = float(json.loads(response).get("result").get("buy"))
+
+    return initial_margin
+
+async def get_testnet_initial_margin(user_id, client_id, client_secret, amount, instrument_name):
     async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
         await deribit_websocket_auth(websocket, user_id, client_id, client_secret)
-        await open_long_position(websocket, user_id, amount, instrument_name)
+        price = await get_mid_price_by_orderbook(websocket, user_id, instrument_name)
 
-        initial_margin = await get_initial_margin(websocket, user_id, currency=currency)
-
-        await close_position(websocket, user_id, amount, instrument_name)
+        initial_margin = await get_margins(websocket, user_id, amount, instrument_name, price)
 
         return initial_margin
     
@@ -144,12 +162,12 @@ if __name__ == "__main__":
 
             # response = await close_position(websocket, deribit_user_id, 40, "ETH-PERPETUAL")
             # pprint.pprint(json.loads(response))
-        amount = 0.009306357181897313
-        instrument_name = "BTC-3NOV25-109000-C"
-        currency = "BTC"
-
+        amount = 1
+        instrument_name = "BTC-4NOV25-107000-C"
+        
         initial_margin = await get_testnet_initial_margin(
-            deribit_user_id, client_id, client_secret, amount=amount, instrument_name=instrument_name, currency=currency
+            deribit_user_id, client_id, client_secret, 
+            amount=amount, instrument_name=instrument_name
         )
         pprint.pprint(initial_margin)
     asyncio.run(call_api())

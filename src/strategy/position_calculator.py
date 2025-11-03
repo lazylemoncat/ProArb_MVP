@@ -1,16 +1,5 @@
-from dataclasses import dataclass
 from typing import Tuple
-
-
-# 2. 头寸规模计算（两类策略）
-@dataclass
-class PositionInputs:
-    inv_base_usd: float  # Polymarket 投入基数
-    call_k1_bid_btc: float  # Deribit K1 Call Bid (BTC计价)
-    call_k2_ask_btc: float  # Deribit K2 Call Ask (BTC计价)
-    call_k1_ask_btc: float  # Deribit K1 Call Ask
-    call_k2_bid_btc: float  # Deribit K2 Call Bid
-    btc_usd: float  # BTC 价格 (USD)
+from .models import PositionInputs
 
 
 def strategy1_position_contracts(inputs: PositionInputs) -> Tuple[float, float]:

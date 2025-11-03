@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Dict
 
 from .cost_usd import (
@@ -6,45 +5,13 @@ from .cost_usd import (
     closing_cost_usd,
     opening_cost_usd,
 )
-from .cost_models import CostParams
+from .models import CostParams, EVInputs, StrategyContext
 from .position_calculator import (
     PositionInputs,
     strategy1_position_contracts,
     strategy2_position_contracts,
 )
 from .probability_engine import interval_probabilities
-
-
-# ================================
-# 4. 事前预期盈亏（开仓时刻）
-# ================================
-@dataclass
-class EVInputs:
-    # 市场与模型参数
-    S: float
-    K1: float
-    K_poly: float
-    K2: float
-    T: float
-    sigma: float
-    r: float
-
-    # Polymarket 价格
-    poly_yes_price: float  # 开仓时 yes 价（0-1）
-
-    # Deribit 价差（以BTC计）
-    call_k1_bid_btc: float
-    call_k2_ask_btc: float
-    call_k1_ask_btc: float
-    call_k2_bid_btc: float
-    btc_usd: float
-
-    # 头寸与成本
-    inv_base_usd: float
-    margin_requirement_usd: float
-
-    # 平仓滑点
-    slippage_rate_close: float = 0.001  # 缺省千分之一
 
 
 def poly_pnl_yes(yes_price: float, outcome_yes: bool, inv_base_usd: float, slippage_rate: float = 0.0) -> float:
@@ -157,10 +124,8 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
         r=cost_params.risk_free_rate,
     )
     close_cost = closing_cost_usd(ev_in.inv_base_usd, ev_in.slippage_rate_close, cost_params.gas_close_usd)
-    # 持仓期间成本
-    carry_cost_to_t_usd = ev_in.margin_requirement_usd * ev_in.r * ev_in.T
 
-    total_cost = open_cost + carry_cost + close_cost + carry_cost_to_t_usd
+    total_cost = open_cost + carry_cost + close_cost
 
     total_ev = e_poly + e_deribit - total_cost
     return {
@@ -219,10 +184,8 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
         r=cost_params.risk_free_rate,
     )
     close_cost = closing_cost_usd(ev_in.inv_base_usd, ev_in.slippage_rate_close, cost_params.gas_close_usd)
-    # 持仓期间成本
-    carry_cost_to_t_usd = ev_in.margin_requirement_usd * ev_in.r * ev_in.T
 
-    total_cost = open_cost + carry_cost+ close_cost + carry_cost_to_t_usd
+    total_cost = open_cost + carry_cost+ close_cost
 
     total_ev = e_poly + e_deribit - total_cost
     return {
@@ -235,3 +198,10 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
         "total_cost": total_cost,
         "total_ev": total_ev,
     }
+
+def compute_both_strategies(ctx: StrategyContext):
+    result = {}
+    result['strategy1'] = expected_values_strategy1(ctx.ev_inputs, ctx.cost_params)
+    if ctx.poly_no_entry is not None:
+        result['strategy2'] = expected_values_strategy2(ctx.ev_inputs, ctx.cost_params, ctx.poly_no_entry)
+    return result
