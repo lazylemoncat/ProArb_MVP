@@ -15,7 +15,11 @@ TEST_WEBSOCKETS_URL = "wss://test.deribit.com/ws/api/v2"
 
 
 def get_spot_price(symbol: Literal["btc_usd", "eth_usd"]="btc_usd"):
-    """获取 BTC 指数价格"""
+    """
+    获取 BTC 指数价格
+    Return:
+        BTC 指数价格(USD)
+    """
     url = f"{BASE_URL}/public/get_index_price"
     params = {"index_name": symbol}
     r = requests.get(url, params=params).json()
@@ -23,6 +27,11 @@ def get_spot_price(symbol: Literal["btc_usd", "eth_usd"]="btc_usd"):
 
 
 async def get_mid_price_by_orderbook(websocket: ClientConnection, deribit_user_id, instrument_name: str):
+    """
+    获取 orderbook 的中间价
+    Return:
+        orderbook 的中间价(BTC)
+    """
     msg = {
         "id": deribit_user_id,
         "jsonrpc": "2.0",
@@ -32,17 +41,20 @@ async def get_mid_price_by_orderbook(websocket: ClientConnection, deribit_user_i
             "instrument_name": instrument_name
         }
     }
-    await websocket.send(json.dumps(msg))
-    response = await websocket.recv()
-    data = json.loads(response).get("result")
+    try:
+        await websocket.send(json.dumps(msg))
+        response = await websocket.recv()
+        data = json.loads(response).get("result")
 
-    bid = data.get("best_bid_price")
-    ask = data.get("best_ask_price")
+        bid = data.get("best_bid_price")
+        ask = data.get("best_ask_price")
 
-    if bid and ask:
-        return (bid + ask) / 2
-    else:
-        return data.get("mark_price")
+        if bid and ask:
+            return (bid + ask) / 2
+        else:
+            return data.get("mark_price")
+    except Exception as e:
+        print(f"get_mid_price_by_orderbook wrong: {e}")
 
 async def deribit_websocket_auth(websocket: ClientConnection, deribit_user_id: str, client_id: str, client_secret: str):
     msg = {
@@ -106,6 +118,13 @@ async def close_position(websocket: ClientConnection, user_id: str, amount: int,
     return response
 
 async def get_margins(websocket, user_id, amount, instrument_name, price):
+    """
+    获取初始保证金
+    Args:
+        price: BTC 单位的价格(BTC)
+    Return:
+        初始保证金(USD)
+    """
     msg = {
             "id": user_id,
             "jsonrpc":"2.0",
@@ -116,9 +135,13 @@ async def get_margins(websocket, user_id, amount, instrument_name, price):
                 "price": price
             }
         }
-    await websocket.send(json.dumps(msg))
-    response = await websocket.recv()
-    initial_margin = float(json.loads(response).get("result").get("buy"))
+    try:
+        await websocket.send(json.dumps(msg))
+        response = await websocket.recv()
+        response_result = json.loads(response).get("result")
+        initial_margin = float(response_result.get("buy"))
+    except Exception as e:
+        print(f"initial_margin wrong: {e}, {response_result}, {response}, {price}")
 
     return initial_margin
 
@@ -126,10 +149,28 @@ async def get_testnet_initial_margin(user_id, client_id, client_secret, amount, 
     async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
         await deribit_websocket_auth(websocket, user_id, client_id, client_secret)
         price = await get_mid_price_by_orderbook(websocket, user_id, instrument_name)
-
+        
         initial_margin = await get_margins(websocket, user_id, amount, instrument_name, price)
 
+        # 返回的是 BTC, 需要乘以 spot price才是 USD
         return initial_margin
+    
+async def get_interest_rate(user_id, instrument_name):
+    async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
+        msg = {
+            "id": user_id,
+            "jsonrpc": "2.0",
+            "method": "public/get_book_summary_by_instrument",
+            "params": {
+                "instrument_name": instrument_name
+            }
+        }
+        await websocket.send(json.dumps(msg))
+        response = await websocket.recv()
+        pprint.pprint(json.loads(response))
+        interest_rate = float(json.loads(response).get("result")[0].get("interest_rate"))
+
+        return interest_rate
     
 if __name__ == "__main__":
     import asyncio
@@ -162,12 +203,21 @@ if __name__ == "__main__":
 
             # response = await close_position(websocket, deribit_user_id, 40, "ETH-PERPETUAL")
             # pprint.pprint(json.loads(response))
-        amount = 1
-        instrument_name = "BTC-4NOV25-107000-C"
+        instrument_name = "BTC-5NOV25-107000-C"
+        # async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
+        #     await deribit_websocket_auth(websocket, deribit_user_id, client_id, client_secret)
+        #     price = await get_mid_price_by_orderbook(websocket, deribit_user_id, instrument_name)
+        #     print(f"price is {price}")
+        amount = 0.001
+        # inv = 50000
+        # plot = 5000
+        # instrument_name = "BTC-5NOV25-107000-C"
         
         initial_margin = await get_testnet_initial_margin(
             deribit_user_id, client_id, client_secret, 
             amount=amount, instrument_name=instrument_name
         )
         pprint.pprint(initial_margin)
+        # interest_rate = await get_interest_rate(deribit_user_id, instrument_name)
+        # print(interest_rate)
     asyncio.run(call_api())

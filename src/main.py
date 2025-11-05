@@ -1,12 +1,3 @@
-# ✅ main.py — 修复版：仅修改 main 文件即可跑通策略
-# 关键修复：
-# 1) 正确构造 EVInputs（字段名与类型完全匹配）
-# 2) CostParams 只使用真实存在的字段（不再传不存在的 slippage/fee_rate）
-# 3) expected_values_strategy2 增补 poly_no_entry 参数
-# 4) 统一用 spot 作为“合约计价币的 USD 价格”（BTC/ETH 通用）
-# 5) 清理未定义变量（eth_usd_rate/init_margin_usd/investment 等），使用现有 inv/im_value
-# 6) total_costs/EV 取自策略返回的字典字段（total_cost/total_ev）
-
 import asyncio
 import os
 import time
@@ -60,9 +51,15 @@ def init_markets(config):
         asset = m.get("asset", "BTC").upper()
         k1 = m["deribit"]["k1_strike"]
         k2 = m["deribit"]["k2_strike"]
-        inst_k1 = DeribitStream.find_option_instrument(k1, call=True, currency=asset)
-        inst_k2 = DeribitStream.find_option_instrument(k2, call=True, currency=asset)
-        instruments_map[title] = {"k1": inst_k1, "k2": inst_k2, "asset": asset}
+        inst_k1, k1_expiration_timestamp = DeribitStream.find_option_instrument(k1, call=True, currency=asset)
+        inst_k2, k2_expiration_timestamp = DeribitStream.find_option_instrument(k2, call=True, currency=asset)
+        instruments_map[title] = {
+            "k1": inst_k1, 
+            "k1_expiration_timestamp": k1_expiration_timestamp,
+            "k2": inst_k2, 
+            "k2_expiration_timestamp": k2_expiration_timestamp,
+            "asset": asset
+        }
     return instruments_map
 
 
@@ -120,7 +117,7 @@ async def main(config_path="config.yaml"):
 
                 # === 波动率：用 K1/K2 的有效 IV 均值兜底 ===
                 iv_pool = [v for v in (k1_iv, k2_iv) if v > 0]
-                mark_iv = sum(iv_pool) / len(iv_pool) if iv_pool else 0.6
+                mark_iv = sum(iv_pool) / len(iv_pool) if iv_pool else 60.0
 
                 # === Polymarket YES/NO 实时价格 ===
                 event_id = PolymarketAPI.get_event_id_public_search(data["polymarket"]["event_title"])
@@ -143,14 +140,21 @@ async def main(config_path="config.yaml"):
                 k1_strike = float(data["deribit"]["k1_strike"])
                 k2_strike = float(data["deribit"]["k2_strike"])
                 K_poly = (k1_strike + k2_strike) / 2.0
-                T = 8.0 / 365.0
+                # T = 8.0 / 365.0
+                now_ms = time.time() * 1000
+                expiry_timestamp_ms = min(
+                    instruments_map[title]["k1_expiration_timestamp"],
+                    instruments_map[title]["k2_expiration_timestamp"]
+                )
+                T = (expiry_timestamp_ms - now_ms) / (365.0 * 24.0 * 60.0 * 60.0 * 1000.0)
+                T = max(T, 0)  # 防止负数
                 r = 0.05
 
                 deribit_prob = bs_probability_gt(
                     S=spot,
                     K=K_poly,
                     T=T,
-                    sigma=mark_iv,
+                    sigma=mark_iv / 100.0,
                     r=r
                 )
 
@@ -173,6 +177,7 @@ async def main(config_path="config.yaml"):
                 console.print(table)
 
                 # === 多投资额策略计算 ===
+                # inv 是 USD 单位
                 for inv in investments:
                     # Polymarket 滑点（YES/NO 各取一次）
                     try:
@@ -189,14 +194,16 @@ async def main(config_path="config.yaml"):
                         pass
 
                     # 测试网初始保证金（IM）
-                    im_value = float(await get_testnet_initial_margin(
+                    amount_contracts = inv / (k1_mid * spot)
+                    im_value_btc = float(await get_testnet_initial_margin(
                                         user_id=deribit_user_id,
                                         client_id=client_id,
                                         client_secret=client_secret,
-                                        amount=inv / spot,
+                                        amount=amount_contracts,
                                         instrument_name=inst_k1,
                                     )
                     )
+                    im_value_usd = im_value_btc * spot
 
 
                     # === 构造 EVInputs（字段名必须与 dataclass 完全一致）===
@@ -206,7 +213,7 @@ async def main(config_path="config.yaml"):
                         K_poly=K_poly,
                         K2=k2_strike,
                         T=T,
-                        sigma=mark_iv,
+                        sigma=mark_iv / 100.0,
                         r=r,
                         poly_yes_price=yes_price,
                         call_k1_bid_btc=k1_bid,
@@ -215,13 +222,13 @@ async def main(config_path="config.yaml"):
                         call_k2_bid_btc=k2_bid,
                         btc_usd=spot,                # 对 BTC/ETH 都表示“合约计价币的 USD 价格”
                         inv_base_usd=float(inv),
-                        margin_requirement_usd=im_value,
+                        margin_requirement_usd=im_value_usd,
                         slippage_rate_close=slippage_yes,  # 平仓滑点；另：策略2我们单独传 NO 价
                     )
 
                     # === 构造 CostParams（只用真实存在的字段）===
                     cost_params = CostParams(
-                        margin_requirement_usd=im_value,
+                        margin_requirement_usd=im_value_usd,
                         risk_free_rate=r,
                         # 其它字段使用默认值：deribit_fee_cap_btc/deribit_fee_rate/gas_open_usd/gas_close_usd
                     )
@@ -248,26 +255,33 @@ async def main(config_path="config.yaml"):
                             "poly_yes_price": yes_price,
                             "poly_no_price": no_price,
                             "deribit_prob": deribit_prob,
-                            "ev_yes": ev_yes,
-                            "ev_no": ev_no,
                             "total_costs_yes": total_costs_yes,
                             "total_costs_no": total_costs_no,
-                            "IM": im_value,
-                            "EV/IM_yes": (ev_yes / im_value) if im_value > 0 else None,
-                            "EV/IM_no": (ev_no / im_value) if im_value > 0 else None,
+                            "IM_usd": im_value_usd,
+                            "IM_btc": im_value_btc,
+                            "EV/IM_yes": (ev_yes / im_value_usd) if im_value_btc > 0 else None,
+                            "EV/IM_no": (ev_no / im_value_usd) if im_value_btc > 0 else None,
                             "k1_bid": k1_bid,
                             "k1_ask": k1_ask,
                             "k2_bid": k2_bid,
                             "k2_ask": k2_ask,
+                            "k1_strike": k1_strike,
+                            "k2_strike": k2_strike,
+                            "mark_iv": mark_iv,
+                            "r": r,
+                            "T": T,
+                            "ev_yes": ev_yes,
+                            "ev_no": ev_no,
                         },
                         output_csv,
                     )
 
                     # 控制台简报
-                    console.print(
-                        f"💰 {inv} | EV_yes={ev_yes:.2f} | EV_no={ev_no:.2f} | IM={im_value:.2f} | "
-                        f"EV/IM_yes={(ev_yes/im_value):.3f}" + ("" if im_value == 0 else f" | EV/IM_no={(ev_no/im_value):.3f}")
-                    )
+                    if im_value_usd > 0:
+                        console.print(
+                            f"💰 {inv} | EV_yes={ev_yes:.2f} | EV_no={ev_no:.2f} | IM={im_value_usd:.2f} | "
+                            f"EV/IM_yes={(ev_yes/im_value_usd):.3f}" + ("" if im_value_usd == 0 else f" | EV/IM_no={(ev_no/im_value_usd):.3f}")
+                        )
 
                 console.rule("[bold magenta]Next Market[/bold magenta]")
 

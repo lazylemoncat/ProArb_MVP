@@ -123,6 +123,7 @@ class DeribitStream:
         # 选最近到期的
         candidates.sort(key=lambda x: x["expiration_timestamp"])
         instrument_name = candidates[0]["instrument_name"]
+        expiration_timestamp = candidates[0]["expiration_timestamp"]
 
         print(f"🎯 行权价 {strike} → 使用最近可交易行权价 {best_strike} → 合约 {instrument_name}")
-        return instrument_name
+        return (instrument_name, expiration_timestamp)
