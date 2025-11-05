@@ -38,7 +38,8 @@ class EVInputs:
     margin_requirement_usd: float
 
     # 平仓滑点
-    slippage_rate_close: float = 0.001  # 缺省千分之一
+    slippage_rate_close: float
+    slippage_rate_open: float
 
 
 # 2. 头寸规模计算（两类策略）

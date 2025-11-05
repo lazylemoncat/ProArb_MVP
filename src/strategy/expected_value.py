@@ -28,16 +28,17 @@ def poly_pnl_yes(yes_price: float, outcome_yes: bool, inv_base_usd: float, slipp
         return -inv_base_usd
 
 
-def _poly_pnl_no(price_no: float, outcome_yes: bool, inv_base_usd: float) -> float:
+def _poly_pnl_no(price_no: float, outcome_yes: bool, inv_base_usd: float, slippage_rate: float) -> float:
     """做空 Poly(买 NO)的 P&L 近似：
     - 若事件为No,收益 ≈ inv * (1/price_no - 1)
     - 若事件为Yes,损失 ≈ -inv
     """
     price = max(1e-9, min(1.0, price_no))
+    effective_price = price * (1 + slippage_rate)
     if outcome_yes:
         return -inv_base_usd
     else:
-        return inv_base_usd * (1.0 / price - 1.0)
+        return inv_base_usd * (1.0 / effective_price - 1.0)
 
 
 def deribit_vertical_expected_payoff(
@@ -170,8 +171,8 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
     probs = interval_probabilities(ev_in.S, ev_in.K1, ev_in.K_poly, ev_in.K2, ev_in.T, ev_in.sigma, ev_in.r)
     p_yes = probs["Kp_to_K2"] + probs["ge_K2"]
     p_no = 1.0 - p_yes
-    e_poly = p_yes * _poly_pnl_no(poly_no_entry, True, ev_in.inv_base_usd) + p_no * _poly_pnl_no(
-        poly_no_entry, False, ev_in.inv_base_usd
+    e_poly = p_yes * _poly_pnl_no(poly_no_entry, True, ev_in.inv_base_usd, ev_in.slippage_rate_open) + p_no * _poly_pnl_no(
+        poly_no_entry, False, ev_in.inv_base_usd, ev_in.slippage_rate_open
     )
 
     open_cost = opening_cost_usd(

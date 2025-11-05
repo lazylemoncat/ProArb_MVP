@@ -16,10 +16,9 @@ from core.get_polymarket_slippage import get_polymarket_slippage
 from core.PolymarketAPI import PolymarketAPI
 from strategy.expected_value import (
     EVInputs,
-    expected_values_strategy1,
-    expected_values_strategy2,
+    compute_both_strategies
 )
-from strategy.models import CostParams
+from strategy.models import CostParams, StrategyContext
 
 from strategy.probability_engine import bs_probability_gt
 from utils.dataloader import load_manual_data
@@ -27,21 +26,6 @@ from utils.save_result import save_result_csv
 
 console = Console()
 load_dotenv()
-
-EPS = 1e-8
-
-def safe_price(bid, ask, mark):
-    """
-    返回处理后的 (bid, ask)
-    - 如果 bid 或 ask <= 0，则尝试使用 mark
-    - 若 mark 也为 0，则用极小值 EPS 兜底
-    """
-    if bid is None or bid <= 0:
-        bid = mark if mark and mark > 0 else EPS
-    if ask is None or ask <= 0:
-        ask = mark if mark and mark > 0 else EPS
-    return bid, ask
-
 
 def init_markets(config):
     """根据行权价为每个事件找出 Deribit 的 K1/K2 合约名，并记录资产类型 BTC/ETH。"""
@@ -103,10 +87,6 @@ async def main(config_path="config.yaml"):
                 k1_ask = float(k1_info.get("ask_price") or 0.0)
                 k2_bid = float(k2_info.get("bid_price") or 0.0)
                 k2_ask = float(k2_info.get("ask_price") or 0.0)
-                k1_mark = float(k1_info.get("mark_price") or 0.0)
-                k2_mark = float(k2_info.get("mark_price") or 0.0)
-                k1_bid, k1_ask = safe_price(k1_bid, k1_ask, k1_mark)
-                k2_bid, k2_ask = safe_price(k2_bid, k2_ask, k2_mark)
                 k1_mid = (k1_bid + k1_ask) / 2 if (k1_bid > 0 and k1_ask > 0) else 0.0
                 k2_mid = (k2_bid + k2_ask) / 2 if (k2_bid > 0 and k2_ask > 0) else 0.0
                 k1_iv = float(k1_info.get("mark_iv") or 0.0)
@@ -117,24 +97,27 @@ async def main(config_path="config.yaml"):
 
                 # === 波动率：用 K1/K2 的有效 IV 均值兜底 ===
                 iv_pool = [v for v in (k1_iv, k2_iv) if v > 0]
-                mark_iv = sum(iv_pool) / len(iv_pool) if iv_pool else 60.0
+                if len(iv_pool) > 0:
+                    mark_iv = sum(iv_pool) / len(iv_pool)
+                else:
+                    raise Exception("iv pool wrong")
 
                 # === Polymarket YES/NO 实时价格 ===
                 event_id = PolymarketAPI.get_event_id_public_search(data["polymarket"]["event_title"])
                 market_id = PolymarketAPI.get_market_id_by_market_title(event_id, title)
                 market_data = PolymarketAPI.get_market_by_id(market_id)
-                outcome_prices = market_data.get("outcomePrices", None)
-                yes_price, no_price = 0.0, 0.0
+                outcome_prices = market_data.get("outcomePrices")
+                yes_price, no_price = None, None
                 if outcome_prices:
                     try:
                         prices = eval(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
                         yes_price, no_price = float(prices[0]), float(prices[1])
                     except Exception:
-                        pass
+                        raise Exception("prices wrong")
 
                 tokens = PolymarketAPI.get_clob_token_ids_by_market(market_id)
                 yes_token_id = tokens.get("yes_token_id", "")
-                # no_token_id = tokens.get("no_token_id", "")
+                no_token_id = tokens.get("no_token_id", "")
 
                 # === 其它模型参数 ===
                 k1_strike = float(data["deribit"]["k1_strike"])
@@ -142,11 +125,13 @@ async def main(config_path="config.yaml"):
                 K_poly = (k1_strike + k2_strike) / 2.0
                 # T = 8.0 / 365.0
                 now_ms = time.time() * 1000
-                expiry_timestamp_ms = min(
-                    instruments_map[title]["k1_expiration_timestamp"],
-                    instruments_map[title]["k2_expiration_timestamp"]
-                )
-                T = (expiry_timestamp_ms - now_ms) / (365.0 * 24.0 * 60.0 * 60.0 * 1000.0)
+                if instruments_map[title]["k1_expiration_timestamp"] != instruments_map[title]["k2_expiration_timestamp"]: 
+                    continue
+                # expiry_timestamp_ms = min(
+                #     instruments_map[title]["k1_expiration_timestamp"],
+                #     instruments_map[title]["k2_expiration_timestamp"]
+                # )
+                T = (instruments_map[title]["k1_expiration_timestamp"] - now_ms) / (365.0 * 24.0 * 60.0 * 60.0 * 1000.0)
                 T = max(T, 0)  # 防止负数
                 r = 0.05
 
@@ -182,16 +167,14 @@ async def main(config_path="config.yaml"):
                     # Polymarket 滑点（YES/NO 各取一次）
                     try:
                         slip_yes = await get_polymarket_slippage(yes_token_id, inv)
-                        slippage_yes = float(slip_yes.get("slippage_pct", 0)) / 100.0
+                        slippage_yes = float(slip_yes.get("slippage_pct")) / 100.0
                     except Exception:
-                        slippage_yes = 0.01
+                        raise Exception("slippage_yes wrong")
                     try:
-                        # slip_no = get_polymarket_slippage_sync(no_token_id, inv)
-                        # slippage_no = float(slip_no.get("slippage_pct", 0)) / 100.0
-                        pass
+                        slip_no = await get_polymarket_slippage(no_token_id, inv)
+                        slippage_no = float(slip_no.get("slippage_pct")) / 100.0
                     except Exception:
-                        # slippage_no = 0.01
-                        pass
+                        raise Exception("slippage_no wrong")
 
                     # 测试网初始保证金（IM）
                     amount_contracts = inv / (k1_mid * spot)
@@ -224,6 +207,7 @@ async def main(config_path="config.yaml"):
                         inv_base_usd=float(inv),
                         margin_requirement_usd=im_value_usd,
                         slippage_rate_close=slippage_yes,  # 平仓滑点；另：策略2我们单独传 NO 价
+                        slippage_rate_open=slippage_no
                     )
 
                     # === 构造 CostParams（只用真实存在的字段）===
@@ -232,19 +216,16 @@ async def main(config_path="config.yaml"):
                         risk_free_rate=r,
                         # 其它字段使用默认值：deribit_fee_cap_btc/deribit_fee_rate/gas_open_usd/gas_close_usd
                     )
-
                     # === 策略 1：做多 YES + 做空 Deribit 垂直价差 ===
-                    ev_out_1 = expected_values_strategy1(ev_in, cost_params)
-                    ev_yes = float(ev_out_1["total_ev"])
-                    total_costs_yes = float(ev_out_1.get("total_cost", 0.0))
-
                     # === 策略 2：做多 NO(=做空 YES) + 做多 Deribit 垂直价差 ===
-                    # ！！函数签名需要 poly_no_entry（NO 的入场价），以前调用缺这个参数会报错
-                    ev_out_2 = expected_values_strategy2(ev_in, cost_params, poly_no_entry=no_price)
-                    ev_no = float(ev_out_2["total_ev"])
-                    total_costs_no = float(ev_out_2.get("total_cost", 0.0))
+                    strategyContext = StrategyContext(ev_inputs=ev_in, cost_params=cost_params, poly_no_entry=no_price)
 
-                    # === 保存结果（可按你的 ResultRecord 精简字段）===
+                    result = compute_both_strategies(strategyContext)
+                    ev_yes, ev_no = float(result["strategy1"]["total_ev"]), float(result["strategy2"]["total_ev"])
+                    total_costs_yes = float(result["strategy1"].get("total_cost", 0.0))
+                    total_costs_no = float(result["strategy2"].get("total_cost", 0.0))
+
+                    # === 保存结果 ===
                     save_result_csv(
                         {
                             "timestamp": timestamp,
