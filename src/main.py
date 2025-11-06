@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from core.deribit_api import get_spot_price, get_testnet_initial_margin
+from core.deribit_api import calc_slippage, get_orderbook, get_spot_price, get_testnet_initial_margin
 from core.DeribitStream import DeribitStream
 from core.get_deribit_option_data import get_deribit_option_data
 from core.get_polymarket_slippage import get_polymarket_slippage
@@ -26,6 +26,20 @@ from utils.save_result import save_result_csv
 
 console = Console()
 load_dotenv()
+
+def require_float(data: dict, key: str) -> float:
+    """
+    从 dict 中强制获取 key 对应的浮点数：
+    - 如果 key 不存在 → KeyError
+    - 如果 value 是 None 或无法转为 float → ValueError
+    """
+    value = data.get(key)
+    if value is None:
+        raise KeyError(f"Key '{key}' is missing or is None in {data}")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Value of '{key}' is not a valid float: {value!r}")
 
 def init_markets(config):
     """根据行权价为每个事件找出 Deribit 的 K1/K2 合约名，并记录资产类型 BTC/ETH。"""
@@ -69,7 +83,7 @@ async def main(config_path="config.yaml"):
 
                 # === Spot 获取（BTC 或 ETH）===
                 spot_symbol = "btc_usd" if asset == "BTC" else "eth_usd"
-                spot = float(get_spot_price(spot_symbol) or 0.0)
+                spot = float(get_spot_price(spot_symbol))
 
                 # === Deribit 合约名 ===
                 inst_k1 = instruments_map[title]["k1"]
@@ -83,17 +97,17 @@ async def main(config_path="config.yaml"):
                 k1_info = next((d for d in deribit_list if d.get("instrument_name") == inst_k1), {})
                 k2_info = next((d for d in deribit_list if d.get("instrument_name") == inst_k2), {})
 
-                k1_bid = float(k1_info.get("bid_price") or 0.0)
-                k1_ask = float(k1_info.get("ask_price") or 0.0)
-                k2_bid = float(k2_info.get("bid_price") or 0.0)
-                k2_ask = float(k2_info.get("ask_price") or 0.0)
-                k1_mid = (k1_bid + k1_ask) / 2 if (k1_bid > 0 and k1_ask > 0) else 0.0
-                k2_mid = (k2_bid + k2_ask) / 2 if (k2_bid > 0 and k2_ask > 0) else 0.0
-                k1_iv = float(k1_info.get("mark_iv") or 0.0)
-                k2_iv = float(k2_info.get("mark_iv") or 0.0)
-                k1_fee = float(k1_info.get("fee") or 0.0)
-                k2_fee = float(k2_info.get("fee") or 0.0)
-                # deribit_fee_for_show = max(k1_fee, k2_fee)
+                k1_bid = require_float(k1_info, "bid_price")
+                k1_ask = require_float(k1_info, "ask_price")
+                k2_bid = require_float(k2_info, "bid_price")
+                k2_ask = require_float(k2_info, "ask_price")
+                k1_mid = (k1_bid + k1_ask) / 2
+                k2_mid = (k2_bid + k2_ask) / 2
+                k1_iv = require_float(k1_info, "mark_iv")
+                k2_iv = require_float(k2_info, "mark_iv")
+                k1_fee = require_float(k1_info, "fee")
+                k2_fee = require_float(k2_info, "fee")
+
 
                 # === 波动率：用 K1/K2 的有效 IV 均值兜底 ===
                 iv_pool = [v for v in (k1_iv, k2_iv) if v > 0]
@@ -165,16 +179,24 @@ async def main(config_path="config.yaml"):
                 # inv 是 USD 单位
                 for inv in investments:
                     # Polymarket 滑点（YES/NO 各取一次）
+                    slip_yes = None
+                    slippage_yes = None
+                    slip_no = None
+                    slippage_no = None
                     try:
-                        slip_yes = await get_polymarket_slippage(yes_token_id, inv)
+                        slip_yes = await get_polymarket_slippage(yes_token_id, inv, side="buy")
+                        slip_yes_close = await get_polymarket_slippage(yes_token_id, inv, side="sell")
                         slippage_yes = float(slip_yes.get("slippage_pct")) / 100.0
-                    except Exception:
-                        raise Exception("slippage_yes wrong")
+                        slippage_yes_close = float(slip_yes_close.get("slippage_pct")) / 100.0
+                    except Exception as e:
+                        raise Exception("slippage_yes wrong", e)
                     try:
-                        slip_no = await get_polymarket_slippage(no_token_id, inv)
+                        slip_no = await get_polymarket_slippage(no_token_id, inv, side="buy")
+                        slip_no_close = await get_polymarket_slippage(no_token_id, inv, side="sell")
                         slippage_no = float(slip_no.get("slippage_pct")) / 100.0
-                    except Exception:
-                        raise Exception("slippage_no wrong")
+                        slippage_no_close = float(slip_no_close.get("slippage_pct")) / 100.0
+                    except Exception as e:
+                        raise Exception("slippage_no wrong", slip_no, slippage_no, e)
 
                     # 测试网初始保证金（IM）
                     amount_contracts = inv / (k1_mid * spot)
@@ -187,6 +209,20 @@ async def main(config_path="config.yaml"):
                                     )
                     )
                     im_value_usd = im_value_btc * spot
+
+                    # === 计算 Deribit 滑点（买K1，看涨期权方向为buy，做空则为sell）===
+                    try:
+                        # 计算合约数量（原有逻辑）
+                        amount_contracts = inv / (k1_mid * spot)
+                        order_book_k1 = await get_orderbook(inst_k1, depth=50)
+                        # 买入K1（对应策略1开仓）
+                        slip_deri_buy, avg_price_buy, best_price_buy, status = calc_slippage(order_book_k1, amount_contracts, side="buy")
+                        # 卖出K1（对应平仓或策略2）
+                        slip_deri_sell, avg_price_sell, best_price_sell, status = calc_slippage(order_book_k1, amount_contracts, side="sell")
+                        if slip_deri_buy is None or slip_deri_sell is None:
+                            raise Exception("no_liquidity")
+                    except Exception as e:
+                        raise Exception("Deribit slippage wrong", e)
 
 
                     # === 构造 EVInputs（字段名必须与 dataclass 完全一致）===
@@ -206,8 +242,10 @@ async def main(config_path="config.yaml"):
                         btc_usd=spot,                # 对 BTC/ETH 都表示“合约计价币的 USD 价格”
                         inv_base_usd=float(inv),
                         margin_requirement_usd=im_value_usd,
-                        slippage_rate_close=slippage_yes,  # 平仓滑点；另：策略2我们单独传 NO 价
-                        slippage_rate_open=slippage_no
+                        slippage_open_s1=slippage_yes + slip_deri_sell,       # 策略1开仓（YES + 卖Call）
+                        slippage_close_s1=slippage_yes_close + slip_deri_buy,  # 策略1平仓（卖YES + 买Call）
+                        slippage_open_s2=slippage_no + slip_deri_buy,         # 策略2开仓（NO + 买Call）
+                        slippage_close_s2=slippage_no_close + slip_deri_sell   # 策略2平仓（卖NO + 卖Call）
                     )
 
                     # === 构造 CostParams（只用真实存在的字段）===
@@ -222,8 +260,8 @@ async def main(config_path="config.yaml"):
 
                     result = compute_both_strategies(strategyContext)
                     ev_yes, ev_no = float(result["strategy1"]["total_ev"]), float(result["strategy2"]["total_ev"])
-                    total_costs_yes = float(result["strategy1"].get("total_cost", 0.0))
-                    total_costs_no = float(result["strategy2"].get("total_cost", 0.0))
+                    total_costs_yes = float(result["strategy1"].get("total_cost"))
+                    total_costs_no = float(result["strategy2"].get("total_cost"))
 
                     # === 保存结果 ===
                     save_result_csv(
@@ -251,6 +289,10 @@ async def main(config_path="config.yaml"):
                             "mark_iv": mark_iv,
                             "r": r,
                             "T": T,
+                            "slippage_open_s1": slippage_yes + slip_deri_sell,
+                            "slippage_close_s1": slippage_yes_close + slip_deri_buy,
+                            "slippage_open_s2": slippage_no + slip_deri_buy,
+                            "slippage_close_s2": slippage_no_close + slip_deri_sell,
                             "ev_yes": ev_yes,
                             "ev_no": ev_no,
                         },

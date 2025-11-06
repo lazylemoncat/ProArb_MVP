@@ -124,7 +124,7 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
         days_held=ev_in.T * 365.0,
         r=cost_params.risk_free_rate,
     )
-    close_cost = closing_cost_usd(ev_in.inv_base_usd, ev_in.slippage_rate_close, cost_params.gas_close_usd)
+    close_cost = closing_cost_usd(ev_in.inv_base_usd, ev_in.slippage_close_s1, cost_params.gas_close_usd)
 
     total_cost = open_cost + carry_cost + close_cost
 
@@ -171,12 +171,13 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
     probs = interval_probabilities(ev_in.S, ev_in.K1, ev_in.K_poly, ev_in.K2, ev_in.T, ev_in.sigma, ev_in.r)
     p_yes = probs["Kp_to_K2"] + probs["ge_K2"]
     p_no = 1.0 - p_yes
-    e_poly = p_yes * _poly_pnl_no(poly_no_entry, True, ev_in.inv_base_usd, ev_in.slippage_rate_open) + p_no * _poly_pnl_no(
-        poly_no_entry, False, ev_in.inv_base_usd, ev_in.slippage_rate_open
+    e_poly = p_yes * _poly_pnl_no(poly_no_entry, True, ev_in.inv_base_usd, ev_in.slippage_open_s2) + p_no * _poly_pnl_no(
+        poly_no_entry, False, ev_in.inv_base_usd, ev_in.slippage_open_s2
     )
 
     open_cost = opening_cost_usd(
-        contracts_long, ev_in.call_k1_ask_btc, ev_in.call_k2_bid_btc, ev_in.btc_usd, cost_params
+        contracts_long, ev_in.call_k1_ask_btc, ev_in.call_k2_bid_btc, 
+        ev_in.btc_usd, cost_params, dir1="buy", dir2="sell"
     )
     carry_cost = carrying_cost_usd(
         ev_in.margin_requirement_usd,
@@ -184,7 +185,7 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
         days_held=ev_in.T * 365.0,
         r=cost_params.risk_free_rate,
     )
-    close_cost = closing_cost_usd(ev_in.inv_base_usd, ev_in.slippage_rate_close, cost_params.gas_close_usd)
+    close_cost = closing_cost_usd(ev_in.inv_base_usd, ev_in.slippage_close_s2, cost_params.gas_close_usd)
 
     total_cost = open_cost + carry_cost+ close_cost
 

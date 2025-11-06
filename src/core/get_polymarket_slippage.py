@@ -5,44 +5,42 @@ import websockets
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 
-async def get_polymarket_slippage(asset_id: str, amount_usd: float) -> dict[str, float | str]:
+async def get_polymarket_slippage(asset_id: str, amount_usd: float, side: str = "buy") -> dict[str, float | str]:
     """
-    获取指定 asset_id 的订单簿并计算买入给定金额的滑点
-    :param asset_id: Polymarket CLOB asset id
-    :param amount_usd: 买入金额（美元）
-    :return: dict(avg_price, shares_bought, slippage_pct)
+    计算买入或卖出指定 USD 金额时的滑点（支持 asks / bids）
+    side="buy" 表示吃 asks（买入）  
+    side="sell" 表示吃 bids（卖出）
     """
-
     async with websockets.connect(WS_URL) as ws:
-        # 订阅单个 asset_id 的市场数据
-        sub_msg = {"assets_ids": [asset_id], "type": "market"}
-        await ws.send(json.dumps(sub_msg))
+        await ws.send(json.dumps({"assets_ids": [asset_id], "type": "market"}))
 
         while True:
             msg = await ws.recv()
             data = json.loads(msg)
 
-            # 如果是列表，取第一个元素
             if isinstance(data, list):
                 if len(data) == 0:
-                    raise ValueError("Received empty data list from Polymarket WebSocket")
+                    raise ValueError("Empty websocket data from Polymarket")
                 data = data[0]
 
-            # 找到订单簿数据
             if data.get("event_type") == "book" and data.get("asset_id") == asset_id:
-                asks = data.get("asks", [])
-                if not asks:
-                    raise ValueError("No asks data available in the order book")
+                if side == "buy":   # === 买入吃 asks ===
+                    book = data.get("asks", [])
+                    if not book:
+                        raise ValueError("No asks available")
+                    book = sorted(book, key=lambda x: float(x["price"]))  # 升序
+                elif side == "sell":  # === 卖出吃 bids ===
+                    book = data.get("bids", [])
+                    if not book:
+                        raise ValueError("No bids available")
+                    book = sorted(book, key=lambda x: float(x["price"]), reverse=True)
+                else:
+                    raise ValueError("side must be 'buy' or 'sell'")
 
-                # 确保 asks 按价格升序排序
-                asks = sorted(asks, key=lambda x: float(x["price"]))
-
-                # === 计算滑点 ===
-                total_cost = 0.0
-                total_size = 0.0
+                total_cost, total_size = 0.0, 0.0
                 remaining = amount_usd
 
-                for level in asks:
+                for level in book:
                     price = float(level["price"])
                     size = float(level["size"])
                     level_value = price * size
@@ -52,25 +50,30 @@ async def get_polymarket_slippage(asset_id: str, amount_usd: float) -> dict[str,
                         total_size += size
                         remaining -= level_value
                     else:
-                        partial_size = remaining / price
                         total_cost += remaining
-                        total_size += partial_size
+                        total_size += remaining / price
                         remaining = 0
                         break
 
                 if total_size == 0:
-                    raise ValueError("Unable to buy any shares with the given amount")
+                    raise ValueError("Insufficient liquidity to execute order")
 
                 avg_price = total_cost / total_size
-                best_price = float(asks[0]["price"])
-                slippage_pct = (avg_price - best_price) / best_price * 100
+                best_price = float(book[0]["price"])
+
+                if side == "buy":
+                    slippage_pct = (avg_price - best_price) / best_price * 100
+                else:
+                    slippage_pct = (best_price - avg_price) / best_price * 100
 
                 return {
                     "asset_id": asset_id,
                     "avg_price": round(avg_price, 6),
                     "shares_bought": round(total_size, 6),
                     "slippage_pct": round(slippage_pct, 6),
+                    "side": side
                 }
+
 
 
 # 同步封装，便于外部直接调用
