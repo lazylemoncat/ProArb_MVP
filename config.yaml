@@ -7,16 +7,6 @@ thresholds:
   MARGIN_USD: 1000                                # 保证金
 
 events:
-  - name: "BTC > 98k"
-    asset: "BTC"
-    polymarket:
-      event_title: "Bitcoin above ___ on November 6?"
-      market_title: "98,000"
-
-    deribit:
-      k1_strike: 97000
-      k2_strike: 99000
-
   - name: "BTC > 100k"
     asset: "BTC"
     polymarket:
@@ -117,22 +107,22 @@ events:
       k1_strike: 117000
       k2_strike: 119000
 
-  - name: "Ethereum > 3800"
+  - name: "Ethereum > 3300"
     asset: "ETH"
     polymarket:
       event_title: "Ethereum above ___ on November 6?"
-      market_title: "3,800"
+      market_title: "3,300"
 
     deribit:
-      k1_strike: 3775
-      k2_strike: 3800
+      k1_strike: 3275
+      k2_strike: 3300
   
-  - name: "Ethereum > 3900"
+  - name: "Ethereum > 3400"
     asset: "ETH"
     polymarket:
       event_title: "Ethereum above ___ on November 6?"
-      market_title: "3,900"
+      market_title: "3,400"
 
     deribit:
-      k1_strike: 3875
-      k2_strike: 3925
+      k1_strike: 3375
+      k2_strike: 3400

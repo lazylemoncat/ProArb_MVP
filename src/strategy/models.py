@@ -17,7 +17,7 @@ class EVInputs:
     # 市场与模型参数
     S: float
     K1: float
-    K_poly: float
+    K_poly: float # usd
     K2: float
     T: float
     sigma: float

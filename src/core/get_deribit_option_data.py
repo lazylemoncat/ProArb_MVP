@@ -34,7 +34,7 @@ def get_deribit_option_data(
         results.append({
             "instrument_name": option_name,
             "mark_iv": mark_iv,
-            "bid_price": bid_price,
+            "bid_price": bid_price, # usd
             "ask_price": ask_price,
             "fee": fee
         })

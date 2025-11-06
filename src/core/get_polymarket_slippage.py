@@ -1,15 +1,20 @@
 import asyncio
 import json
 import websockets
+from typing import Literal
 
 WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 
-async def get_polymarket_slippage(asset_id: str, amount_usd: float, side: str = "buy") -> dict[str, float | str]:
+async def get_polymarket_slippage(
+    asset_id: str, 
+    amount: float, 
+    side: Literal["buy", "sell"] = "buy", 
+    amount_type: Literal["usd", "shares"] = "usd"
+) -> dict[str, float | str]:
     """
-    计算买入或卖出指定 USD 金额时的滑点（支持 asks / bids）
-    side="buy" 表示吃 asks（买入）  
-    side="sell" 表示吃 bids（卖出）
+    amount_type = "usd"（默认） → 保持原逻辑：花多少 USD 吃单
+    amount_type = "shares"     → 新逻辑：卖（或买）多少份额，而不是多少美元
     """
     async with websockets.connect(WS_URL) as ws:
         await ws.send(json.dumps({"assets_ids": [asset_id], "type": "market"}))
@@ -24,43 +29,60 @@ async def get_polymarket_slippage(asset_id: str, amount_usd: float, side: str = 
                 data = data[0]
 
             if data.get("event_type") == "book" and data.get("asset_id") == asset_id:
-                if side == "buy":   # === 买入吃 asks ===
-                    book = data.get("asks", [])
-                    if not book:
-                        raise ValueError("No asks available")
-                    book = sorted(book, key=lambda x: float(x["price"]))  # 升序
-                elif side == "sell":  # === 卖出吃 bids ===
-                    book = data.get("bids", [])
-                    if not book:
-                        raise ValueError("No bids available")
-                    book = sorted(book, key=lambda x: float(x["price"]), reverse=True)
+                if side == "buy":
+                    book = sorted(data.get("asks", []), key=lambda x: float(x["price"]))
+                elif side == "sell":
+                    book = sorted(data.get("bids", []), key=lambda x: float(x["price"]), reverse=True)
                 else:
                     raise ValueError("side must be 'buy' or 'sell'")
 
                 total_cost, total_size = 0.0, 0.0
-                remaining = amount_usd
 
-                for level in book:
-                    price = float(level["price"])
-                    size = float(level["size"])
-                    level_value = price * size
+                # ✅ 分岔点（核心逻辑）
+                if amount_type == "usd":
+                    remaining_usd = amount
+                    for lvl in book:
+                        price = float(lvl["price"])
+                        size = float(lvl["size"])
+                        level_value = price * size
 
-                    if remaining > level_value:
-                        total_cost += level_value
-                        total_size += size
-                        remaining -= level_value
-                    else:
-                        total_cost += remaining
-                        total_size += remaining / price
-                        remaining = 0
-                        break
+                        if remaining_usd >= level_value:
+                            total_cost += level_value
+                            total_size += size
+                            remaining_usd -= level_value
+                        else:
+                            total_cost += remaining_usd
+                            total_size += remaining_usd / price
+                            remaining_usd = 0
+                            break
+                    if remaining_usd > 0:
+                        raise ValueError(f"Insufficient liquidity for {amount} USD")
+
+                elif amount_type == "shares":
+                    remaining_shares = amount
+                    for lvl in book:
+                        price = float(lvl["price"])
+                        size = float(lvl["size"])
+
+                        if remaining_shares >= size:
+                            total_cost += size * price
+                            total_size += size
+                            remaining_shares -= size
+                        else:
+                            total_cost += remaining_shares * price
+                            total_size += remaining_shares
+                            remaining_shares = 0
+                            break
+                    if remaining_shares > 0:
+                        raise ValueError(f"Insufficient liquidity for {amount} shares")
+                else:
+                    raise ValueError("amount_type must be 'usd' or 'shares'")
 
                 if total_size == 0:
-                    raise ValueError("Insufficient liquidity to execute order")
+                    raise ValueError("Insufficient liquidity")
 
                 avg_price = total_cost / total_size
                 best_price = float(book[0]["price"])
-
                 if side == "buy":
                     slippage_pct = (avg_price - best_price) / best_price * 100
                 else:
@@ -69,10 +91,14 @@ async def get_polymarket_slippage(asset_id: str, amount_usd: float, side: str = 
                 return {
                     "asset_id": asset_id,
                     "avg_price": round(avg_price, 6),
+                    "shares_executed": round(total_size, 6),
                     "shares_bought": round(total_size, 6),
+                    "total_cost_usd": round(total_cost, 6),
                     "slippage_pct": round(slippage_pct, 6),
-                    "side": side
+                    "side": side,
+                    "amount_type": amount_type
                 }
+
 
 
 
