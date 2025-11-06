@@ -18,8 +18,9 @@ from strategy.expected_value import (
     EVInputs,
     compute_both_strategies
 )
-from strategy.models import CostParams, StrategyContext
+from strategy.models import CostParams, PositionInputs, StrategyContext
 
+from strategy.position_calculator import strategy1_position_contracts, strategy2_position_contracts
 from strategy.probability_engine import bs_probability_gt
 from utils.dataloader import load_manual_data
 from utils.save_result import save_result_csv
@@ -33,7 +34,7 @@ def require_float(data: dict, key: str, k_dir: str) -> float:
     - 如果 key 不存在 → KeyError
     - 如果 value 是 None 或无法转为 float → ValueError
     """
-    value = data.get(key)
+    value = data[key]
     if value is None:
         raise KeyError(f"{k_dir}Key '{key}' is missing or is None in {data}")
     try:
@@ -51,6 +52,9 @@ def init_markets(config):
         k2 = m["deribit"]["k2_strike"]
         inst_k1, k1_expiration_timestamp = DeribitStream.find_month_future_by_strike(k1, call=True, currency=asset)
         inst_k2, k2_expiration_timestamp = DeribitStream.find_month_future_by_strike(k2, call=True, currency=asset)
+        # inst_k1, k1_expiration_timestamp = DeribitStream.find_option_instrument(k1, call=True, currency=asset)
+        # inst_k2, k2_expiration_timestamp = DeribitStream.find_option_instrument(k2, call=True, currency=asset)
+        
         instruments_map[title] = {
             "k1": inst_k1, 
             "k1_expiration_timestamp": k1_expiration_timestamp,
@@ -120,8 +124,8 @@ async def loop_event(
             raise Exception("prices wrong")
 
     tokens = PolymarketAPI.get_clob_token_ids_by_market(market_id)
-    yes_token_id = tokens.get("yes_token_id", "")
-    no_token_id = tokens.get("no_token_id", "")
+    yes_token_id = tokens["yes_token_id"]
+    no_token_id = tokens["no_token_id"]
 
     # === 其它模型参数 ===
     k1_strike = float(data["deribit"]["k1_strike"])
@@ -173,67 +177,52 @@ async def loop_event(
         try:
             slip_yes = await get_polymarket_slippage(yes_token_id, inv, side="buy")
             slip_yes_open = await get_polymarket_slippage(yes_token_id, inv, side="buy", amount_type="usd")
-            shares_yes = slip_yes_open["shares_executed"]
-            slippage_yes = float(slip_yes.get("slippage_pct")) / 100.0
+            shares_yes = float(slip_yes_open["shares_executed"])
+            slippage_yes = float(slip_yes["slippage_pct"]) / 100.0
             slip_yes_close = await get_polymarket_slippage(yes_token_id, shares_yes, side="sell", amount_type="shares")
-            slippage_yes_close = slip_yes_close.get("slippage_pct") / 100.0
+            slippage_yes_close = float(slip_yes_close["slippage_pct"]) / 100.0
         except Exception as e:
             raise Exception("slippage_yes wrong", e)
         try:
             slip_no = await get_polymarket_slippage(no_token_id, inv, side="buy")
             slip_no_close = await get_polymarket_slippage(no_token_id, inv, side="sell", amount_type="usd")
-            slippage_no = float(slip_no.get("slippage_pct")) / 100.0
-            shares_no = slip_no_close["shares_executed"]
+            slippage_no = float(slip_no["slippage_pct"]) / 100.0
+            shares_no = float(slip_no_close["shares_executed"])
             slip_no_close = await get_polymarket_slippage(no_token_id, shares_no, side="sell", amount_type="shares")
-            slippage_no_close = slip_no_close.get("slippage_pct") / 100.0
+            slippage_no_close = float(slip_no_close["slippage_pct"]) / 100.0
         except Exception as e:
             raise Exception("slippage_no wrong", slip_no, slippage_no, e)
 
         # 测试网初始保证金（IM）
         # Deribit 垂直价差（熊市）净收入 = 卖K1 - 买K2（单位 BTC）
-        actual_inv_yes = slip_yes.get("total_cost_usd", inv)   # YES 买入实际花费
-        actual_inv_no  = slip_no.get("total_cost_usd", inv)    # NO  买入实际花费
-
-        # 第二步：选择最小的成交额，避免一边成交一边没成交对冲失衡
-        actual_inv = min(actual_inv_yes, actual_inv_no)
-
-        # 第三步：计算缩放比例（部分成交）
-        scale = actual_inv / inv
-        net_credit_btc = (k1_bid / spot) - (k2_ask / spot)
-        net_credit_usd = net_credit_btc * spot  # 换算为 USD
-
-        # 第四步：同步缩放 Deribit 垂直价差的合约数量
-        if net_credit_usd > 0:
-            amount_contracts = (inv / net_credit_usd) * scale
-        else:
-            amount_contracts = 0
-
-        # 第五步：更新 inv，后续 EV 和成本都基于实际投资
-        inv = actual_inv
-
-        # net_credit_btc = (k1_bid / spot) - (k2_ask / spot)
-        # net_credit_usd = net_credit_btc * spot  # 换算为 USD
-        # # 如果净收入小于等于0，说明没有套利空间，为避免除0，这里合约数设为0
-        # if net_credit_usd > 0:
-        #     amount_contracts = inv / net_credit_usd
-        # else:
-        #     amount_contracts = 0
-
-        # amount_contracts = inv / (k1_mid * spot)
-        im_value_btc = float(await get_testnet_initial_margin(
-                            user_id=deribit_user_id,
-                            client_id=client_id,
-                            client_secret=client_secret,
-                            amount=amount_contracts,
-                            instrument_name=inst_k1,
-                        )
+        pos_in = PositionInputs(
+            inv_base_usd=float(inv),
+            call_k1_bid_btc=k1_bid,
+            call_k2_ask_btc=k2_ask,
+            call_k1_ask_btc=k1_ask,
+            call_k2_bid_btc=k2_bid,
+            btc_usd=spot,
         )
+
+        # 用同一套“定仓逻辑”拿合约数量（避免和 EV 脱节）
+        contracts_short, _ = strategy1_position_contracts(pos_in)
+        contracts_long,  _ = strategy2_position_contracts(pos_in, poly_no_entry=no_price)
+
+        # 你可以分别计算两种策略的 IM；如果只想要一个保守 IM：
+        amount_contracts = max(abs(contracts_short), abs(contracts_long))
+
+        im_value_btc = float(await get_testnet_initial_margin(
+            user_id=deribit_user_id,
+            client_id=client_id,
+            client_secret=client_secret,
+            amount=amount_contracts,
+            instrument_name=inst_k1,
+        ))
         im_value_usd = im_value_btc * spot
 
         # === 计算 Deribit 滑点（买K1，看涨期权方向为buy，做空则为sell）===
         try:
             order_book_k1 = await get_orderbook(inst_k1, depth=2000)
-            print(order_book_k1)
             # 买入K1（对应策略1开仓）
             slip_deri_buy, avg_price_buy, best_price_buy, status = calc_slippage(order_book_k1, amount_contracts, side="buy")
             # 卖出K1（对应平仓或策略2）
@@ -248,6 +237,10 @@ async def loop_event(
         k1_ask_btc = k1_ask / spot
         k2_bid_btc = k2_bid / spot
         k2_ask_btc = k2_ask / spot
+        # k1_bid_btc = k1_bid
+        # k1_ask_btc = k1_ask
+        # k2_bid_btc = k2_bid
+        # k2_ask_btc = k2_ask
         # === 构造 EVInputs（字段名必须与 dataclass 完全一致）===
         ev_in = EVInputs(
             S=spot,
@@ -281,7 +274,15 @@ async def loop_event(
         # === 策略 2：做多 NO(=做空 YES) + 做多 Deribit 垂直价差 ===
         strategyContext = StrategyContext(ev_inputs=ev_in, cost_params=cost_params, poly_no_entry=no_price)
 
-        result = compute_both_strategies(strategyContext)
+        result = compute_both_strategies(strategyContext, contracts_override=amount_contracts)
+        # print("[DBG] amount_contracts(IM用):", amount_contracts)
+        # print("[DBG] EV用 contracts_long/short:",
+        #     result["strategy2"].get("contracts_long"),
+        #     result["strategy1"].get("contracts_short"))
+        # print("[DBG] EV拆分 strategy2:",
+        #     "e_poly=", result["strategy2"]["e_poly"],
+        #     "e_deribit=", result["strategy2"]["e_deribit"],
+        #     "total_cost=", result["strategy2"]["total_cost"])
         ev_yes, ev_no = float(result["strategy1"]["total_ev"]), float(result["strategy2"]["total_ev"])
         total_costs_yes = float(result["strategy1"].get("total_cost"))
         total_costs_no = float(result["strategy2"].get("total_cost"))
@@ -326,7 +327,7 @@ async def loop_event(
         if im_value_usd > 0:
             console.print(
                 f"💰 {inv} | EV_yes={ev_yes:.2f} | EV_no={ev_no:.2f} | IM={im_value_usd:.2f} | "
-                f"EV/IM_yes={(ev_yes/im_value_usd):.3f}" + ("" if im_value_usd == 0 else f" | EV/IM_no={(ev_no/im_value_usd):.3f}")
+                f"EV/IM_yes={(ev_yes/im_value_usd):.3f}" + ("" if im_value_usd == 0 else f" | EV/IM_no={(ev_no/im_value_usd):.3f}, amount_contracts: {amount_contracts:.2f}")
             )
 
     console.rule("[bold magenta]Next Market[/bold magenta]")
@@ -361,7 +362,7 @@ async def main(config_path="config.yaml"):
                 )
             except Exception as e:
                 console.print(f"❌ [red]处理 {data['polymarket']['market_title']} 时出错: {e}[/red]")
-                traceback.print_exc()   # 打印完整的错误堆栈
+                # traceback.print_exc()   # 打印完整的错误堆栈
 
         sleep_sec = config["thresholds"]["check_interval_sec"]
         console.print(f"\n[dim]⏳ 等待 {sleep_sec} 秒后重连 Deribit/Polymarket 数据流...[/dim]\n")

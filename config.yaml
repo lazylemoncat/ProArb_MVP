@@ -106,16 +106,6 @@ events:
     deribit:
       k1_strike: 117000
       k2_strike: 119000
-
-  - name: "Ethereum > 3300"
-    asset: "ETH"
-    polymarket:
-      event_title: "Ethereum above ___ on November 7?"
-      market_title: "3,300"
-
-    deribit:
-      k1_strike: 3275
-      k2_strike: 3300
   
   - name: "Ethereum > 3400"
     asset: "ETH"
@@ -126,3 +116,13 @@ events:
     deribit:
       k1_strike: 3375
       k2_strike: 3400
+
+  - name: "Ethereum > 3500"
+    asset: "ETH"
+    polymarket:
+      event_title: "Ethereum above ___ on November 7?"
+      market_title: "3,500"
+
+    deribit:
+      k1_strike: 3475
+      k2_strike: 3500

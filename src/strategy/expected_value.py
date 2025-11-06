@@ -76,7 +76,7 @@ def deribit_vertical_expected_payoff(
     return expected if long else -expected
 
 
-def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[str, float]:
+def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams, contracts_override=None) -> Dict[str, float]:
     """策略一(做多 Poly + 做空 Deribit)的开仓事前预期。
     返回: dict 包含各组成项与总EV。
     """
@@ -89,7 +89,17 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
         call_k2_bid_btc=ev_in.call_k2_bid_btc,
         btc_usd=ev_in.btc_usd,
     )
-    contracts_short, income_deribit_usd = strategy1_position_contracts(pos_in)
+
+    if contracts_override is None:
+        contracts_short, cost_deribit_usd = strategy1_position_contracts(pos_in)
+    else:
+        # 使用外部传入的合约数量
+        contracts_short = contracts_override
+        # 估算每张合约净成本（卖K1-买K2），单位：BTC→USD
+        cost_per_contract_btc = ev_in.call_k1_bid_btc - ev_in.call_k2_ask_btc
+        cost_deribit_usd = cost_per_contract_btc * ev_in.btc_usd
+
+    # contracts_short, income_deribit_usd = strategy1_position_contracts(pos_in)
 
     # 预期行权盈亏（使用垂直价差到期价值的期望 × 合约）
     exp_exercise = deribit_vertical_expected_payoff(
@@ -104,14 +114,15 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
     ) * contracts_short
 
     # Deribit 预期 P&L
-    e_deribit = income_deribit_usd * contracts_short + exp_exercise
+    e_deribit = -cost_deribit_usd * contracts_short + exp_exercise
 
     # Polymarket 预期 P&L：基于阈值K_poly的发生（Yes）/不发生（No）
     probs = interval_probabilities(ev_in.S, ev_in.K1, ev_in.K_poly, ev_in.K2, ev_in.T, ev_in.sigma, ev_in.r)
     p_yes = probs["Kp_to_K2"] + probs["ge_K2"]
     p_no = 1.0 - p_yes
-    e_poly = p_yes * poly_pnl_yes(ev_in.poly_yes_price, True, ev_in.inv_base_usd) + p_no * poly_pnl_yes(
-        ev_in.poly_yes_price, False, ev_in.inv_base_usd
+    e_poly = (
+        p_yes * poly_pnl_yes(ev_in.poly_yes_price, True, ev_in.inv_base_usd, ev_in.slippage_open_s1) 
+        + p_no * poly_pnl_yes(ev_in.poly_yes_price, False, ev_in.inv_base_usd, ev_in.slippage_open_s1)
     )
 
     # 成本：开仓 + 持仓 + 平仓
@@ -141,7 +152,12 @@ def expected_values_strategy1(ev_in: EVInputs, cost_params: CostParams) -> Dict[
     }
 
 
-def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_entry: float) -> Dict[str, float]:
+def expected_values_strategy2(
+        ev_in: EVInputs, 
+        cost_params: CostParams, 
+        poly_no_entry: float, 
+        contracts_override=None
+    ) -> Dict[str, float]:
     """策略二(做空 Poly + 做多 Deribit)的开仓事前预期。"""
     pos_in = PositionInputs(
         inv_base_usd=ev_in.inv_base_usd,
@@ -151,7 +167,15 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
         call_k2_bid_btc=ev_in.call_k2_bid_btc,
         btc_usd=ev_in.btc_usd,
     )
-    contracts_long, cost_deribit_usd = strategy2_position_contracts(pos_in, poly_no_entry)
+
+    if contracts_override is None:
+        contracts_long, cost_deribit_usd = strategy2_position_contracts(pos_in, poly_no_entry)
+    else:
+        contracts_long = contracts_override
+        cost_per_contract_btc = ev_in.call_k1_ask_btc - ev_in.call_k2_bid_btc
+        cost_deribit_usd = cost_per_contract_btc * ev_in.btc_usd
+
+    # contracts_long, cost_deribit_usd = strategy2_position_contracts(pos_in, poly_no_entry)
 
     exp_exercise = deribit_vertical_expected_payoff(
         ev_in.S, 
@@ -201,9 +225,9 @@ def expected_values_strategy2(ev_in: EVInputs, cost_params: CostParams, poly_no_
         "total_ev": total_ev,
     }
 
-def compute_both_strategies(ctx: StrategyContext):
+def compute_both_strategies(ctx: StrategyContext, contracts_override=None):
     result = {}
-    result['strategy1'] = expected_values_strategy1(ctx.ev_inputs, ctx.cost_params)
+    result['strategy1'] = expected_values_strategy1(ctx.ev_inputs, ctx.cost_params, contracts_override)
     if ctx.poly_no_entry is not None:
-        result['strategy2'] = expected_values_strategy2(ctx.ev_inputs, ctx.cost_params, ctx.poly_no_entry)
+        result['strategy2'] = expected_values_strategy2(ctx.ev_inputs, ctx.cost_params, ctx.poly_no_entry, contracts_override)
     return result
