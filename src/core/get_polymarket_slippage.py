@@ -56,7 +56,8 @@ async def get_polymarket_slippage(
                             remaining_usd = 0
                             break
                     if remaining_usd > 0:
-                        raise ValueError(f"Insufficient liquidity for {amount} USD")
+                        pass
+                        # raise ValueError(f"Insufficient liquidity for {amount} USD")
 
                 elif amount_type == "shares":
                     remaining_shares = amount
@@ -74,7 +75,8 @@ async def get_polymarket_slippage(
                             remaining_shares = 0
                             break
                     if remaining_shares > 0:
-                        raise ValueError(f"Insufficient liquidity for {amount} shares")
+                        pass
+                        # raise ValueError(f"Insufficient liquidity for {amount} shares")
                 else:
                     raise ValueError("amount_type must be 'usd' or 'shares'")
 

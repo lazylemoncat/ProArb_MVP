@@ -2,7 +2,7 @@ import asyncio
 import os
 import time
 from datetime import datetime, timezone
-
+import traceback
 from dotenv import load_dotenv
 from rich import box
 from rich.console import Console
@@ -49,8 +49,8 @@ def init_markets(config):
         asset = m.get("asset", "BTC").upper()
         k1 = m["deribit"]["k1_strike"]
         k2 = m["deribit"]["k2_strike"]
-        inst_k1, k1_expiration_timestamp = DeribitStream.find_option_instrument(k1, call=True, currency=asset)
-        inst_k2, k2_expiration_timestamp = DeribitStream.find_option_instrument(k2, call=True, currency=asset)
+        inst_k1, k1_expiration_timestamp = DeribitStream.find_month_future_by_strike(k1, call=True, currency=asset)
+        inst_k2, k2_expiration_timestamp = DeribitStream.find_month_future_by_strike(k2, call=True, currency=asset)
         instruments_map[title] = {
             "k1": inst_k1, 
             "k1_expiration_timestamp": k1_expiration_timestamp,
@@ -60,15 +60,15 @@ def init_markets(config):
         }
     return instruments_map
 
-async def loop_event(data, config):
-    deribit_user_id = os.getenv("test_deribit_user_id", "")
-    client_id = os.getenv("test_deribit_client_id", "")
-    client_secret = os.getenv("test_deribit_client_secret", "")
-
-    investments = config["thresholds"]["INVESTMENTS"]
-    output_csv = config["thresholds"]["OUTPUT_CSV"]
-    instruments_map = init_markets(config)
-
+async def loop_event(
+        data,
+        deribit_user_id,
+        client_id,
+        client_secret,
+        investments,
+        output_csv,
+        instruments_map
+    ):
     title = data["polymarket"]["market_title"]
     asset = instruments_map[title]["asset"]
 
@@ -175,7 +175,8 @@ async def loop_event(data, config):
             slip_yes_open = await get_polymarket_slippage(yes_token_id, inv, side="buy", amount_type="usd")
             shares_yes = slip_yes_open["shares_executed"]
             slippage_yes = float(slip_yes.get("slippage_pct")) / 100.0
-            slippage_yes_close = await get_polymarket_slippage(yes_token_id, shares_yes, side="sell", amount_type="shares")
+            slip_yes_close = await get_polymarket_slippage(yes_token_id, shares_yes, side="sell", amount_type="shares")
+            slippage_yes_close = slip_yes_close.get("slippage_pct") / 100.0
         except Exception as e:
             raise Exception("slippage_yes wrong", e)
         try:
@@ -183,20 +184,40 @@ async def loop_event(data, config):
             slip_no_close = await get_polymarket_slippage(no_token_id, inv, side="sell", amount_type="usd")
             slippage_no = float(slip_no.get("slippage_pct")) / 100.0
             shares_no = slip_no_close["shares_executed"]
-            slippage_no_close = await get_polymarket_slippage(no_token_id, shares_no, side="sell", amount_type="shares")
+            slip_no_close = await get_polymarket_slippage(no_token_id, shares_no, side="sell", amount_type="shares")
+            slippage_no_close = slip_no_close.get("slippage_pct") / 100.0
         except Exception as e:
             raise Exception("slippage_no wrong", slip_no, slippage_no, e)
 
         # 测试网初始保证金（IM）
         # Deribit 垂直价差（熊市）净收入 = 卖K1 - 买K2（单位 BTC）
+        actual_inv_yes = slip_yes.get("total_cost_usd", inv)   # YES 买入实际花费
+        actual_inv_no  = slip_no.get("total_cost_usd", inv)    # NO  买入实际花费
+
+        # 第二步：选择最小的成交额，避免一边成交一边没成交对冲失衡
+        actual_inv = min(actual_inv_yes, actual_inv_no)
+
+        # 第三步：计算缩放比例（部分成交）
+        scale = actual_inv / inv
         net_credit_btc = (k1_bid / spot) - (k2_ask / spot)
         net_credit_usd = net_credit_btc * spot  # 换算为 USD
 
-        # 如果净收入小于等于0，说明没有套利空间，为避免除0，这里合约数设为0
+        # 第四步：同步缩放 Deribit 垂直价差的合约数量
         if net_credit_usd > 0:
-            amount_contracts = inv / net_credit_usd
+            amount_contracts = (inv / net_credit_usd) * scale
         else:
             amount_contracts = 0
+
+        # 第五步：更新 inv，后续 EV 和成本都基于实际投资
+        inv = actual_inv
+
+        # net_credit_btc = (k1_bid / spot) - (k2_ask / spot)
+        # net_credit_usd = net_credit_btc * spot  # 换算为 USD
+        # # 如果净收入小于等于0，说明没有套利空间，为避免除0，这里合约数设为0
+        # if net_credit_usd > 0:
+        #     amount_contracts = inv / net_credit_usd
+        # else:
+        #     amount_contracts = 0
 
         # amount_contracts = inv / (k1_mid * spot)
         im_value_btc = float(await get_testnet_initial_margin(
@@ -211,7 +232,8 @@ async def loop_event(data, config):
 
         # === 计算 Deribit 滑点（买K1，看涨期权方向为buy，做空则为sell）===
         try:
-            order_book_k1 = await get_orderbook(inst_k1, depth=50)
+            order_book_k1 = await get_orderbook(inst_k1, depth=2000)
+            print(order_book_k1)
             # 买入K1（对应策略1开仓）
             slip_deri_buy, avg_price_buy, best_price_buy, status = calc_slippage(order_book_k1, amount_contracts, side="buy")
             # 卖出K1（对应平仓或策略2）
@@ -311,18 +333,35 @@ async def loop_event(data, config):
 
 
 async def main(config_path="config.yaml"):
+    config = load_manual_data(config_path)
+    deribit_user_id = os.getenv("test_deribit_user_id", "")
+    client_id = os.getenv("test_deribit_client_id", "")
+    client_secret = os.getenv("test_deribit_client_secret", "")
+
+    investments = config["thresholds"]["INVESTMENTS"]
+    output_csv = config["thresholds"]["OUTPUT_CSV"]
+    instruments_map = init_markets(config)
+
     console.print(Panel.fit("[bold cyan]Deribit x Polymarket Arbitrage Monitor[/bold cyan]", border_style="bright_cyan"))
     console.print("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")
 
-    config = load_manual_data(config_path)
     events = config["events"]
 
     while True:
         for data in events:
             try:
-                await loop_event(data, config)
+                await loop_event(
+                    data,
+                    deribit_user_id,
+                    client_id,
+                    client_secret,
+                    investments,
+                    output_csv,
+                    instruments_map
+                )
             except Exception as e:
                 console.print(f"❌ [red]处理 {data['polymarket']['market_title']} 时出错: {e}[/red]")
+                traceback.print_exc()   # 打印完整的错误堆栈
 
         sleep_sec = config["thresholds"]["check_interval_sec"]
         console.print(f"\n[dim]⏳ 等待 {sleep_sec} 秒后重连 Deribit/Polymarket 数据流...[/dim]\n")

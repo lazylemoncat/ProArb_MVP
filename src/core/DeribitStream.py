@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 
 import requests
@@ -127,3 +128,56 @@ class DeribitStream:
 
         print(f"🎯 行权价 {strike} → 使用最近可交易行权价 {best_strike} → 合约 {instrument_name}")
         return (instrument_name, expiration_timestamp)
+    
+    @staticmethod
+    def find_month_future_by_strike(strike: float, currency: Literal["BTC", "ETH"] = "BTC", call: bool = True):
+        """
+        根据行权价找到最接近的行权价，并在【每月最后一个周五（月度期权）】中选取最近到期的 Call/Put。
+        """
+        url = "https://www.deribit.com/api/v2/public/get_instruments"
+        params = {"currency": currency, "kind": "option", "expired": "false"}
+        r = requests.get(url, params=params).json()
+        instruments = r["result"]
+
+        callput = "call" if call else "put"
+
+        # ✅ 先筛出同方向的期权
+        same_type = [inst for inst in instruments if inst["option_type"] == callput]
+
+        # ✅ 只保留每月最后一个周五（月度期权）
+        def is_last_friday(timestamp_ms):
+            dt = datetime.datetime.utcfromtimestamp(timestamp_ms / 1000)
+            # 判断是否为周五 (weekday() == 4)
+            if dt.weekday() != 4:
+                return False
+            # 是否为该月最后一周的周五
+            next_week = dt + datetime.timedelta(days=7)
+            return next_week.month != dt.month
+
+        same_type = [
+            inst for inst in same_type
+            if is_last_friday(inst["expiration_timestamp"])
+        ]
+
+        if not same_type:
+            raise ValueError("⚠️ 当前没有找到任何月度期权（每月最后一个周五）")
+
+        # ✅ 找到与目标 strike 最近的实际可交易行权价
+        best_strike = min(
+            {inst["strike"] for inst in same_type},
+            key=lambda s: abs(s - float(strike))
+        )
+
+        # ✅ 过滤出该行权价的所有合约
+        candidates = [inst for inst in same_type if inst["strike"] == best_strike]
+
+        if not candidates:
+            raise ValueError(f"⚠️ 没有找到与行权价 {strike} 接近的月度期权")
+
+        # ✅ 从中选最近到期的
+        candidates.sort(key=lambda x: x["expiration_timestamp"])
+        instrument_name = candidates[0]["instrument_name"]
+        expiration_timestamp = candidates[0]["expiration_timestamp"]
+
+        print(f"🎯 行权价 {strike} → 月度合约行权价 {best_strike} → 合约 {instrument_name}")
+        return instrument_name, expiration_timestamp

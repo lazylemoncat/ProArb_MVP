@@ -19,10 +19,10 @@ def get_deribit_option_data(
     for item in data.get("result", []):
         option_name = item.get("instrument_name")
         mark_iv = item.get("mark_iv", None)
-        bid_price = item.get("bid_price", 0.0)
-        ask_price = item.get("ask_price", 0.0)
+        bid_price = item.get("bid_price")
+        ask_price = item.get("ask_price")
         option_price = item.get("last") or 0.0
-        index_price = item.get("underlying_price") or 0.0
+        index_price = item.get("underlying_price")
 
         # 手续费计算
         if not usdc_settled:
