@@ -124,22 +124,6 @@ async def deribit_websocket_auth(websocket: ClientConnection, deribit_user_id: s
     response = await websocket.recv()
     return response
 
-async def get_initial_margin(websocket: ClientConnection, user_id: str, currency: str="BTC"):
-    msg = {
-        "id": user_id,
-        "jsonrpc": "2.0",
-        "method": "private/get_account_summary",
-        "params":{
-            "currency": currency,
-            "extended": True
-        }
-    }
-    await websocket.send(json.dumps(msg))
-    response = await websocket.recv()
-    response_dict = json.loads(response)
-    initial_margin = response_dict.get("result").get("initial_margin")
-    return initial_margin
-
 async def open_long_position(websocket: ClientConnection, user_id: str, amount: int, instrument_name: str, type: str="market"):
     msg = {
         "id": user_id,
@@ -169,6 +153,23 @@ async def close_position(websocket: ClientConnection, user_id: str, amount: int,
     await websocket.send(json.dumps(msg))
     response = await websocket.recv()
     return response
+
+async def change_margin_model(websocket, user_id, margin_model: str="cross_pm"):
+    msg = {
+        "id": user_id,
+        "jsonrpc": "2.0",
+        "method": "private/change_margin_model",
+        "params": {
+            "margin_model": "cross_pm",
+            "user_id": user_id
+        }
+    }
+    try:
+        await websocket.send(json.dumps(msg))
+        response = await websocket.recv()
+        response_result = json.loads(response).get("result")
+    except Exception as e:
+        raise Exception(f"change_margin_model wrong: {e}, {response_result}, {response}")
 
 async def get_margins(websocket, user_id, amount, instrument_name, price):
     """
@@ -201,6 +202,7 @@ async def get_margins(websocket, user_id, amount, instrument_name, price):
 async def get_testnet_initial_margin(user_id, client_id, client_secret, amount, instrument_name):
     async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
         await deribit_websocket_auth(websocket, user_id, client_id, client_secret)
+        await change_margin_model(websocket, user_id)
         price = await get_mid_price_by_orderbook(websocket, user_id, instrument_name)
         
         initial_margin = await get_margins(websocket, user_id, amount, instrument_name, price)
@@ -224,6 +226,25 @@ async def get_interest_rate(user_id, instrument_name):
         interest_rate = float(json.loads(response).get("result")[0].get("interest_rate"))
 
         return interest_rate
+
+async def get_simulate_portfolio_initial_margin(user_id, client_id, client_secret, currency, simulated_positions):
+    msg = {
+        "id": user_id,
+        "jsonrpc": "2.0",
+        "method": "private/simulate_portfolio",
+        "params": {
+            "add_positions": True,
+            "currency": currency,
+            "simulated_positions": simulated_positions
+        }
+    }
+    async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
+        await deribit_websocket_auth(websocket, user_id, client_id, client_secret)
+        await change_margin_model(websocket, user_id)
+        await websocket.send(json.dumps(msg))
+        response = await websocket.recv()
+        return json.loads(response)["result"]["initial_margin"]
+
     
 if __name__ == "__main__":
     import asyncio
@@ -245,7 +266,19 @@ if __name__ == "__main__":
     client_secret = os.getenv("test_deribit_client_secret", "")
 
     async def call_api():
-        instrument_name = "BTC-6NOV25-99000-C"
-        orderbook = await get_orderbook(instrument_name)
-        print(orderbook)
+        instrument_name = "BTC-28NOV25-104000-C"
+        instrument_name2 = "BTC-28NOV25-100000-C"
+        amount1 = 100
+        amount2 = 100
+        res = await get_simulate_portfolio_initial_margin(
+            user_id=deribit_user_id,
+            client_id=client_id,
+            client_secret=client_secret,
+            currency="BTC",
+            simulated_positions= {
+                instrument_name: amount1,
+                instrument_name2: -amount2
+            }
+        )
+        print(res)
     asyncio.run(call_api())

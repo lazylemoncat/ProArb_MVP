@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from core.deribit_api import calc_slippage, get_orderbook, get_spot_price, get_testnet_initial_margin
+from core.deribit_api import calc_slippage, get_orderbook, get_simulate_portfolio_initial_margin, get_spot_price, get_testnet_initial_margin
 from core.DeribitStream import DeribitStream
 from core.get_deribit_option_data import get_deribit_option_data
 from core.get_polymarket_slippage import get_polymarket_slippage
@@ -50,10 +50,10 @@ def init_markets(config):
         asset = m.get("asset", "BTC").upper()
         k1 = m["deribit"]["k1_strike"]
         k2 = m["deribit"]["k2_strike"]
-        inst_k1, k1_expiration_timestamp = DeribitStream.find_month_future_by_strike(k1, call=True, currency=asset)
-        inst_k2, k2_expiration_timestamp = DeribitStream.find_month_future_by_strike(k2, call=True, currency=asset)
-        # inst_k1, k1_expiration_timestamp = DeribitStream.find_option_instrument(k1, call=True, currency=asset)
-        # inst_k2, k2_expiration_timestamp = DeribitStream.find_option_instrument(k2, call=True, currency=asset)
+        # inst_k1, k1_expiration_timestamp = DeribitStream.find_month_future_by_strike(k1, call=True, currency=asset)
+        # inst_k2, k2_expiration_timestamp = DeribitStream.find_month_future_by_strike(k2, call=True, currency=asset)
+        inst_k1, k1_expiration_timestamp = DeribitStream.find_option_instrument(k1, call=True, currency=asset)
+        inst_k2, k2_expiration_timestamp = DeribitStream.find_option_instrument(k2, call=True, currency=asset)
         
         instruments_map[title] = {
             "k1": inst_k1, 
@@ -115,7 +115,7 @@ async def loop_event(
     market_id = PolymarketAPI.get_market_id_by_market_title(event_id, title)
     market_data = PolymarketAPI.get_market_by_id(market_id)
     outcome_prices = market_data.get("outcomePrices")
-    yes_price, no_price = None, None
+    yes_price, no_price = 0, 0
     if outcome_prices:
         try:
             prices = eval(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
@@ -211,12 +211,22 @@ async def loop_event(
         # 你可以分别计算两种策略的 IM；如果只想要一个保守 IM：
         amount_contracts = max(abs(contracts_short), abs(contracts_long))
 
-        im_value_btc = float(await get_testnet_initial_margin(
+        # im_value_btc = float(await get_testnet_initial_margin(
+        #     user_id=deribit_user_id,
+        #     client_id=client_id,
+        #     client_secret=client_secret,
+        #     amount=amount_contracts,
+        #     instrument_name=inst_k1,
+        # ))
+        im_value_btc = float(await get_simulate_portfolio_initial_margin(
             user_id=deribit_user_id,
             client_id=client_id,
             client_secret=client_secret,
-            amount=amount_contracts,
-            instrument_name=inst_k1,
+            currency=asset,
+            simulated_positions={
+                inst_k1: -amount_contracts,
+                inst_k2: amount_contracts
+            }
         ))
         im_value_usd = im_value_btc * spot
 
@@ -362,7 +372,7 @@ async def main(config_path="config.yaml"):
                 )
             except Exception as e:
                 console.print(f"❌ [red]处理 {data['polymarket']['market_title']} 时出错: {e}[/red]")
-                traceback.print_exc()   # 打印完整的错误堆栈
+                # traceback.print_exc()   # 打印完整的错误堆栈
 
         sleep_sec = config["thresholds"]["check_interval_sec"]
         console.print(f"\n[dim]⏳ 等待 {sleep_sec} 秒后重连 Deribit/Polymarket 数据流...[/dim]\n")
