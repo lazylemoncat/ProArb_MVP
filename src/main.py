@@ -362,7 +362,7 @@ async def main(config_path="config.yaml"):
                 )
             except Exception as e:
                 console.print(f"❌ [red]处理 {data['polymarket']['market_title']} 时出错: {e}[/red]")
-                # traceback.print_exc()   # 打印完整的错误堆栈
+                traceback.print_exc()   # 打印完整的错误堆栈
 
         sleep_sec = config["thresholds"]["check_interval_sec"]
         console.print(f"\n[dim]⏳ 等待 {sleep_sec} 秒后重连 Deribit/Polymarket 数据流...[/dim]\n")

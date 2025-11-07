@@ -28,7 +28,7 @@ def deribit_option_fee_usd(
     leg1_fee = min(fee_cap_btc, fee_rate * price1_btc) * contracts
     leg2_fee = min(fee_cap_btc, fee_rate * price2_btc) * contracts
 
-    # ✅ 分方向累计费用
+    # 分方向累计费用
     buy_fee = 0.0
     sell_fee = 0.0
     if dir1 == "buy":
@@ -41,10 +41,10 @@ def deribit_option_fee_usd(
     else:
         sell_fee += leg2_fee
 
-    # ✅ 应用 Deribit 期权组合费用折扣：较小方向归零
+    # 应用 Deribit 期权组合费用折扣：较小方向归零
     net_fee_btc = abs(buy_fee - sell_fee)
 
-    # ✅ 仍然返回 USD（保持原函数一致的输出类型）
+    # 仍然返回 USD（保持原函数一致的输出类型）
     return net_fee_btc * btc_usd
 
 
