@@ -14,7 +14,7 @@ events:
       market_title: "100,000"
 
     deribit:
-      k1_strike: 98000
+      k1_strike: 99000
       k2_strike: 101000
 
   - name: "BTC > 102k"
@@ -74,8 +74,8 @@ events:
       market_title: "112,000"
 
     deribit:
-      k1_strike: 109000
-      k2_strike: 114000
+      k1_strike: 111000
+      k2_strike: 113000
 
   - name: "BTC > 114k"
     asset: "BTC"

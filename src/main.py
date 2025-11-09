@@ -1,74 +1,44 @@
 import asyncio
 import os
 import time
-from datetime import datetime, timezone
 import traceback
+from datetime import datetime, timezone
+
 from dotenv import load_dotenv
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from core.deribit_api import calc_slippage, get_orderbook, get_simulate_portfolio_initial_margin, get_spot_price, get_testnet_initial_margin
+from core.deribit_api import (
+    calc_slippage,
+    get_orderbook,
+    get_simulate_portfolio_initial_margin,
+    get_spot_price,
+    get_testnet_initial_margin,
+    DeribitUserCfg
+)
 from core.DeribitStream import DeribitStream
 from core.get_deribit_option_data import get_deribit_option_data
 from core.get_polymarket_slippage import get_polymarket_slippage
 from core.PolymarketAPI import PolymarketAPI
-from strategy.expected_value import (
-    EVInputs,
-    compute_both_strategies
-)
+from strategy.expected_value import EVInputs, compute_both_strategies
 from strategy.models import CostParams, PositionInputs, StrategyContext
-
-from strategy.position_calculator import strategy1_position_contracts, strategy2_position_contracts
+from strategy.position_calculator import (
+    strategy1_position_contracts,
+    strategy2_position_contracts,
+)
 from strategy.probability_engine import bs_probability_gt
 from utils.dataloader import load_manual_data
+from utils.init_markets import init_markets
 from utils.save_result import save_result_csv
 
 console = Console()
 load_dotenv()
 
-def require_float(data: dict, key: str, k_dir: str) -> float:
-    """
-    从 dict 中强制获取 key 对应的浮点数：
-    - 如果 key 不存在 → KeyError
-    - 如果 value 是 None 或无法转为 float → ValueError
-    """
-    value = data[key]
-    if value is None:
-        raise KeyError(f"{k_dir}Key '{key}' is missing or is None in {data}")
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"Value of '{key}' is not a valid float: {value!r}")
-
-def init_markets(config):
-    """根据行权价为每个事件找出 Deribit 的 K1/K2 合约名，并记录资产类型 BTC/ETH。"""
-    instruments_map = {}
-    for m in config["events"]:
-        title = m["polymarket"]["market_title"]
-        asset = m.get("asset", "BTC").upper()
-        k1 = m["deribit"]["k1_strike"]
-        k2 = m["deribit"]["k2_strike"]
-        # inst_k1, k1_expiration_timestamp = DeribitStream.find_month_future_by_strike(k1, call=True, currency=asset)
-        # inst_k2, k2_expiration_timestamp = DeribitStream.find_month_future_by_strike(k2, call=True, currency=asset)
-        inst_k1, k1_expiration_timestamp = DeribitStream.find_option_instrument(k1, call=True, currency=asset)
-        inst_k2, k2_expiration_timestamp = DeribitStream.find_option_instrument(k2, call=True, currency=asset)
-        
-        instruments_map[title] = {
-            "k1": inst_k1, 
-            "k1_expiration_timestamp": k1_expiration_timestamp,
-            "k2": inst_k2, 
-            "k2_expiration_timestamp": k2_expiration_timestamp,
-            "asset": asset
-        }
-    return instruments_map
-
 async def loop_event(
         data,
-        deribit_user_id,
-        client_id,
-        client_secret,
+        deribitUserCfg: DeribitUserCfg,
         investments,
         output_csv,
         instruments_map
@@ -91,16 +61,21 @@ async def loop_event(
     k1_info = next((d for d in deribit_list if d.get("instrument_name") == inst_k1), {})
     k2_info = next((d for d in deribit_list if d.get("instrument_name") == inst_k2), {})
 
-    k1_bid = require_float(k1_info, "bid_price", "k1")
-    k1_ask = require_float(k1_info, "ask_price", "k1")
-    k2_bid = require_float(k2_info, "bid_price", "k2")
-    k2_ask = require_float(k2_info, "ask_price", "k2")
+    if k1_info == {}:
+        raise Exception("k1_info is empty")
+    if k2_info == {}:
+        raise Exception("k1_info is empty")
+
+    k1_bid = float(k1_info["bid_price"])
+    k1_ask = float(k1_info["ask_price"])
+    k2_bid = float(k2_info["bid_price"])
+    k2_ask = float(k2_info["ask_price"])
     k1_mid = (k1_bid + k1_ask) / 2
     k2_mid = (k2_bid + k2_ask) / 2
-    k1_iv = require_float(k1_info, "mark_iv", "k1")
-    k2_iv = require_float(k2_info, "mark_iv", "k2")
-    k1_fee = require_float(k1_info, "fee", "k1")
-    k2_fee = require_float(k2_info, "fee", "k2")
+    k1_iv = float(k1_info["mark_iv"])
+    k2_iv = float(k2_info["mark_iv"])
+    k1_fee = float(k1_info["fee"])
+    k2_fee = float(k2_info["fee"])
 
 
     # === 波动率：用 K1/K2 的有效 IV 均值兜底 ===
@@ -211,23 +186,20 @@ async def loop_event(
         # 你可以分别计算两种策略的 IM；如果只想要一个保守 IM：
         amount_contracts = max(abs(contracts_short), abs(contracts_long))
 
-        # im_value_btc = float(await get_testnet_initial_margin(
-        #     user_id=deribit_user_id,
-        #     client_id=client_id,
-        #     client_secret=client_secret,
-        #     amount=amount_contracts,
-        #     instrument_name=inst_k1,
-        # ))
-        im_value_btc = float(await get_simulate_portfolio_initial_margin(
-            user_id=deribit_user_id,
-            client_id=client_id,
-            client_secret=client_secret,
-            currency=asset,
-            simulated_positions={
-                inst_k1: -amount_contracts,
-                inst_k2: amount_contracts
-            }
+        im_value_btc = float(await get_testnet_initial_margin(
+            deribitUserCfg,
+            amount=amount_contracts,
+            instrument_name=inst_k1,
         ))
+        # im_value_btc = float(await get_simulate_portfolio_initial_margin(
+        #     deribitUserCfg,
+        #     currency=asset,
+        #     simulated_positions={
+        #         inst_k1: -amount_contracts,
+        #         inst_k2: amount_contracts
+        #     }
+        # ))
+        # print(im_value_btc1, im_value_btc)
         im_value_usd = im_value_btc * spot
 
         # === 计算 Deribit 滑点（买K1，看涨期权方向为buy，做空则为sell）===
@@ -345,9 +317,11 @@ async def loop_event(
 
 async def main(config_path="config.yaml"):
     config = load_manual_data(config_path)
-    deribit_user_id = os.getenv("test_deribit_user_id", "")
-    client_id = os.getenv("test_deribit_client_id", "")
-    client_secret = os.getenv("test_deribit_client_secret", "")
+    deribitUserCfg = DeribitUserCfg(
+        user_id=os.getenv("test_deribit_user_id", ""),
+        client_id=os.getenv("test_deribit_client_id", ""),
+        client_secret=os.getenv("test_deribit_client_secret", "")
+    )
 
     investments = config["thresholds"]["INVESTMENTS"]
     output_csv = config["thresholds"]["OUTPUT_CSV"]
@@ -363,9 +337,7 @@ async def main(config_path="config.yaml"):
             try:
                 await loop_event(
                     data,
-                    deribit_user_id,
-                    client_id,
-                    client_secret,
+                    deribitUserCfg,
                     investments,
                     output_csv,
                     instruments_map

@@ -17,27 +17,31 @@ def get_deribit_option_data(
 
     results = []
     for item in data.get("result", []):
-        option_name = item.get("instrument_name")
-        mark_iv = item.get("mark_iv", None)
-        bid_price = item.get("bid_price")
-        ask_price = item.get("ask_price")
-        option_price = item.get("last") or 0.0
-        index_price = item.get("underlying_price")
+        try:
+            option_name = str(item.get("instrument_name"))
+            mark_iv = float(item.get("mark_iv"))
+            bid_price = float(item.get("bid_price"))
+            ask_price = float(item.get("ask_price"))
+            option_price = float(item.get("last", 0.0))
+            index_price = float(item.get("underlying_price"))
 
-        # 手续费计算
-        if not usdc_settled:
-            base_fee = base_fee_btc if currency == "BTC" else base_fee_eth
-            fee = max(base_fee, 0.125 * option_price) * amount
-        else:
-            fee = max(0.0003 * index_price, 0.125 * option_price) * amount
+            # 手续费计算
+            if not usdc_settled:
+                base_fee = base_fee_btc if currency == "BTC" else base_fee_eth
+                fee = max(base_fee, 0.125 * option_price) * amount
+            else:
+                fee = max(0.0003 * index_price, 0.125 * option_price) * amount
 
-        results.append({
-            "instrument_name": option_name,
-            "mark_iv": mark_iv,
-            "bid_price": bid_price, # usd
-            "ask_price": ask_price,
-            "fee": fee
-        })
+            results.append({
+                "instrument_name": option_name,
+                "mark_iv": mark_iv,
+                "bid_price": bid_price, # usd
+                "ask_price": ask_price,
+                "fee": fee
+            })
+        except Exception:
+            # print("get_deribit_option_data wrong:", Exception, item)
+            continue
 
     return results
 

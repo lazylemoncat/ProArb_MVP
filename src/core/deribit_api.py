@@ -2,16 +2,24 @@ import asyncio
 import json
 import os
 import pprint
+from dataclasses import dataclass
+from typing import Literal
 
 import dotenv
 import requests
 import websockets
 from websockets import ClientConnection
-from typing import Literal
 
 BASE_URL = "https://www.deribit.com/api/v2"
 WEBSOCKETS_URL = "wss://www.deribit.com/ws/api/v2"
 TEST_WEBSOCKETS_URL = "wss://test.deribit.com/ws/api/v2"
+
+
+@dataclass
+class DeribitUserCfg:
+    user_id: str
+    client_id: str
+    client_secret: str
 
 
 def get_spot_price(symbol: Literal["btc_usd", "eth_usd"]="btc_usd"):
@@ -26,14 +34,14 @@ def get_spot_price(symbol: Literal["btc_usd", "eth_usd"]="btc_usd"):
     return r["result"]["index_price"]
 
 
-async def get_mid_price_by_orderbook(websocket: ClientConnection, deribit_user_id, instrument_name: str, depth: int=20):
+async def get_mid_price_by_orderbook(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg, instrument_name: str, depth: int=20):
     """
     获取 orderbook 的中间价
     Return:
         orderbook 的中间价(BTC)
     """
     msg = {
-        "id": deribit_user_id,
+        "id": DeribitUserCfg.user_id,
         "jsonrpc": "2.0",
         "method": "public/get_order_book",
         "params": {
@@ -109,14 +117,14 @@ def calc_slippage(orderbook, amount, side: str):
 
     return slippage, avg_price, target_price, "partial" if remaining > 0 else "filled"
 
-async def deribit_websocket_auth(websocket: ClientConnection, deribit_user_id: str, client_id: str, client_secret: str):
+async def deribit_websocket_auth(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg):
     msg = {
-        "id": deribit_user_id,
+        "id": deribitUserCfg.user_id,
         "jsonrpc":"2.0",
         "method":"public/auth",
         "params":{
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": deribitUserCfg.client_id,
+            "client_secret": deribitUserCfg.client_secret,
             "grant_type": "client_credentials"
         }
     }
@@ -124,9 +132,9 @@ async def deribit_websocket_auth(websocket: ClientConnection, deribit_user_id: s
     response = await websocket.recv()
     return response
 
-async def open_long_position(websocket: ClientConnection, user_id: str, amount: int, instrument_name: str, type: str="market"):
+async def open_long_position(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg, amount: int, instrument_name: str, type: str="market"):
     msg = {
-        "id": user_id,
+        "id": deribitUserCfg.user_id,
         "jsonrpc": "2.0",
         "method": "private/buy",
         "params": {
@@ -139,9 +147,9 @@ async def open_long_position(websocket: ClientConnection, user_id: str, amount: 
     response = await websocket.recv()
     return response
 
-async def close_position(websocket: ClientConnection, user_id: str, amount: int, instrument_name: str, type: str="market"):
+async def close_position(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg, amount: int, instrument_name: str, type: str="market"):
     msg = {
-        "id": user_id,
+        "id": deribitUserCfg.user_id,
         "jsonrpc": "2.0",
         "method": "private/sell",
         "params": {
@@ -154,24 +162,24 @@ async def close_position(websocket: ClientConnection, user_id: str, amount: int,
     response = await websocket.recv()
     return response
 
-async def change_margin_model(websocket, user_id, margin_model: str="cross_pm"):
+async def change_margin_model(websocket, deribitUserCfg: DeribitUserCfg, margin_model: str="cross_pm"):
     msg = {
-        "id": user_id,
+        "id": deribitUserCfg.user_id,
         "jsonrpc": "2.0",
         "method": "private/change_margin_model",
         "params": {
-            "margin_model": "cross_pm",
-            "user_id": user_id
+            "margin_model": margin_model,
+            "user_id": deribitUserCfg.user_id
         }
     }
     try:
         await websocket.send(json.dumps(msg))
-        response = await websocket.recv()
-        response_result = json.loads(response).get("result")
+        await websocket.recv()
+        # response_result = json.loads(response).get("result")
     except Exception as e:
-        raise Exception(f"change_margin_model wrong: {e}, {response_result}, {response}")
+        raise Exception(f"change_margin_model wrong: {e}")
 
-async def get_margins(websocket, user_id, amount, instrument_name, price):
+async def get_margins(websocket, deribitUserCfg: DeribitUserCfg, amount, instrument_name, price):
     """
     获取初始保证金
     Args:
@@ -180,7 +188,7 @@ async def get_margins(websocket, user_id, amount, instrument_name, price):
         初始保证金(USD)
     """
     msg = {
-            "id": user_id,
+            "id": deribitUserCfg.user_id,
             "jsonrpc":"2.0",
             "method":"private/get_margins",
             "params":{
@@ -199,21 +207,21 @@ async def get_margins(websocket, user_id, amount, instrument_name, price):
 
     return initial_margin
 
-async def get_testnet_initial_margin(user_id, client_id, client_secret, amount, instrument_name):
+async def get_testnet_initial_margin(deribitUserCfg: DeribitUserCfg, amount, instrument_name):
     async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
-        await deribit_websocket_auth(websocket, user_id, client_id, client_secret)
-        await change_margin_model(websocket, user_id)
-        price = await get_mid_price_by_orderbook(websocket, user_id, instrument_name)
+        await deribit_websocket_auth(websocket, deribitUserCfg)
+        await change_margin_model(websocket, deribitUserCfg)
+        price = await get_mid_price_by_orderbook(websocket, deribitUserCfg, instrument_name)
         
-        initial_margin = await get_margins(websocket, user_id, amount, instrument_name, price)
+        initial_margin = await get_margins(websocket, deribitUserCfg, amount, instrument_name, price)
 
         # 返回的是 BTC, 需要乘以 spot price才是 USD
         return initial_margin
     
-async def get_interest_rate(user_id, instrument_name):
+async def get_interest_rate(deribitUserCfg: DeribitUserCfg, instrument_name):
     async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
         msg = {
-            "id": user_id,
+            "id": deribitUserCfg.user_id,
             "jsonrpc": "2.0",
             "method": "public/get_book_summary_by_instrument",
             "params": {
@@ -227,9 +235,9 @@ async def get_interest_rate(user_id, instrument_name):
 
         return interest_rate
 
-async def get_simulate_portfolio_initial_margin(user_id, client_id, client_secret, currency, simulated_positions):
+async def get_simulate_portfolio_initial_margin(deribitUserCfg: DeribitUserCfg, currency, simulated_positions):
     msg = {
-        "id": user_id,
+        "id": deribitUserCfg.user_id,
         "jsonrpc": "2.0",
         "method": "private/simulate_portfolio",
         "params": {
@@ -239,8 +247,8 @@ async def get_simulate_portfolio_initial_margin(user_id, client_id, client_secre
         }
     }
     async with websockets.connect(TEST_WEBSOCKETS_URL) as websocket:
-        await deribit_websocket_auth(websocket, user_id, client_id, client_secret)
-        await change_margin_model(websocket, user_id)
+        await deribit_websocket_auth(websocket, deribitUserCfg)
+        await change_margin_model(websocket, deribitUserCfg)
         await websocket.send(json.dumps(msg))
         response = await websocket.recv()
         return json.loads(response)["result"]["initial_margin"]
@@ -265,15 +273,19 @@ if __name__ == "__main__":
     client_id = os.getenv("test_deribit_client_id", "")
     client_secret = os.getenv("test_deribit_client_secret", "")
 
+    deribitUserCfg = DeribitUserCfg(
+        user_id=deribit_user_id,
+        client_id=client_id,
+        client_secret=client_secret
+    )
+
     async def call_api():
         instrument_name = "BTC-28NOV25-104000-C"
         instrument_name2 = "BTC-28NOV25-100000-C"
         amount1 = 100
         amount2 = 100
         res = await get_simulate_portfolio_initial_margin(
-            user_id=deribit_user_id,
-            client_id=client_id,
-            client_secret=client_secret,
+            deribitUserCfg,
             currency="BTC",
             simulated_positions= {
                 instrument_name: amount1,
