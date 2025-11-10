@@ -41,7 +41,7 @@ async def get_mid_price_by_orderbook(websocket: ClientConnection, deribitUserCfg
         orderbook 的中间价(BTC)
     """
     msg = {
-        "id": DeribitUserCfg.user_id,
+        "id": deribitUserCfg.user_id,
         "jsonrpc": "2.0",
         "method": "public/get_order_book",
         "params": {

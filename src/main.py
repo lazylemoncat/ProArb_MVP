@@ -1,7 +1,6 @@
 import asyncio
 import os
 import time
-import traceback
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -13,12 +12,10 @@ from rich.table import Table
 from core.deribit_api import (
     calc_slippage,
     get_orderbook,
-    get_simulate_portfolio_initial_margin,
     get_spot_price,
     get_testnet_initial_margin,
     DeribitUserCfg
 )
-from core.DeribitStream import DeribitStream
 from core.get_deribit_option_data import get_deribit_option_data
 from core.get_polymarket_slippage import get_polymarket_slippage
 from core.PolymarketAPI import PolymarketAPI

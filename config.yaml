@@ -60,7 +60,7 @@ events:
   - name: "BTC > 110k"
     asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on November 7?"
+      event_title: "Bitcoin above ___ on November 10?"
       market_title: "110,000"
 
     deribit:
@@ -70,7 +70,7 @@ events:
   - name: "BTC > 112k"
     asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on November 7?"
+      event_title: "Bitcoin above ___ on November 10?"
       market_title: "112,000"
 
     deribit:
@@ -80,7 +80,7 @@ events:
   - name: "BTC > 114k"
     asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on November 7?"
+      event_title: "Bitcoin above ___ on November 10?"
       market_title: "114,000"
 
     deribit:
@@ -90,7 +90,7 @@ events:
   - name: "BTC > 116k"
     asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on November 7?"
+      event_title: "Bitcoin above ___ on November 10?"
       market_title: "116,000"
 
     deribit:
@@ -100,7 +100,7 @@ events:
   - name: "BTC > 118k"
     asset: "BTC"
     polymarket:
-      event_title: "Bitcoin above ___ on November 7?"
+      event_title: "Bitcoin above ___ on November 10?"
       market_title: "118,000"
 
     deribit:
@@ -110,7 +110,7 @@ events:
   - name: "Ethereum > 3400"
     asset: "ETH"
     polymarket:
-      event_title: "Ethereum above ___ on November 7?"
+      event_title: "Ethereum above ___ on November 10?"
       market_title: "3,400"
 
     deribit:
@@ -120,7 +120,7 @@ events:
   - name: "Ethereum > 3500"
     asset: "ETH"
     polymarket:
-      event_title: "Ethereum above ___ on November 7?"
+      event_title: "Ethereum above ___ on November 10?"
       market_title: "3,500"
 
     deribit:
