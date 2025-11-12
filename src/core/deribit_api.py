@@ -74,6 +74,7 @@ async def get_orderbook(instrument_name, depth=1000):
         }
         await websocket.send(json.dumps(msg))
         resp = json.loads(await websocket.recv())["result"]
+        # 返回的是 BTC 价格
         return resp["bids"], resp["asks"], resp["best_bid_price"], resp["best_ask_price"]
     
 def calc_slippage(orderbook, amount, side: str):
