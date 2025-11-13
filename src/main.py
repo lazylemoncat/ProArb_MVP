@@ -251,7 +251,8 @@ async def main(config_path="config.yaml"):
 
     investments = config["thresholds"]["INVESTMENTS"]
     output_csv = config["thresholds"]["OUTPUT_CSV"]
-    instruments_map = init_markets(config)
+    day_offset = 1
+    instruments_map = init_markets(config, day_offset=day_offset)
 
     console.print(Panel.fit("[bold cyan]Deribit x Polymarket Arbitrage Monitor[/bold cyan]", border_style="bright_cyan"))
     console.print("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")

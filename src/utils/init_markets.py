@@ -1,7 +1,7 @@
 from core.DeribitStream import DeribitStream
 
 
-def init_markets(config):
+def init_markets(config, day_offset=0):
     """根据行权价为每个事件找出 Deribit 的 K1/K2 合约名，并记录资产类型 BTC/ETH。"""
     instruments_map = {}
     for m in config["events"]:
@@ -11,8 +11,8 @@ def init_markets(config):
         k2 = m["deribit"]["k2_strike"]
         # inst_k1, k1_expiration_timestamp = DeribitStream.find_month_future_by_strike(k1, call=True, currency=asset)
         # inst_k2, k2_expiration_timestamp = DeribitStream.find_month_future_by_strike(k2, call=True, currency=asset)
-        inst_k1, k1_expiration_timestamp = DeribitStream.find_option_instrument(k1, call=True, currency=asset)
-        inst_k2, k2_expiration_timestamp = DeribitStream.find_option_instrument(k2, call=True, currency=asset)
+        inst_k1, k1_expiration_timestamp = DeribitStream.find_option_instrument(k1, call=True, currency=asset, day_offset=day_offset)
+        inst_k2, k2_expiration_timestamp = DeribitStream.find_option_instrument(k2, call=True, currency=asset, day_offset=day_offset)
         
         instruments_map[title] = {
             "k1": inst_k1, 

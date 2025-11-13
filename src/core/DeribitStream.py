@@ -96,9 +96,15 @@ class DeribitStream:
         loop.run_until_complete(self._connect())   # 运行推流
 
     @staticmethod
-    def find_option_instrument(strike: float, currency: Literal["BTC", "ETH"] = "BTC", call: bool = True):
+    def find_option_instrument(
+        strike: float,
+        currency: Literal["BTC", "ETH"] = "BTC",
+        call: bool = True,
+        day_offset: int = 0  # 新增参数：偏移天数，0 表示当天（最近），1 表示次日，以此类推
+    ):
         """
         根据行权价找到最近的可行权价期权, 并选取最近到期(T最小)的 Call/Put。
+        可通过 day_offset 指定到期日偏移，比如 day_offset=1 表示选择次日到期的合约。
         """
         url = "https://www.deribit.com/api/v2/public/get_instruments"
         params = {"currency": currency, "kind": "option", "expired": "false"}
@@ -111,9 +117,10 @@ class DeribitStream:
         same_type = [inst for inst in instruments if inst["option_type"] == callput]
 
         # 找到与目标 strike 差值最小的实际可交易行权价
-        # Deribit strike 类型为 float → 防止 int 比较失败
-        best_strike = min({inst["strike"] for inst in same_type},
-                        key=lambda s: abs(s - float(strike)))
+        best_strike = min(
+            {inst["strike"] for inst in same_type},
+            key=lambda s: abs(s - float(strike))
+        )
 
         # 过滤出同一次strike的合约
         candidates = [inst for inst in same_type if inst["strike"] == best_strike]
@@ -121,10 +128,17 @@ class DeribitStream:
         if not candidates:
             raise ValueError(f"⚠️ 无法找到与行权价 {strike} 相近的可用期权")
 
-        # 选最近到期的
+        # 按到期时间排序
         candidates.sort(key=lambda x: x["expiration_timestamp"])
-        instrument_name = candidates[0]["instrument_name"]
-        expiration_timestamp = candidates[0]["expiration_timestamp"]
+
+        # 应用 day_offset 偏移
+        if day_offset >= len(candidates):
+            # raise IndexError(f"⚠️ day_offset={day_offset} 超出范围，可用到期数为 {len(candidates)}")
+            day_offset = 0
+
+        selected = candidates[day_offset]
+        instrument_name = selected["instrument_name"]
+        expiration_timestamp = selected["expiration_timestamp"]
 
         print(f"🎯 行权价 {strike} → 使用最近可交易行权价 {best_strike} → 合约 {instrument_name}")
         return (instrument_name, expiration_timestamp)
