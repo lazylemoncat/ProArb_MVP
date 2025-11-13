@@ -222,20 +222,57 @@ async def loop_event(
         )
 
         save_result_csv({
+            # === 基础信息 ===
             "timestamp": timestamp,
             "market_title": title,
             "asset": asset,
             "investment": inv_base_usd,
+
+            # === 市场价格相关 ===
             "spot": spot,
             "poly_yes_price": yes_price,
             "poly_no_price": no_price,
             "deribit_prob": deribit_prob,
+
+            # === 合约名 ===
+            "k1_instrument": inst_k1,
+            "k2_instrument": inst_k2,
+
+            # === Deribit 参数 ===
+            "K1": k1_strike,
+            "K2": k2_strike,
+            "K_poly": K_poly,
+            "T": T,
+            "days_to_expiry": calc_input.days_to_expiry,
+            "sigma": mark_iv / 100.0,
+            "r": r,
+            "k1_bid_btc": k1_bid_btc,
+            "k1_ask_btc": k1_ask_btc,
+            "k2_bid_btc": k2_bid_btc,
+            "k2_ask_btc": k2_ask_btc,
+            "k1_mid_usd": k1_mid_usd,
+            "k2_mid_usd": k2_mid_usd,
+
+            # === Polymarket & Slippage ===
+            "pm_yes_slippage": pm_yes_slip_open,
+            "pm_no_slippage": pm_no_slip_open,
+            "slippage_rate_used": calc_input.Slippage_Rate,
+
+            # === 成本 / 保证金 ===
             "total_costs_yes": total_costs_yes,
             "total_costs_no": total_costs_no,
             "IM_usd": im_final_usd,
             "IM_btc": im_value_btc,
-            "EV/IM_yes": (ev_yes / im_final_usd) if im_final_usd > 0 else None,
-            "EV/IM_no": (ev_no / im_final_usd) if im_final_usd > 0 else None,
+            "contracts": amount_contracts,
+
+            # === 策略计算相关参数 ===
+            "Price_No_entry": calc_input.Price_No_entry,
+            "Call_K1_Bid": calc_input.Call_K1_Bid,
+            "Call_K1_Ask": calc_input.Call_K1_Ask,
+            "Call_K2_Bid": calc_input.Call_K2_Bid,
+            "Call_K2_Ask": calc_input.Call_K2_Ask,
+
+            # === 最后两列必须是 EV ===
             "ev_yes": ev_yes,
             "ev_no": ev_no,
         }, output_csv)

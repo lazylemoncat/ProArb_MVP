@@ -28,6 +28,8 @@ from .models import (
     OptionPosition,
 )
 
+# ====== 全局变量：用于在 EV 计算中访问 Polymarket 价格 ======
+PM_YES_PRICE_FOR_EV: float | None = None
 
 def _norm_cdf(x: float) -> float:
     """标准正态分布Φ(x);用erf实现,避免scipy依赖。"""
@@ -477,35 +479,54 @@ def _calculate_d2_for_strike(S: float, K: float, T: float, r: float, sigma: floa
 # ==================== 核心计算函数 ====================
 
 def calculate_probabilities(input_data: CalculationInput) -> ProbabilityOutput:
-    """计算核心概率"""
-    S, K, T, r, sigma = (
-        input_data.S, input_data.K, input_data.T,
+    """
+    计算核心概率
+
+    约定：
+    - 事件 = S_T > K_poly   （对应 Polymarket Yes）
+    - P_interval1: S_T < K1
+    - P_interval2: K1 ≤ S_T < K_poly
+    - P_interval3: K_poly ≤ S_T < K2
+    - P_interval4: S_T ≥ K2
+    """
+    S, T, r, sigma = (
+        input_data.S, input_data.T,
         input_data.r, input_data.sigma
     )
-
-    if T <= 0 or sigma <= 0:
-        return ProbabilityOutput(0, 0, 0.5, 0.25, 0.25, 0.25, 0.25)
-
-    # 计算d1和d2
-    d1 = (math.log(S / K) + (r + sigma**2 / 2) * T) / (sigma * math.sqrt(T))
-    d2 = d1 - sigma * math.sqrt(T)
-
-    # 计算P(S_T > K) - 使用标准Black-Scholes公式
-    P_ST_gt_K = _norm_cdf(d2)
-
-    # 计算各区间概率
     K1, K_poly, K2 = input_data.K1, input_data.K_poly, input_data.K2
 
+    if T <= 0 or sigma <= 0:
+        return ProbabilityOutput(0.0, 0.0, 0.5, 0.25, 0.25, 0.25, 0.25)
+
+    # 事件阈值用 K_poly，而不是 K1
+    K_event = K_poly
+    d1 = (math.log(S / K_event) + (r + sigma**2 / 2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    P_ST_gt_K = _norm_cdf(d2)  # ≈ deribit_prob，与你 CSV 中一致
+
+    # 四个区间概率
     d2_K1 = _calculate_d2_for_strike(S, K1, T, r, sigma)
     d2_K_poly = _calculate_d2_for_strike(S, K_poly, T, r, sigma)
     d2_K2 = _calculate_d2_for_strike(S, K2, T, r, sigma)
 
-    P_interval1 = 1 - _norm_cdf(d2_K1)          # S_T > K1
-    P_interval2 = _norm_cdf(d2_K1) - _norm_cdf(d2_K_poly)  # K_poly < S_T <= K1
-    P_interval3 = _norm_cdf(d2_K_poly) - _norm_cdf(d2_K2)  # K2 < S_T <= K_poly
-    P_interval4 = _norm_cdf(d2_K2)              # S_T <= K2
+    Phi = _norm_cdf
 
-    return ProbabilityOutput(d1, d2, P_ST_gt_K, P_interval1, P_interval2, P_interval3, P_interval4)
+    # 注意：这里的数学含义是正确的，只是之前在后面被错误解读了
+    P_interval1 = 1.0 - Phi(d2_K1)              # S_T < K1
+    P_interval2 = Phi(d2_K1) - Phi(d2_K_poly)   # K1 ≤ S_T < K_poly
+    P_interval3 = Phi(d2_K_poly) - Phi(d2_K2)   # K_poly ≤ S_T < K2
+    P_interval4 = Phi(d2_K2)                    # S_T ≥ K2
+
+    # 数值稳定，确保和为 1
+    total = P_interval1 + P_interval2 + P_interval3 + P_interval4
+    if total > 0:
+        P_interval1 /= total
+        P_interval2 /= total
+        P_interval3 /= total
+        P_interval4 /= total
+
+    return ProbabilityOutput(d1, d2, P_ST_gt_K,
+                             P_interval1, P_interval2, P_interval3, P_interval4)
 
 def calculate_strategy1(input_data: CalculationInput) -> StrategyOutput:
     """计算策略一头寸规模"""
@@ -626,114 +647,61 @@ def calculate_costs(
         PME_Worst_Scenario=pme_worst_scenario
     )
 
-def calculate_expected_pnl_strategy1(
-    input_data: CalculationInput,
-    probs: ProbabilityOutput,
-    costs: CostOutput,
-    strategy_out: StrategyOutput
-) -> ExpectedPnlOutput:
-    """
-    计算策略一预期盈亏（修复版：使用真实概率分布）
+def calculate_expected_pnl_strategy1(input_data, probs, costs, strategy_out):
+    Inv = input_data.Inv_Base
+    K1, K2, Kpoly = input_data.K1, input_data.K2, input_data.K_poly
+    contracts = strategy_out.Contracts
 
-    策略一：做多 PM "Yes" + 做空 Deribit Bull Spread
-    """
-    K1 = input_data.K1
-    K2 = input_data.K2
-    K_poly = input_data.K_poly
+    # --- Polymarket Yes ---
+    yes_price = PM_YES_PRICE_FOR_EV
+    prob_yes = probs.P_interval3 + probs.P_interval4
+    prob_no  = 1 - prob_yes
 
-    # ====================================================================
-    # Polymarket 预期盈亏（基于概率分布）
-    # ====================================================================
-    # 区间定义：
-    # Interval 1: S_T > K1 → PM "Yes" 获胜，盈利 Inv_Base
-    # Interval 2: K_poly < S_T <= K1 → PM "Yes" 获胜，盈利 Inv_Base
-    # Interval 3: K2 < S_T <= K_poly → PM "Yes" 失败，损失 Inv_Base
-    # Interval 4: S_T <= K2 → PM "Yes" 失败，损失 Inv_Base
+    shares = Inv / yes_price
+    pnl_yes = shares - Inv     # Yes=1
+    pnl_no  = -Inv             # Yes=0
 
-    inv_base = input_data.Inv_Base
+    E_poly = prob_yes * pnl_yes + prob_no * pnl_no
 
-    # 简化假设：PM 以 0.5 价格买入 "Yes"，则盈利 = Inv_Base，损失 = -Inv_Base
-    # 注意：K_poly 是 PM 的阈值，S_T > K_poly 时 "Yes" 获胜
-    prob_yes_win = probs.P_interval1 + probs.P_interval2  # S_T > K_poly
-    prob_yes_lose = probs.P_interval3 + probs.P_interval4  # S_T <= K_poly
+    # --- Deribit 熊市 Call Spread (Sell K1, Buy K2) ---
+    credit = input_data.Call_K1_Bid - input_data.Call_K2_Ask
+    max_loss = (K2 - K1) * contracts
+    prob_max_loss = probs.P_interval4  # S_T>=K2
 
-    E_Poly_PnL = prob_yes_win * inv_base - prob_yes_lose * inv_base
+    E_deribit = credit * contracts - prob_max_loss * max_loss
 
-    # ====================================================================
-    # Deribit Bull Spread 预期盈亏（做空价差）
-    # ====================================================================
-    # 做空 Bull Spread：收到权利金 Income_Deribit
-    # 到期盈亏：
-    # - S_T > K2: 损失 (K2 - K1)
-    # - K1 < S_T <= K2: 损失 (S_T - K1)
-    # - S_T <= K1: 无损失
+    # --- 总 EV ---
+    total = E_poly + E_deribit - costs.Total_Cost
+    return ExpectedPnlOutput(E_deribit, E_poly, total)
 
-    net_premium = strategy_out.Income_Deribit * strategy_out.Contracts
-    max_loss = (K2 - K1) * strategy_out.Contracts
 
-    # 简化计算：使用区间概率加权
-    # Interval 1 (S_T > K1): 最大损失
-    # Interval 2 (K_poly < S_T <= K1): 部分损失（近似为 0，因为 S_T 可能不到 K2）
-    # Interval 3 + 4 (S_T <= K_poly): 无损失
+def calculate_expected_pnl_strategy2(input_data, probs, costs, strategy_out):
+    Inv = input_data.Inv_Base
+    K1, K2, Kpoly = input_data.K1, input_data.K2, input_data.K_poly
+    contracts = strategy_out.Contracts
 
-    E_Deribit_PnL = net_premium - probs.P_interval1 * max_loss
+    # --- Polymarket No ---
+    no_price = input_data.Price_No_entry
+    prob_yes = probs.P_interval3 + probs.P_interval4
+    prob_no  = 1 - prob_yes
 
-    # ====================================================================
-    # 总预期盈亏
-    # ====================================================================
-    total_expected = E_Poly_PnL + E_Deribit_PnL - costs.Total_Cost
+    shares = Inv / no_price
+    pnl_no  = shares * (1 - no_price)
+    pnl_yes = -Inv
 
-    return ExpectedPnlOutput(E_Deribit_PnL, E_Poly_PnL, total_expected)
+    E_poly = prob_no * pnl_no + prob_yes * pnl_yes
 
-def calculate_expected_pnl_strategy2(
-    input_data: CalculationInput,
-    probs: ProbabilityOutput,
-    costs: CostOutput,
-    strategy_out: StrategyOutput
-) -> ExpectedPnlOutput:
-    """
-    计算策略二预期盈亏（修复版：使用真实概率分布）
+    # --- Deribit 牛市 Call Spread (Buy K1, Sell K2) ---
+    debit = input_data.Call_K1_Ask - input_data.Call_K2_Bid
+    max_gain = (K2 - K1) * contracts
+    prob_max_gain = probs.P_interval4
 
-    策略二：做空 PM "No" + 做多 Deribit Bull Spread
-    """
-    K1 = input_data.K1
-    K2 = input_data.K2
-    K_poly = input_data.K_poly
+    E_deribit = prob_max_gain * max_gain - debit * contracts
 
-    # ====================================================================
-    # Polymarket 预期盈亏（做空 "No"）
-    # ====================================================================
-    # 做空 "No" = 做多 "Yes"
-    # 最大盈利：Profit_Poly_Max（当 S_T > K_poly 时）
+    # --- 总 EV ---
+    total = E_poly + E_deribit - costs.Total_Cost
+    return ExpectedPnlOutput(E_deribit, E_poly, total)
 
-    prob_yes_win = probs.P_interval1 + probs.P_interval2
-    prob_yes_lose = probs.P_interval3 + probs.P_interval4
-
-    max_profit = strategy_out.Profit_Poly_Max
-    inv_base = input_data.Inv_Base
-
-    E_Poly_PnL = prob_yes_win * max_profit - prob_yes_lose * inv_base
-
-    # ====================================================================
-    # Deribit Bull Spread 预期盈亏（做多价差）
-    # ====================================================================
-    # 做多 Bull Spread：支付 Cost_Deribit
-    # 到期盈亏：
-    # - S_T > K2: 获利 (K2 - K1)
-    # - K1 < S_T <= K2: 获利 (S_T - K1)
-    # - S_T <= K1: 损失全部权利金
-
-    net_cost = strategy_out.Cost_Deribit * strategy_out.Contracts
-    max_gain = (K2 - K1) * strategy_out.Contracts
-
-    E_Deribit_PnL = probs.P_interval1 * max_gain - net_cost
-
-    # ====================================================================
-    # 总预期盈亏
-    # ====================================================================
-    total_expected = E_Poly_PnL + E_Deribit_PnL - costs.Total_Cost
-
-    return ExpectedPnlOutput(E_Deribit_PnL, E_Poly_PnL, total_expected)
 
 def calculate_annualized_metrics(
     expected_pnl: ExpectedPnlOutput,
@@ -796,9 +764,9 @@ def main_calculation(
     input_data: CalculationInput,
     use_pme_margin: bool = True,
     calculate_annualized: bool = True,
-    pm_yes_price: float = None,  # 新增：PM Yes token 价格（用于 BS 筛选）
-    calculate_greeks: bool = False,  # 新增：是否计算 Greeks
-    bs_edge_threshold: float = 0.03  # 新增：BS 定价偏差阈值
+    pm_yes_price: float = None,
+    calculate_greeks: bool = False,
+    bs_edge_threshold: float = 0.03
 ) -> CalculationOutput:
     """
     主计算函数
@@ -814,6 +782,9 @@ def main_calculation(
     Returns:
         完整计算结果
     """
+    # 把 PM Yes 价格存到模块级变量，供 EV 计算使用
+    global PM_YES_PRICE_FOR_EV
+    PM_YES_PRICE_FOR_EV = pm_yes_price
     # 计算概率
     probabilities = calculate_probabilities(input_data)
 
