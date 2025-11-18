@@ -27,9 +27,168 @@ from .models import (
     PricingEdge,
     OptionPosition,
 )
+from .probability_engine import bs_probability_gt
 
 # ====== 全局变量：用于在 EV 计算中访问 Polymarket 价格 ======
 PM_YES_PRICE_FOR_EV: float | None = None
+
+def _build_ev_price_grid(K1: float, K2: float, n_points: int = 100):
+    """
+    构造 EV 计算用的价格网格（PRD 4.4）
+
+    - 区间：[K1 - 10000, K2 + 10000]
+    - 总点数 ~100
+    - 在 [K1, K2] 中间区域更密一点
+    """
+    import numpy as np
+
+    low = max(1.0, K1 - 10000.0)
+    high = K2 + 10000.0
+
+    # 20% 左尾，60% 中间，20% 右尾
+    n_low = max(10, n_points // 5)
+    n_high = max(10, n_points // 5)
+    n_mid = max(10, n_points - n_low - n_high)
+
+    low_grid = np.linspace(low, K1, n_low, endpoint=False)
+    mid_grid = np.linspace(K1, K2, n_mid, endpoint=False)
+    high_grid = np.linspace(K2, high, n_high)
+
+    grid = np.concatenate([low_grid, mid_grid, high_grid])
+    return grid.tolist()
+
+
+def _risk_neutral_prob_gt_strike(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    """
+    风险中性概率 P(S_T > K) = Φ(d2)，与 PRD/BS 公式一致。
+    """
+    if T <= 0 or sigma <= 0:
+        return 1.0 if S > K else 0.0
+
+    d2 = _calculate_d2_for_strike(S, K, T, r, sigma)
+    return _norm_cdf(d2)
+
+
+def _portfolio_payoff_at_price_strategy1(S_T: float, input_data, strategy_out):
+    """
+    方案1：PM buy YES + DR sell Bull Call Spread
+    返回：(PM_PnL, DR_PnL, Total_PnL)，单位 USD
+    """
+    Inv = input_data.Inv_Base
+    K1, K2, Kpoly = input_data.K1, input_data.K2, input_data.K_poly
+    contracts = strategy_out.Contracts
+
+    # --- PM 端：买 YES ---
+    yes_price = PM_YES_PRICE_FOR_EV if PM_YES_PRICE_FOR_EV is not None else 0.0
+    if yes_price > 0:
+        shares_yes = Inv / yes_price
+        if S_T > Kpoly:
+            # 事件发生：收到 1 美元
+            pnl_pm = shares_yes - Inv
+        else:
+            pnl_pm = -Inv
+    else:
+        # 防御性写法，万一没传 pm_yes_price
+        pnl_pm = 0.0
+
+    # --- DR 端：卖牛市价差（短 K1，长 K2）---
+    credit = input_data.Call_K1_Bid - input_data.Call_K2_Ask  # 每份净收入
+    if S_T <= K1:
+        intrinsic = 0.0
+    elif S_T < K2:
+        intrinsic = (S_T - K1) * contracts
+    else:
+        intrinsic = (K2 - K1) * contracts
+
+    pnl_dr = credit * contracts - intrinsic
+
+    total = pnl_pm + pnl_dr
+    return pnl_pm, pnl_dr, total
+
+
+def _portfolio_payoff_at_price_strategy2(S_T: float, input_data, strategy_out):
+    """
+    方案2：PM buy NO + DR buy Bull Call Spread
+    返回：(PM_PnL, DR_PnL, Total_PnL)，单位 USD
+    """
+    Inv = input_data.Inv_Base
+    K1, K2, Kpoly = input_data.K1, input_data.K2, input_data.K_poly
+    contracts = strategy_out.Contracts
+
+    # --- PM 端：买 NO ---
+    no_price = input_data.Price_No_entry
+    if no_price > 0:
+        shares_no = Inv / no_price
+        if S_T <= Kpoly:
+            # 事件不发生：NO = 1
+            pnl_pm = shares_no * (1 - no_price)
+        else:
+            pnl_pm = -Inv
+    else:
+        pnl_pm = 0.0
+
+    # --- DR 端：买牛市价差（长 K1，短 K2）---
+    cost_deribit = input_data.Call_K1_Ask - input_data.Call_K2_Bid  # 每份净支出
+    if S_T <= K1:
+        intrinsic = 0.0
+    elif S_T < K2:
+        intrinsic = (S_T - K1) * contracts
+    else:
+        intrinsic = (K2 - K1) * contracts
+
+    pnl_dr = intrinsic - cost_deribit * contracts
+
+    total = pnl_pm + pnl_dr
+    return pnl_pm, pnl_dr, total
+
+
+def _integrate_ev_over_grid(
+    input_data,
+    costs,
+    strategy_out,
+    payoff_func,
+    n_points: int = 100,
+):
+    """
+    按 PRD 4.4：
+    - 细网格 + BS 概率
+    - 完整 payoff 积分
+
+    返回：(E_Deribit, E_PM, Net_EV)
+    """
+    S, T, r, sigma = input_data.S, input_data.T, input_data.r, input_data.sigma
+    K1, K2 = input_data.K1, input_data.K2
+
+    # 极端情况下，T<=0 或 sigma<=0：直接认为没有未来随机性，EV≈-Total_Cost
+    if T <= 0 or sigma <= 0:
+        return 0.0, 0.0, -costs.Total_Cost
+
+    grid = _build_ev_price_grid(K1, K2, n_points=n_points)
+
+    # 预先算好每个 price 的 P(S_T > price)
+    probs_gt = [bs_probability_gt(S=S, K=price, T=T, sigma=sigma, r=r) for price in grid]
+
+    E_pm = 0.0
+    E_dr = 0.0
+
+    # 对相邻区间做积分：P(price[i] ≤ S_T < price[i+1]) × payoff(price[i])
+    for i in range(len(grid) - 1):
+        p_ge_left = probs_gt[i]
+        p_ge_right = probs_gt[i + 1]
+        p_interval = max(0.0, p_ge_left - p_ge_right)  # PRD 4.4 step 2
+
+        if p_interval <= 0:
+            continue
+
+        pnl_pm_i, pnl_dr_i, total_i = payoff_func(grid[i], input_data, strategy_out)
+
+        E_pm += p_interval * pnl_pm_i
+        E_dr += p_interval * pnl_dr_i
+
+    gross_ev = E_pm + E_dr
+    net_ev = gross_ev - costs.Total_Cost  # PRD：净 EV = 毛 EV - 总成本
+
+    return E_dr, E_pm, net_ev
 
 def _norm_cdf(x: float) -> float:
     """标准正态分布Φ(x);用erf实现,避免scipy依赖。"""
@@ -648,59 +807,37 @@ def calculate_costs(
     )
 
 def calculate_expected_pnl_strategy1(input_data, probs, costs, strategy_out):
-    Inv = input_data.Inv_Base
-    K1, K2, Kpoly = input_data.K1, input_data.K2, input_data.K_poly
-    contracts = strategy_out.Contracts
-
-    # --- Polymarket Yes ---
-    yes_price = PM_YES_PRICE_FOR_EV
-    prob_yes = probs.P_interval3 + probs.P_interval4
-    prob_no  = 1 - prob_yes
-
-    shares = Inv / yes_price
-    pnl_yes = shares - Inv     # Yes=1
-    pnl_no  = -Inv             # Yes=0
-
-    E_poly = prob_yes * pnl_yes + prob_no * pnl_no
-
-    # --- Deribit 熊市 Call Spread (Sell K1, Buy K2) ---
-    credit = input_data.Call_K1_Bid - input_data.Call_K2_Ask
-    max_loss = (K2 - K1) * contracts
-    prob_max_loss = probs.P_interval4  # S_T>=K2
-
-    E_deribit = credit * contracts - prob_max_loss * max_loss
-
-    # --- 总 EV ---
-    total = E_poly + E_deribit - costs.Total_Cost
-    return ExpectedPnlOutput(E_deribit, E_poly, total)
+    """
+    使用 PRD 4.4 的细网格 + 完整 payoff 积分计算策略一 EV
+    """
+    E_deribit, E_poly, net_ev = _integrate_ev_over_grid(
+        input_data=input_data,
+        costs=costs,
+        strategy_out=strategy_out,
+        payoff_func=_portfolio_payoff_at_price_strategy1,
+    )
+    return ExpectedPnlOutput(
+        E_Deribit_PnL=E_deribit,
+        E_Poly_PnL=E_poly,
+        Total_Expected=net_ev,
+    )
 
 
 def calculate_expected_pnl_strategy2(input_data, probs, costs, strategy_out):
-    Inv = input_data.Inv_Base
-    K1, K2, Kpoly = input_data.K1, input_data.K2, input_data.K_poly
-    contracts = strategy_out.Contracts
-
-    # --- Polymarket No ---
-    no_price = input_data.Price_No_entry
-    prob_yes = probs.P_interval3 + probs.P_interval4
-    prob_no  = 1 - prob_yes
-
-    shares = Inv / no_price
-    pnl_no  = shares * (1 - no_price)
-    pnl_yes = -Inv
-
-    E_poly = prob_no * pnl_no + prob_yes * pnl_yes
-
-    # --- Deribit 牛市 Call Spread (Buy K1, Sell K2) ---
-    debit = input_data.Call_K1_Ask - input_data.Call_K2_Bid
-    max_gain = (K2 - K1) * contracts
-    prob_max_gain = probs.P_interval4
-
-    E_deribit = prob_max_gain * max_gain - debit * contracts
-
-    # --- 总 EV ---
-    total = E_poly + E_deribit - costs.Total_Cost
-    return ExpectedPnlOutput(E_deribit, E_poly, total)
+    """
+    使用 PRD 4.4 的细网格 + 完整 payoff 积分计算策略二 EV
+    """
+    E_deribit, E_poly, net_ev = _integrate_ev_over_grid(
+        input_data=input_data,
+        costs=costs,
+        strategy_out=strategy_out,
+        payoff_func=_portfolio_payoff_at_price_strategy2,
+    )
+    return ExpectedPnlOutput(
+        E_Deribit_PnL=E_deribit,
+        E_Poly_PnL=E_poly,
+        Total_Expected=net_ev,
+    )
 
 
 def calculate_annualized_metrics(

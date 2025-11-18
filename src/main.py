@@ -83,9 +83,12 @@ async def loop_event(
     k1_fee_approx = float(k1_info["fee"])
     k2_fee_approx = float(k2_info["fee"])
 
-    iv_pool = [v for v in (k1_iv, k2_iv) if v > 0]
-    if len(iv_pool) > 0:
-        mark_iv = sum(iv_pool) / len(iv_pool)
+    # PRD 4.1：使用低执行价 K1 的 IV 做 σ
+    if k1_iv > 0:
+        mark_iv = k1_iv
+    elif k2_iv > 0:
+        # 兜底：K1 的 IV 异常时，用 K2
+        mark_iv = k2_iv
     else:
         raise Exception("iv pool wrong")
 
@@ -288,7 +291,7 @@ async def main(config_path="config.yaml"):
 
     investments = config["thresholds"]["INVESTMENTS"]
     output_csv = config["thresholds"]["OUTPUT_CSV"]
-    day_offset = 1
+    day_offset = 3
     instruments_map = init_markets(config, day_offset=day_offset)
 
     console.print(Panel.fit("[bold cyan]Deribit x Polymarket Arbitrage Monitor[/bold cyan]", border_style="bright_cyan"))
