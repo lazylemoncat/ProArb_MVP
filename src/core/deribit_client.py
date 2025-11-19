@@ -214,47 +214,67 @@ class DeribitStream:
         loop.run_until_complete(self._connect())
 
     # ---------- 静态工具函数：按行权价找合约 ----------
-
     @staticmethod
     def find_option_instrument(
         strike: float,
         currency: Literal["BTC", "ETH"] = "BTC",
         call: bool = True,
         day_offset: int = 0,
+        exp_timestamp: float | None = None,
     ):
         """
-        根据行权价找到最近的可行权价期权, 并选取最近到期(T最小)的 Call/Put。
-        可通过 day_offset 指定到期日偏移，比如 day_offset=1 表示选择次日到期的合约。
+        根据行权价找到最近的可交易期权。
+
+        参数：
+            strike: 目标行权价（可以是理论值，函数会自动映射到实际挂牌行权价）
+            currency: "BTC" 或 "ETH"
+            call: True 为看涨期权，False 为看跌
+            day_offset: 当未提供 exp_timestamp 时，表示在该行权价下按到期时间排序后的第几个合约
+            exp_timestamp: 若提供（单位：毫秒），将优先选择 expiration_timestamp
+                           最接近该值的合约，忽略 day_offset
+
+        返回：
+            instrument_name, expiration_timestamp
         """
         url = f"{BASE_URL}/public/get_instruments"
         params = {"currency": currency, "kind": "option", "expired": "false"}
-        r = requests.get(url, params=params).json()
-        instruments = r["result"]
+        r = requests.get(url, params=params)
+        r.raise_for_status()
+        instruments = r.json()["result"]
 
-        callput = "call" if call else "put"
+        option_type = "call" if call else "put"
 
-        # 先筛出同方向的期权
-        same_type = [inst for inst in instruments if inst["option_type"] == callput]
+        same_type = [inst for inst in instruments if inst["option_type"] == option_type]
         if not same_type:
-            raise ValueError(f"⚠️ 无法找到任何 {currency} {callput} 期权合约")
+            raise ValueError(f"无 {currency} {option_type} 期权可用")
 
-        # 找到与目标 strike 差值最小的实际可交易行权价
-        best_strike = min(
-            {inst["strike"] for inst in same_type},
-            key=lambda s: abs(s - float(strike)),
-        )
+        # 所有可交易行权价集合
+        strikes = {float(inst["strike"]) for inst in same_type}
 
-        # 过滤出同一 strike 的合约
-        candidates = [inst for inst in same_type if inst["strike"] == best_strike]
+        # 找与目标 strike 最接近的真实行权价
+        best_strike = min(strikes, key=lambda s: abs(s - float(strike)))
+
+        # 过滤出这一档行权价下的所有到期日合约
+        candidates = [
+            inst for inst in same_type if float(inst["strike"]) == best_strike
+        ]
         if not candidates:
-            raise ValueError(f"⚠️ 无法找到与行权价 {strike} 相近的可用期权")
+            raise ValueError(f"无法找到行权价 {strike} 附近的期权（货币: {currency}）")
 
-        # 按到期时间排序并应用 day_offset
+        # 按到期时间升序
         candidates.sort(key=lambda x: x["expiration_timestamp"])
-        if day_offset >= len(candidates):
-            day_offset = 0
 
-        selected = candidates[day_offset]
+        if exp_timestamp is not None:
+            # 选择 expiration_timestamp 最接近指定时间的合约
+            selected = min(
+                candidates,
+                key=lambda x: abs(x["expiration_timestamp"] - exp_timestamp),
+            )
+        else:
+            if day_offset >= len(candidates):
+                day_offset = 0
+            selected = candidates[day_offset]
+
         instrument_name = selected["instrument_name"]
         expiration_timestamp = selected["expiration_timestamp"]
 

@@ -65,6 +65,38 @@ class PolymarketClient:
         response = requests.get(url)
         response.raise_for_status()
         return response.json()
+    
+    @staticmethod
+    def get_markets_by_event_id(event_id: str) -> list[dict[str, Any]]:
+        """
+        根据 event_id 获取该事件下的所有 markets 列表。
+
+        返回值示例（列表元素结构与 Gamma /events/{id} 中的单个 market 一致）：
+        [
+            {
+                "id": "674533",
+                "question": "...",
+                "groupItemTitle": "96,000",
+                "groupItemThreshold": "0",
+                "clobTokenIds": "[\"...\", \"...\"]",
+                ...
+            },
+            ...
+        ]
+        """
+        event_data = PolymarketClient.get_event_by_id(event_id)
+        markets = event_data.get("markets")
+
+        if markets is None:
+            raise ValueError(f"No markets found for event_id {event_id}")
+
+        if not isinstance(markets, list):
+            raise TypeError(
+                f"Unexpected 'markets' type for event_id {event_id}: {type(markets).__name__}"
+            )
+
+        # 保证返回类型是 list[dict[str, Any]]
+        return [m for m in markets if isinstance(m, dict)]
 
     @staticmethod
     def get_market_id_by_market_title(event_id: str, market_title: str) -> str:

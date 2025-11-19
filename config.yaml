@@ -1,11 +1,26 @@
+# === 全局参数 ===
+thresholds:
+  OUTPUT_CSV: "data/results.csv"
+  ev_spread_min: 0.05
+  check_interval_sec: 120
+  INVESTMENTS: [1000]
+  MARGIN_USD: 1000
+
 events:
-  - name: "BTC > 92k"
-    asset: "BTC"                     # 或 ETH
+  - name: "BTC above ___ template"
+    asset: "BTC"
     polymarket:
-      market_title: "92,000"         # 只要 strike 对应的标题，日期不用写
-      # event_title: 会被代码自动覆盖
+      # 注意：这里只是模板，代码会自动把 "November 17" 改成 T+1 的真实日期
+      event_title: "Bitcoin above ___ on November 17?"
     deribit:
-      K_poly: 92000
-      k1_strike: 91000
-      k2_strike: 93000
-      # k1_expiration / k2_expiration: 会被代码自动覆盖为 T+1 08:00:00 UTC
+      # 相对于 Polymarket strike 的偏移（单位：USD）
+      k1_offset: -1000     # 比 Polymarket 阈值低 1000
+      k2_offset: 1000      # 比 Polymarket 阈值高 1000
+
+  - name: "ETH above ___ template"
+    asset: "ETH"
+    polymarket:
+      event_title: "Ethereum above ___ on November 17?"
+    deribit:
+      k1_offset: -25
+      k2_offset: 25

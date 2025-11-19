@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from datetime import datetime, timezone, date, timedelta
-from typing import Iterable
+from typing import Iterable, Dict, Any, List
 
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
+
 from strategy.investment_runner import InvestmentResult, evaluate_investment
 from utils.market_context import (
     DeribitMarketContext,
@@ -16,8 +18,8 @@ from utils.market_context import (
     build_polymarket_state,
     make_summary_table,
 )
-
 from core.deribit_client import DeribitUserCfg
+from core.polymarket_client import PolymarketClient
 from utils.dataloader import load_manual_data
 from utils.init_markets import init_markets
 from utils.save_result import save_result_csv
@@ -26,43 +28,142 @@ console = Console()
 load_dotenv()
 
 
-def _format_polymarket_date(d: date) -> str:
-    """将日期格式化为 Polymarket 事件标题中的日期片段，例如 "November 19"。"""
-    month = d.strftime("%B")
-    return f"{month} {d.day}"
+def rotate_event_title_date(template_title: str, target_date: date) -> str:
+    """
+    将 config.yaml 中的硬编码标题，例如：
+        "Bitcoin above ___ on November 17?"
+    只替换其中的月份和日期为 target_date 对应的值，其余保持不变。
+    """
+    if not template_title:
+        return template_title
+
+    on_idx = template_title.rfind(" on ")
+    if on_idx == -1:
+        # 找不到固定模式，就直接返回，不做替换
+        return template_title
+
+    q_idx = template_title.rfind("?")
+    if q_idx == -1 or q_idx < on_idx:
+        q_idx = len(template_title)
+
+    prefix = template_title[: on_idx + 4]  # 包含 " on "
+    suffix = template_title[q_idx:]        # 从 '?' 开始到结尾（可能无 '?', 那就是空串）
+
+    month_name = target_date.strftime("%B")
+    day_str = str(target_date.day)
+
+    return f"{prefix}{month_name} {day_str}{suffix}"
 
 
-def _generate_event_title(asset: str, target_date: date) -> str:
-    """根据资产类型和目标日期生成 Polymarket 事件标题。"""
-    asset_upper = (asset or "").upper()
-    if asset_upper == "BTC":
-        base = "Bitcoin"
-    elif asset_upper == "ETH":
-        base = "Ethereum"
-    else:
-        base = asset_upper or "Asset"
-    date_part = _format_polymarket_date(target_date)
-    return f"{base} above ___ on {date_part}?"
+def parse_strike_from_text(text: str) -> float | None:
+    """
+    从 Polymarket 的 question / groupItemTitle / 其它文本中解析数字行权价。
+    例如:
+        "100,000"       -> 100000.0
+        "3,500"         -> 3500.0
+        "Will BTC be above 90,000?" -> 90000.0
+    """
+    if not text:
+        return None
+
+    cleaned = text.replace("\xa0", " ")
+    m = re.search(r"([0-9][0-9,]*)", cleaned)
+    if not m:
+        return None
+    num_str = m.group(1).replace(",", "")
+    try:
+        return float(num_str)
+    except ValueError:
+        return None
 
 
-def build_events_for_date(config: dict, target_date: date) -> list[dict]:
-    """基于 config['events'] 模板，为指定的 target_date 生成事件列表。
+def discover_strike_markets_for_event(event_title: str) -> List[Dict[str, Any]]:
+    """
+    使用 Polymarket API 自动发现某个事件下的所有 strike（市场标题）。
 
-    - 自动生成 polymarket.event_title（明天的日期）
-    - 自动设置 deribit.k1_expiration / k2_expiration 为 target_date 08:00:00 UTC
-    - 确保 deribit.asset 字段存在，便于 init_markets 使用
+    返回值：
+    [
+        {
+            "market_id": "...",
+            "market_title": "100,000",
+            "strike": 100000.0,
+        },
+        ...
+    ]
+    """
+    event_id = PolymarketClient.get_event_id_public_search(event_title)
+    event_data = PolymarketClient.get_event_by_id(event_id)
+    markets = event_data.get("markets", []) or []
 
-    说明：
-    - config.yaml 里的 events 仅需要提供：
-        - asset（BTC / ETH）
-        - polymarket.market_title（例如 "92,000"、"104,000"）
-        - deribit.k1_strike / k2_strike
-      其它如 event_title / k1_expiration / k2_expiration 会在这里自动覆盖。
+    results: List[Dict[str, Any]] = []
+
+    for m in markets:
+        market_id = m.get("id")
+
+        # groupItemTitle 通常就是 "96,000" / "100,000" 这种
+        title_text = m.get("groupItemTitle") or m.get("title") or ""
+        question = m.get("question") or ""
+
+        # 优先从 groupItemTitle 解析 strike
+        strike = parse_strike_from_text(title_text)
+        if strike is None:
+            strike = parse_strike_from_text(question)
+
+        if strike is None:
+            # 这一档我们就跳过，不参与套利
+            continue
+
+        market_title = title_text.strip() if title_text else question.strip()
+
+        results.append(
+            {
+                "market_id": market_id,
+                "market_title": market_title,
+                "strike": strike,
+            }
+        )
+
+    results.sort(key=lambda x: x["strike"])
+    return results
+
+
+def build_events_for_date(config: dict, target_date: date) -> List[dict]:
+    """
+    基于 config['events'] 中的“模板事件”，为指定的 target_date 生成真正要跑的事件列表。
+
+    约定：
+    - config.yaml 中每个模板事件类似（只举例 BTC/ETH，日期可以是任意一天）：
+
+        - name: "BTC above ___ template"
+          asset: "BTC"
+          polymarket:
+            event_title: "Bitcoin above ___ on November 17?"
+          deribit:
+            k1_offset: -1000
+            k2_offset: 1000
+
+        - name: "ETH above ___ template"
+          asset: "ETH"
+          polymarket:
+            event_title: "Ethereum above ___ on November 17?"
+          deribit:
+            k1_offset: -100
+            k2_offset: 100
+
+    逻辑：
+    1. 对每个模板事件：
+        - 把 event_title 中的 "November 17" 替换成 target_date 对应的 "Month Day"
+    2. 自动发现该事件下所有 strike（market_title + strike）
+    3. 对每个 strike，根据 k1_offset / k2_offset 生成一个“展开后的事件”，包含：
+        - polymarket.event_title（已替换日期）
+        - polymarket.market_title（具体 strike，比如 "100,000"）
+        - deribit.asset, deribit.K_poly, deribit.k1_strike, deribit.k2_strike
+        - deribit.k1_expiration / deribit.k2_expiration 统一设为 target_date 当天 08:00:00 UTC
     """
     import copy
 
     base_events = config.get("events") or []
-    events: list[dict] = []
+    expanded_events: List[dict] = []
 
     expiration_dt = datetime(
         target_date.year, target_date.month, target_date.day, 8, 0, 0, tzinfo=timezone.utc
@@ -70,25 +171,64 @@ def build_events_for_date(config: dict, target_date: date) -> list[dict]:
     expiration_str = expiration_dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
     for tpl in base_events:
-        e = copy.deepcopy(tpl)
+        e_tpl = copy.deepcopy(tpl)
 
-        # === asset 归一化到 deribit.asset ===
-        deribit_cfg = e.setdefault("deribit", {})
-        asset = deribit_cfg.get("asset") or e.get("asset")
+        # 资产
+        asset = e_tpl.get("asset") or e_tpl.get("deribit", {}).get("asset")
         if not asset:
-            # 缺少 asset 的配置无法使用，跳过
             continue
+
+        deribit_cfg = e_tpl.setdefault("deribit", {})
         deribit_cfg["asset"] = asset
-        deribit_cfg["k1_expiration"] = expiration_str
-        deribit_cfg["k2_expiration"] = expiration_str
 
-        # === polymarket 事件标题（只改日期，不动 market_title）===
-        poly_cfg = e.setdefault("polymarket", {})
-        poly_cfg["event_title"] = _generate_event_title(asset, target_date)
+        # 从模板里取 offset，用于生成 k1/k2
+        k1_offset = float(deribit_cfg.get("k1_offset", 0.0))
+        k2_offset = float(deribit_cfg.get("k2_offset", 0.0))
 
-        events.append(e)
+        # 旋转日期
+        poly_cfg = e_tpl.setdefault("polymarket", {})
+        template_title = poly_cfg.get("event_title") or ""
+        rotated_title = rotate_event_title_date(template_title, target_date)
 
-    return events
+        # 自动发现所有 strike
+        try:
+            strike_markets = discover_strike_markets_for_event(rotated_title)
+        except Exception as exc:
+            console.print(
+                f"[red]❌ 自动发现 Polymarket 市场失败: event_title={rotated_title!r}, 错误: {exc}[/red]"
+            )
+            continue
+
+        if not strike_markets:
+            console.print(
+                f"[yellow]⚠️ Polymarket 事件 {rotated_title!r} 未找到任何 strike 市场，跳过。[/yellow]"
+            )
+            continue
+
+        for sm in strike_markets:
+            strike = float(sm["strike"])
+            market_title = sm["market_title"]
+
+            child: Dict[str, Any] = {
+                "name": f"{asset} > {strike:g}",
+                "asset": asset,
+                "polymarket": {
+                    "event_title": rotated_title,
+                    "market_title": market_title,
+                },
+                "deribit": {
+                    "asset": asset,
+                    "K_poly": strike,
+                    # 这里是关键：把 offset 转换成“真实行权价”
+                    "k1_strike": strike + k1_offset,
+                    "k2_strike": strike + k2_offset,
+                    "k1_expiration": expiration_str,
+                    "k2_expiration": expiration_str,
+                },
+            }
+            expanded_events.append(child)
+
+    return expanded_events
 
 
 async def loop_event(
@@ -104,17 +244,14 @@ async def loop_event(
     - 计算各档投资的 EV
     - 输出到终端和 CSV
     """
-    # === 1. 构建行情上下文 ===
     deribit_ctx: DeribitMarketContext = build_deribit_context(data, instruments_map)
     poly_ctx: PolymarketState = build_polymarket_state(data)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-    # === 2. 输出汇总表 ===
     table = make_summary_table(deribit_ctx, poly_ctx, timestamp=timestamp)
     console.print(table)
 
-    # === 3. 对每一档投资金额进行计算 ===
     for inv in investments:
         inv_base_usd = float(inv)
 
@@ -142,42 +279,37 @@ async def loop_event(
 
 
 async def run_monitor(config: dict) -> None:
-    """根据配置启动监控循环（方案二：自动按日期轮换事件）。"""
+    """
+    根据配置启动监控循环（方案二：自动按日期轮换事件）。
+
+    行为：
+    - 永久运行；每次检测到 UTC 日期变化时，重新：
+        1. 根据 config['events'] 模板 + T+1 日期 生成 event_title（只改月份和日期）
+        2. 调 Polymarket API 自动发现该事件下的所有 strike（市场标题）
+        3. 为每个 strike 生成具体事件（含 K_poly/k1/k2 到期时间等）
+        4. 调 init_markets 构建 Deribit instruments_map
+    """
     deribit_user_cfg = DeribitUserCfg(
         user_id=os.getenv("test_deribit_user_id", ""),
         client_id=os.getenv("test_deribit_client_id", ""),
         client_secret=os.getenv("test_deribit_client_secret", ""),
     )
 
-    investments = config["thresholds"]["INVESTMENTS"]
-    output_csv = config["thresholds"]["OUTPUT_CSV"]
-    check_interval = config["thresholds"]["check_interval_sec"]
+    thresholds = config["thresholds"]
+    investments = thresholds["INVESTMENTS"]
+    output_csv = thresholds["OUTPUT_CSV"]
+    check_interval = thresholds["check_interval_sec"]
 
-    # 当前正在监控的目标日期（T+1）
     current_target_date: date | None = None
-    events: list[dict] = []
+    events: List[dict] = []
     instruments_map: dict = {}
 
     while True:
         now_utc = datetime.now(timezone.utc)
-        # 目标日 = 当前 UTC 日期 + 1 天
         target_date = now_utc.date() + timedelta(days=1)
 
-        # 如果跨天了，重新构建事件列表和 Deribit 合约映射
         if current_target_date is None or target_date != current_target_date:
             current_target_date = target_date
-
-            events = build_events_for_date(config, target_date)
-            if not events:
-                console.print(
-                    "[red]config.yaml 中 events 为空或 asset 缺失，无法生成任何事件，请检查配置。[/red]"
-                )
-                instruments_map = {}
-            else:
-                cfg_for_markets = dict(config)
-                cfg_for_markets["events"] = events
-                # 使用显式 expiration，不再依赖 day_offset
-                instruments_map = init_markets(cfg_for_markets, day_offset=0)
 
             console.print(
                 Panel.fit(
@@ -186,6 +318,20 @@ async def run_monitor(config: dict) -> None:
                     border_style="bright_cyan",
                 )
             )
+
+            events = build_events_for_date(config, target_date)
+
+            if not events:
+                console.print(
+                    "[red]当前配置无法生成任何事件（可能是 config.yaml 的 events 为空，"
+                    "或者自动发现 Polymarket strike 失败），请检查配置。[/red]"
+                )
+                instruments_map = {}
+            else:
+                cfg_for_markets = dict(config)
+                cfg_for_markets["events"] = events
+                instruments_map = init_markets(cfg_for_markets, day_offset=0)
+
             console.print("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")
 
         if not events:
@@ -202,7 +348,7 @@ async def run_monitor(config: dict) -> None:
                         output_csv=output_csv,
                         instruments_map=instruments_map,
                     )
-                except Exception as e:  # 运行时统一兜底
+                except Exception as e:
                     title = data.get("polymarket", {}).get("market_title", "UNKNOWN")
                     console.print(f"❌ [red]处理 {title} 时出错: {e}[/red]")
 
