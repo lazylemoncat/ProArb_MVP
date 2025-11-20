@@ -116,7 +116,7 @@ def build_deribit_context(
     k1_bid_btc = float(k1_info["bid_price"])
     k1_ask_btc = float(k1_info["ask_price"])
     k2_bid_btc = float(k2_info["bid_price"])
-    k2_ask_btc = float(k2_info["bid_price"])
+    k2_ask_btc = float(k2_info["ask_price"])
     k1_mid_btc = (k1_bid_btc + k1_ask_btc) / 2.0
     k2_mid_btc = (k2_bid_btc + k2_ask_btc) / 2.0
 

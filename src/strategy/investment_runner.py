@@ -3,14 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from core.deribit_client import get_testnet_initial_margin, DeribitUserCfg
+from core.deribit_client import DeribitUserCfg, get_testnet_initial_margin
 from core.polymarket_client import get_polymarket_slippage
+from strategy.early_exit import make_exit_decision
+from strategy.models import ExitDecision, Position
 from strategy.position_calculator import (
     PositionInputs,
     strategy1_position_contracts,
     strategy2_position_contracts,
 )
-from strategy.test_fixed import main_calculation, CalculationInput, PMEParams
+from strategy.test_fixed import CalculationInput, PMEParams, main_calculation
 from utils.market_context import DeribitMarketContext, PolymarketState
 
 
@@ -228,3 +230,36 @@ async def evaluate_investment(
         slippage_rate_used=slippage_rate_used,
         calc_input=calc_input,
     )
+
+async def evaluate_early_exit_for_position(
+    *,
+    position: Position,
+    base_result: InvestmentResult,
+    settlement_price: float,
+    pm_exit_price: float,
+    available_liquidity_tokens: float,
+    early_exit_cfg: Dict[str, Any],
+) -> ExitDecision:
+    """
+    利用 evaluate_investment 返回的 calc_input，
+    再结合真实持仓信息 Position 和当前 PM 价格，给出提前平仓决策。
+
+    注意：
+    - position 需要由你的“真实下单记录”来构造（而不是 InvestmentResult）
+    - settlement_price：DR 的真实结算价（08:00 结算后）
+    - pm_exit_price：当前 PM 上你打算平仓的价格（可以用最佳买价 / 中间价）
+    """
+    if not hasattr(base_result, "calc_input") or base_result.calc_input is None:
+        raise ValueError("InvestmentResult 缺少 calc_input，无法做提前平仓分析")
+
+    calc_input = base_result.calc_input
+
+    decision = make_exit_decision(
+        position=position,
+        calc_input=calc_input,
+        settlement_price=settlement_price,
+        pm_exit_price=pm_exit_price,
+        available_liquidity_tokens=available_liquidity_tokens,
+        early_exit_cfg=early_exit_cfg,
+    )
+    return decision

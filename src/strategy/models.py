@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, List
 
 # ==================== 输入参数数据类 ====================
 @dataclass
@@ -162,3 +162,118 @@ class OptionPosition:
     current_price: float
     implied_vol: float
     option_type: Literal["call", "put"] = "call"
+
+# ==================== 提前平仓 / 早退模块数据结构 ====================
+
+@dataclass
+class Position:
+    """
+    真实持仓信息（来自下单系统），用于提前平仓评估。
+    对应 PRD 5.1 Position 定义。
+    """
+    pm_direction: Literal["buy_yes", "buy_no"]  # 在 PM 上是买 YES 还是买 NO
+    pm_tokens: float                            # PM token 数量
+    pm_entry_cost: float                        # PM 入场成本 (USDC)
+    dr_contracts: float                         # DR 合约数量（牛市价差张数）
+    dr_entry_cost: float                        # DR 入场成本 (USDC，注意可以为负=净收入)
+    capital_input: float                        # 初始投入资本（总资金占用）
+
+
+@dataclass
+class DRSettlement:
+    """
+    Deribit 到期结算结果。
+    - gross_pnl: 使用策略 payoff（牛市价差）计算出的 DR 端盈亏（未扣除结算 fee）
+    - settlement_fee: 估算的 Deribit 结算手续费
+    - net_pnl: 扣除结算手续费后的净收益
+    对应 PRD 中 DR 结算收益部分。:contentReference[oaicite:1]{index=1}
+    """
+    settlement_price: float
+    gross_pnl: float
+    settlement_fee: float
+    net_pnl: float
+
+
+@dataclass
+class PMExitActual:
+    """
+    PM 提前平仓的实际结果。
+    - exit_price: 提前平仓成交均价
+    - tokens: 卖出的 token 数
+    - exit_fee: PM 侧平仓费用（可由费率*名义金额估算）
+    - net_pnl: 提前平仓净收益
+    对应 PRD “PM 实际平仓收益”。:contentReference[oaicite:2]{index=2}
+    """
+    exit_price: float
+    tokens: float
+    exit_fee: float
+    net_pnl: float
+
+
+@dataclass
+class PMExitTheoretical:
+    """
+    PM 理论收益（假设持有到事件结算，拿到 1 USDC / token 或 0）。
+    对应 PRD “PM 理论收益”。:contentReference[oaicite:3]{index=3}
+    """
+    event_occurred: bool   # 事件是否发生
+    payout: float          # 总兑付金额 = pm_tokens * (1 or 0)
+    net_pnl: float         # payout - pm_entry_cost
+
+
+@dataclass
+class RiskCheckResult:
+    """
+    风控检查结果，用于记录每个风控规则的通过/未通过情况。
+    """
+    name: str
+    passed: bool
+    detail: str = ""
+
+
+@dataclass
+class ExecutionResult:
+    """
+    提前平仓执行结果（真实执行 or 模拟执行）。
+    目前我们只定义结构，不在本次改动中对接真实下单。
+    """
+    success: bool
+    executed_tokens: float
+    avg_price: float
+    fee_paid: float
+    tx_id: str | None = None
+
+
+@dataclass
+class EarlyExitPnL:
+    """
+    提前平仓收益分析。
+    对应 PRD 里的 EarlyExitPnL。:contentReference[oaicite:4]{index=4}
+    """
+    # 实际收益
+    dr_settlement: DRSettlement
+    pm_exit_actual: PMExitActual
+    actual_total_pnl: float   # DR 净收益 + PM 实际平仓收益
+    actual_roi: float         # 实际收益 / capital_input
+
+    # 理论收益
+    pm_exit_theoretical: PMExitTheoretical
+    theoretical_total_pnl: float
+    theoretical_roi: float
+
+    # 对比分析
+    opportunity_cost: float       # 机会成本 = 理论 - 实际
+    opportunity_cost_pct: float   # 机会成本百分比（相对理论收益）
+
+
+@dataclass
+class ExitDecision:
+    """
+    决策结果，对应 PRD 中 ExitDecision。:contentReference[oaicite:5]{index=5}
+    """
+    should_exit: bool                 # 是否应该平仓
+    confidence: float                 # 置信度 (0-1)
+    risk_checks: List[RiskCheckResult]
+    pnl_analysis: EarlyExitPnL
+    execution_result: ExecutionResult | None
+    decision_reason: str              # 决策理由（可用于日志）
