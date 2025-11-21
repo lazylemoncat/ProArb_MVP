@@ -725,15 +725,46 @@ def calculate_strategy1(input_data: CalculationInput) -> StrategyOutput:
     )
 
     return StrategyOutput(Contracts=Contracts_Short, Income_Deribit=Income_Deribit)
+    return StrategyOutput(
+        Contracts=Contracts_Short,
+        Income_Deribit=Income_Deribit,
+    )
 
 def calculate_strategy2(input_data: CalculationInput) -> StrategyOutput:
     """计算策略二头寸规模"""
-    if input_data.Price_No_entry == 0:
+    if input_data.Price_No_entry == 0 or input_data.BTC_Price <= 0:
         return StrategyOutput(Contracts=0, Profit_Poly_Max=0, Cost_Deribit=0)
+
+    pricer = BlackScholesPricer()
+
+    # PM 投注金额转换为 BTC 名义敞口
+    pm_btc_exposure = input_data.Inv_Base / input_data.BTC_Price
+
+    # Deribit 价差的 Delta 差值（牛市价差：长 K1 短 K2）
+    delta_k1 = pricer.calculate_greeks(
+        S=input_data.S,
+        K=input_data.K1,
+        T=input_data.T,
+        r=input_data.r,
+        sigma=input_data.sigma,
+        option_type="call",
+    ).delta
+
+    delta_k2 = pricer.calculate_greeks(
+        S=input_data.S,
+        K=input_data.K2,
+        T=input_data.T,
+        r=input_data.r,
+        sigma=input_data.sigma,
+        option_type="call",
+    ).delta
+
+    spread_delta = abs(delta_k1 - delta_k2)
 
     Profit_Poly_Max = input_data.Inv_Base * (1 / input_data.Price_No_entry - 1)
     Cost_Deribit = input_data.Call_K1_Ask - input_data.Call_K2_Bid
     Contracts_Long = Profit_Poly_Max / Cost_Deribit if Cost_Deribit != 0 else 0
+    Contracts_Long = pm_btc_exposure / spread_delta if spread_delta > 0 else 0.0
 
     return StrategyOutput(Contracts=Contracts_Long, Profit_Poly_Max=Profit_Poly_Max, Cost_Deribit=Cost_Deribit)
 
