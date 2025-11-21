@@ -12,7 +12,7 @@ from strategy.position_calculator import (
     strategy1_position_contracts,
     strategy2_position_contracts,
 )
-from strategy.test_fixed import CalculationInput, PMEParams, main_calculation
+from strategy.strategy import CalculationInput, PMEParams, main_calculation
 from utils.market_context import DeribitMarketContext, PolymarketState
 
 

@@ -15,7 +15,7 @@ from .models import (
     StrategyOutput,
     CalculationInput,
 )
-from .test_fixed import (  # 复用现有 payoff 和结算费算法，保证一致性 :contentReference[oaicite:7]{index=7}
+from .strategy import (  # 复用现有 payoff 和结算费算法，保证一致性 :contentReference[oaicite:7]{index=7}
     _portfolio_payoff_at_price_strategy1,
     _portfolio_payoff_at_price_strategy2,
     calculate_deribit_settlement_fee,

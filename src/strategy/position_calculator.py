@@ -20,7 +20,7 @@ def strategy1_position_contracts(inputs: PositionInputs):
     inv_base_btc = inputs.inv_base_usd / inputs.btc_usd
     net_cost = inputs.call_k1_bid_btc - inputs.call_k2_ask_btc
     if net_cost <= 0:
-        raise Exception("net_cost <= 0")
+        return 0, 0
     contracts = inv_base_btc / net_cost
     return contracts, net_cost
 
