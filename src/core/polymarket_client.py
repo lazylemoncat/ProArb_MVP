@@ -14,7 +14,7 @@ GET_MARKET_BY_ID_URL = f"{BASE_URL}/markets/{{market_id}}"
 GET_EVENT_BY_ID_URL = f"{BASE_URL}/events/{{event_id}}"
 
 CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-
+HTTP_TIMEOUT = 10  # 秒
 
 class PolymarketClient:
     """
@@ -26,7 +26,7 @@ class PolymarketClient:
     @staticmethod
     def get_market_list() -> Any:
         """获取所有市场列表"""
-        response = requests.get(LIST_MARKET_URL)
+        response = requests.get(LIST_MARKET_URL, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         return response.json()
 
@@ -34,7 +34,7 @@ class PolymarketClient:
     def get_market_by_id(market_id: str) -> Any:
         """根据市场 ID 获取市场详情"""
         url = GET_MARKET_BY_ID_URL.format(market_id=market_id)
-        response = requests.get(url)
+        response = requests.get(url, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         return response.json()
 
@@ -62,7 +62,7 @@ class PolymarketClient:
     def get_event_by_id(event_id: str) -> Any:
         """根据 event_id 获取事件详情"""
         url = GET_EVENT_BY_ID_URL.format(event_id=event_id)
-        response = requests.get(url)
+        response = requests.get(url, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         return response.json()
     
