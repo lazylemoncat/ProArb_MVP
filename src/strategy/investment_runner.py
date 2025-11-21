@@ -3,16 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from core.deribit_client import DeribitUserCfg, get_testnet_initial_margin
+from core.deribit_client import DeribitUserCfg
 from core.polymarket_client import get_polymarket_slippage
 from strategy.early_exit import make_exit_decision
-from strategy.models import ExitDecision, Position
+from strategy.models import ExitDecision, OptionPosition, Position
 from strategy.position_calculator import (
     PositionInputs,
     strategy1_position_contracts,
     strategy2_position_contracts,
 )
-from strategy.test_fixed import CalculationInput, PMEParams, main_calculation
+from strategy.test_fixed import (
+    CalculationInput,
+    PMEParams,
+    calculate_pme_margin,
+    main_calculation,
+)
 from utils.market_context import DeribitMarketContext, PolymarketState
 
 
@@ -165,15 +170,35 @@ async def evaluate_investment(
     )
     amount_contracts = max(abs(contracts_s1), abs(contracts_s2))
 
-    # === 3. Deribit 初始保证金 ===
-    im_value_btc = float(
-        await get_testnet_initial_margin(
-            deribit_user_cfg,
-            amount=amount_contracts,
-            instrument_name=deribit_ctx.inst_k1,
-        )
+    # === 3. Deribit 初始保证金（使用 PME 风险矩阵计算）===
+    pme_positions = [
+        OptionPosition(
+            strike=deribit_ctx.k1_strike,
+            direction="long",
+            contracts=amount_contracts,
+            current_price=deribit_ctx.k1_mid_usd,
+            implied_vol=deribit_ctx.mark_iv / 100.0,
+            option_type="call",
+        ),
+        OptionPosition(
+            strike=deribit_ctx.k2_strike,
+            direction="short",
+            contracts=amount_contracts,
+            current_price=deribit_ctx.k2_mid_usd,
+            implied_vol=deribit_ctx.mark_iv / 100.0,
+            option_type="call",
+        ),
+    ]
+
+    pme_margin_result = calculate_pme_margin(
+        positions=pme_positions,
+        current_index_price=deribit_ctx.spot,
+        days_to_expiry=deribit_ctx.T * 365.0,
+        pme_params=PMEParams(),
     )
-    im_value_usd = im_value_btc * deribit_ctx.spot
+
+    im_value_usd = float(pme_margin_result["c_dr_usd"])
+    im_value_btc = im_value_usd / deribit_ctx.spot if deribit_ctx.spot else 0.0
 
     # === 4. 调用统一的收益 / 风险计算引擎 ===
     calc_input = CalculationInput(
