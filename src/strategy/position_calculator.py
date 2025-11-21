@@ -18,7 +18,7 @@ def strategy1_position_contracts(inputs: PositionInputs):
     策略1（看涨套利）合约数量估算
     """
     inv_base_btc = inputs.inv_base_usd / inputs.btc_usd
-    net_cost = inputs.call_k1_bid_btc / inputs.call_k2_ask_btc
+    net_cost = inputs.call_k1_bid_btc - inputs.call_k2_ask_btc
     if net_cost <= 0:
         return 0, 0
     contracts = inv_base_btc / net_cost
