@@ -7,12 +7,8 @@ from core.deribit_client import DeribitUserCfg
 from core.polymarket_client import get_polymarket_slippage
 from strategy.early_exit import make_exit_decision
 from strategy.models import ExitDecision, OptionPosition, Position
-from strategy.position_calculator import (
-    PositionInputs,
-    strategy1_position_contracts,
-    strategy2_position_contracts,
-)
 from strategy.strategy import (
+    BlackScholesPricer,
     CalculationInput,
     PMEParams,
     calculate_pme_margin,
@@ -154,20 +150,41 @@ async def evaluate_investment(
 
     slippage_rate_used = max(pm_yes_slip_open, pm_no_slip_open)
 
-    # === 2. 头寸与合约张数 ===
-    pos_in = PositionInputs(
-        inv_base_usd=inv_base_usd,
-        call_k1_bid_usd=deribit_ctx.k1_bid_usd,
-        call_k2_ask_usd=deribit_ctx.k2_ask_usd,
-        call_k1_ask_usd=deribit_ctx.k1_ask_usd,
-        call_k2_bid_usd=deribit_ctx.k2_bid_usd,
-        poly_no_entry=poly_ctx.no_price,
-    )
+    # === 2. 头寸与合约张数（基于 Delta 对冲 PM BTC 敞口）===
+    pricer = BlackScholesPricer()
 
-    contracts_s1, s1_income_usd = strategy1_position_contracts(pos_in)
-    contracts_s2, s2_cost_usd = strategy2_position_contracts(pos_in)
+    # 1) PM 投注金额 -> BTC 名义敞口
+    #    PM_BTC_exposure = Inv_Base / S
+    if deribit_ctx.spot > 0:
+        pm_btc_exposure = inv_base_usd / deribit_ctx.spot
+    else:
+        pm_btc_exposure = 0.0
 
-    amount_contracts = max(abs(contracts_s1), abs(contracts_s2))
+    # 2) 用 BS 模型算两个 Call 的 Delta
+    delta_k1 = pricer.calculate_greeks(
+        S=deribit_ctx.spot,
+        K=deribit_ctx.k1_strike,
+        T=deribit_ctx.T,
+        r=deribit_ctx.r,
+        sigma=deribit_ctx.mark_iv / 100.0,
+        option_type="call",
+    ).delta
+
+    delta_k2 = pricer.calculate_greeks(
+        S=deribit_ctx.spot,
+        K=deribit_ctx.k2_strike,
+        T=deribit_ctx.T,
+        r=deribit_ctx.r,
+        sigma=deribit_ctx.mark_iv / 100.0,
+        option_type="call",
+    ).delta
+
+    # 价差净 Delta：Δ_spread = Δ(K1) - Δ(K2)
+    spread_delta = abs(delta_k1 - delta_k2)
+
+    # 3) 合约数量：
+    #    Contracts = PM_BTC_exposure / |Δ_spread|
+    amount_contracts = pm_btc_exposure / spread_delta if spread_delta > 0 else 0.0
 
     # === 3. Deribit 初始保证金（使用 PME 风险矩阵计算）===
     pme_positions = [

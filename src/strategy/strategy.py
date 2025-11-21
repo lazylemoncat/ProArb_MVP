@@ -1,13 +1,3 @@
-"""
-完整的策略计算引擎 (Enhanced test_fixed.py)
-修复说明：
-- ✅ P0: 集成 PME 风险矩阵保证金计算（替换简化的固定保证金）
-- ✅ P0: 修复预期盈亏计算（移除硬编码假设，使用真实概率分布）
-- ✅ P0: 添加精确费用计算（组合折扣 + Settlement Fee）
-- ✅ P1: 添加年化回报率和夏普比率计算
-- ✅ P2: 添加 BS 定价偏差检测和 Greeks 计算
-"""
-
 import math
 from typing import Literal
 import numpy as np
