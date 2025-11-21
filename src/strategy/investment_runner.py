@@ -157,17 +157,16 @@ async def evaluate_investment(
     # === 2. 头寸与合约张数 ===
     pos_in = PositionInputs(
         inv_base_usd=inv_base_usd,
-        call_k1_bid_btc=deribit_ctx.k1_bid_btc,
-        call_k2_ask_btc=deribit_ctx.k2_ask_btc,
-        call_k1_ask_btc=deribit_ctx.k1_ask_btc,
-        call_k2_bid_btc=deribit_ctx.k2_bid_btc,
-        btc_usd=deribit_ctx.spot,
+        call_k1_bid_usd=deribit_ctx.k1_bid_usd,
+        call_k2_ask_usd=deribit_ctx.k2_ask_usd,
+        call_k1_ask_usd=deribit_ctx.k1_ask_usd,
+        call_k2_bid_usd=deribit_ctx.k2_bid_usd,
+        poly_no_entry=poly_ctx.no_price,
     )
 
     contracts_s1, s1_income_usd = strategy1_position_contracts(pos_in)
-    contracts_s2, s2_cost_usd = strategy2_position_contracts(
-        pos_in, poly_no_entry=poly_ctx.no_price
-    )
+    contracts_s2, s2_cost_usd = strategy2_position_contracts(pos_in)
+
     amount_contracts = max(abs(contracts_s1), abs(contracts_s2))
 
     # === 3. Deribit 初始保证金（使用 PME 风险矩阵计算）===

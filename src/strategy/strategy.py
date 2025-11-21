@@ -719,16 +719,11 @@ def calculate_strategy1(input_data: CalculationInput) -> StrategyOutput:
     spread_delta = abs(delta_k1 - delta_k2)
 
     Income_Deribit = input_data.Call_K1_Bid - input_data.Call_K2_Ask
-    Contracts_Short = input_data.Inv_Base / Income_Deribit if Income_Deribit != 0 else 0
     Contracts_Short = (
         pm_btc_exposure / spread_delta if spread_delta > 0 else 0.0
     )
 
     return StrategyOutput(Contracts=Contracts_Short, Income_Deribit=Income_Deribit)
-    return StrategyOutput(
-        Contracts=Contracts_Short,
-        Income_Deribit=Income_Deribit,
-    )
 
 def calculate_strategy2(input_data: CalculationInput) -> StrategyOutput:
     """计算策略二头寸规模"""
