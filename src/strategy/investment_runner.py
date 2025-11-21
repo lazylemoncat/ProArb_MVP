@@ -12,7 +12,11 @@ from strategy.position_calculator import (
     strategy1_position_contracts,
     strategy2_position_contracts,
 )
+<<<<<<< HEAD
 from strategy.strategy import (
+=======
+from strategy.test_fixed import (
+>>>>>>> f3b5f59a997d68fa6449fdeecc3cd594a233ce67
     CalculationInput,
     PMEParams,
     calculate_pme_margin,
