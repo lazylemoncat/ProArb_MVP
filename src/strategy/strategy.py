@@ -689,8 +689,40 @@ def calculate_probabilities(input_data: CalculationInput) -> ProbabilityOutput:
 
 def calculate_strategy1(input_data: CalculationInput) -> StrategyOutput:
     """计算策略一头寸规模"""
+    pricer = BlackScholesPricer()
+
+    # PM 投注金额转换为 BTC 名义敞口
+    if input_data.BTC_Price <= 0:
+        pm_btc_exposure = 0.0
+    else:
+        pm_btc_exposure = input_data.Inv_Base / input_data.BTC_Price
+
+    # Deribit 价差的 Delta 差值（牛市价差：短 K1 多 K2）
+    delta_k1 = pricer.calculate_greeks(
+        S=input_data.S,
+        K=input_data.K1,
+        T=input_data.T,
+        r=input_data.r,
+        sigma=input_data.sigma,
+        option_type="call",
+    ).delta
+
+    delta_k2 = pricer.calculate_greeks(
+        S=input_data.S,
+        K=input_data.K2,
+        T=input_data.T,
+        r=input_data.r,
+        sigma=input_data.sigma,
+        option_type="call",
+    ).delta
+
+    spread_delta = abs(delta_k1 - delta_k2)
+
     Income_Deribit = input_data.Call_K1_Bid - input_data.Call_K2_Ask
     Contracts_Short = input_data.Inv_Base / Income_Deribit if Income_Deribit != 0 else 0
+    Contracts_Short = (
+        pm_btc_exposure / spread_delta if spread_delta > 0 else 0.0
+    )
 
     return StrategyOutput(Contracts=Contracts_Short, Income_Deribit=Income_Deribit)
 

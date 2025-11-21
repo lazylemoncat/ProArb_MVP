@@ -3,16 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from core.deribit_client import DeribitUserCfg, get_testnet_initial_margin
+from core.deribit_client import DeribitUserCfg
 from core.polymarket_client import get_polymarket_slippage
 from strategy.early_exit import make_exit_decision
-from strategy.models import ExitDecision, Position
+from strategy.models import ExitDecision, OptionPosition, Position
 from strategy.position_calculator import (
     PositionInputs,
     strategy1_position_contracts,
     strategy2_position_contracts,
 )
-from strategy.strategy import CalculationInput, PMEParams, main_calculation
+from strategy.strategy import (
+    CalculationInput,
+    PMEParams,
+    calculate_pme_margin,
+    main_calculation,
+)
 from utils.market_context import DeribitMarketContext, PolymarketState
 
 
@@ -165,15 +170,35 @@ async def evaluate_investment(
     )
     amount_contracts = max(abs(contracts_s1), abs(contracts_s2))
 
-    # === 3. Deribit 初始保证金 ===
-    im_value_btc = float(
-        await get_testnet_initial_margin(
-            deribit_user_cfg,
-            amount=amount_contracts,
-            instrument_name=deribit_ctx.inst_k1,
-        )
+    # === 3. Deribit 初始保证金（使用 PME 风险矩阵计算）===
+    pme_positions = [
+        OptionPosition(
+            strike=deribit_ctx.k1_strike,
+            direction="long",
+            contracts=amount_contracts,
+            current_price=deribit_ctx.k1_mid_usd,
+            implied_vol=deribit_ctx.mark_iv / 100.0,
+            option_type="call",
+        ),
+        OptionPosition(
+            strike=deribit_ctx.k2_strike,
+            direction="short",
+            contracts=amount_contracts,
+            current_price=deribit_ctx.k2_mid_usd,
+            implied_vol=deribit_ctx.mark_iv / 100.0,
+            option_type="call",
+        ),
+    ]
+
+    pme_margin_result = calculate_pme_margin(
+        positions=pme_positions,
+        current_index_price=deribit_ctx.spot,
+        days_to_expiry=deribit_ctx.T * 365.0,
+        pme_params=PMEParams(),
     )
-    im_value_usd = im_value_btc * deribit_ctx.spot
+
+    im_value_usd = float(pme_margin_result["c_dr_usd"])
+    im_value_btc = im_value_usd / deribit_ctx.spot if deribit_ctx.spot else 0.0
 
     # === 4. 调用统一的收益 / 风险计算引擎 ===
     calc_input = CalculationInput(
@@ -211,10 +236,34 @@ async def evaluate_investment(
         bs_edge_threshold=0.03,
     )
 
+    # === 1. EV ===
     ev_yes = float(result.expected_pnl_strategy1.Total_Expected)
     ev_no = float(result.expected_pnl_strategy2.Total_Expected)
-    total_costs_yes = float(result.costs.Total_Cost)
-    total_costs_no = float(result.costs.Total_Cost)
+
+    # === 2. 拆解成本结构 ===
+    # 这三部分结构在 strategy.calculate_costs 里定义好：
+    # Total_Cost = Open_Cost + Holding_Cost + Close_Cost
+    open_cost = float(result.costs.Open_Cost)
+    holding_cost = float(result.costs.Holding_Cost)
+    close_cost_base = float(result.costs.Close_Cost)
+
+    # strategy.calculate_costs 里：
+    #   pm_slippage = Inv_Base * Slippage_Rate
+    #   close_cost = pm_slippage + settlement_fee + blockchain_close
+    # 这里用当时传给 main_calculation 的 slippage_rate_used 还原：
+    pm_slippage_base = inv_base_usd * slippage_rate_used
+    blockchain_close = 0.025
+    # 防止浮点误差搞出负数，做个 max(...)
+    settlement_fee = max(close_cost_base - pm_slippage_base - blockchain_close, 0.0)
+
+    # === 3. 分别用 YES / NO 自己的 PM 滑点重建 close 成本 ===
+    # 目前我们沿用之前的口径：只用 open 时刻的滑点率来代表 PM 滑点，
+    # 如果以后要把 close 的滑点也加进去，可以在这里调整权重。
+    close_cost_yes = inv_base_usd * pm_yes_slip_open + settlement_fee + blockchain_close
+    close_cost_no = inv_base_usd * pm_no_slip_open + settlement_fee + blockchain_close
+
+    total_costs_yes = open_cost + holding_cost + close_cost_yes
+    total_costs_no = open_cost + holding_cost + close_cost_no
 
     return InvestmentResult(
         investment=inv_base_usd,
@@ -230,6 +279,7 @@ async def evaluate_investment(
         slippage_rate_used=slippage_rate_used,
         calc_input=calc_input,
     )
+
 
 async def evaluate_early_exit_for_position(
     *,
