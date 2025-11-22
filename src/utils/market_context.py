@@ -137,7 +137,9 @@ def build_deribit_context(
 
     k1_strike = float(data["deribit"]["k1_strike"])
     k2_strike = float(data["deribit"]["k2_strike"])
-    K_poly = (k1_strike + k2_strike) / 2.0
+    # 优先使用配置里传入的 Polymarket 行权价，避免在不对称 offset 下偏离实际阈值
+    K_poly_cfg = data.get("deribit", {}).get("K_poly")
+    K_poly = float(K_poly_cfg) if K_poly_cfg is not None else (k1_strike + k2_strike) / 2.0
 
     now_ms = time.time() * 1000.0
     k1_exp_ts = float(instruments_map[title]["k1_expiration_timestamp"])

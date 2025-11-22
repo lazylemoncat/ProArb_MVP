@@ -31,11 +31,22 @@ class InvestmentResult:
 
     im_usd: float
     im_btc: float
+    im_usd_strategy1: float
+    im_usd_strategy2: float
+    im_btc_strategy1: float
+    im_btc_strategy2: float
     contracts: float
 
     pm_yes_slippage: float
     pm_no_slippage: float
     slippage_rate_used: float
+
+    open_cost_yes: float
+    open_cost_no: float
+    holding_cost_yes: float
+    holding_cost_no: float
+    close_cost_yes: float
+    close_cost_no: float
 
     calc_input: CalculationInput
 
@@ -77,19 +88,21 @@ class InvestmentResult:
             # === Polymarket & Slippage ===
             "pm_yes_slippage": self.pm_yes_slippage,
             "pm_no_slippage": self.pm_no_slippage,
-            "slippage_rate_used": self.slippage_rate_used,
             # === 成本 / 保证金 ===
             "total_costs_yes": self.total_costs_yes,
             "total_costs_no": self.total_costs_no,
+            "open_cost_yes": self.open_cost_yes,
+            "open_cost_no": self.open_cost_no,
+            "holding_cost_yes": self.holding_cost_yes,
+            "holding_cost_no": self.holding_cost_no,
+            "close_cost_yes": self.close_cost_yes,
+            "close_cost_no": self.close_cost_no,
             "IM_usd": self.im_usd,
-            "IM_btc": self.im_btc,
+            "IM_usd_strategy1": self.im_usd_strategy1,
+            "IM_usd_strategy2": self.im_usd_strategy2,
+            "IM_btc_strategy1": self.im_btc_strategy1,
+            "IM_btc_strategy2": self.im_btc_strategy2,
             "contracts": self.contracts,
-            # === 策略计算相关参数 ===
-            "Price_No_entry": self.calc_input.Price_No_entry,
-            "Call_K1_Bid": self.calc_input.Call_K1_Bid,
-            "Call_K1_Ask": self.calc_input.Call_K1_Ask,
-            "Call_K2_Bid": self.calc_input.Call_K2_Bid,
-            "Call_K2_Ask": self.calc_input.Call_K2_Ask,
             # === 最后两列必须是 EV ===
             "ev_yes": self.ev_yes,
             "ev_no": self.ev_no,
@@ -145,8 +158,8 @@ async def evaluate_investment(
         pm_no_slip_close = float(pm_no_close["slippage_pct"]) / 100.0
 
     except Exception as exc:
-        # 交由上层统一处理
-        raise RuntimeError("Polymarket slippage calculation failed") from exc
+        # 保留底层错误信息，便于定位（例如流动性不足/盘口为空）
+        raise RuntimeError(f"Polymarket slippage calculation failed: {exc}") from exc
 
     slippage_rate_used = max(pm_yes_slip_open, pm_no_slip_open)
 
@@ -187,7 +200,25 @@ async def evaluate_investment(
     amount_contracts = pm_btc_exposure / spread_delta if spread_delta > 0 else 0.0
 
     # === 3. Deribit 初始保证金（使用 PME 风险矩阵计算）===
-    pme_positions = [
+    pme_positions_short_spread = [
+        OptionPosition(
+            strike=deribit_ctx.k1_strike,
+            direction="short",
+            contracts=amount_contracts,
+            current_price=deribit_ctx.k1_mid_usd,
+            implied_vol=deribit_ctx.mark_iv / 100.0,
+            option_type="call",
+        ),
+        OptionPosition(
+            strike=deribit_ctx.k2_strike,
+            direction="long",
+            contracts=amount_contracts,
+            current_price=deribit_ctx.k2_mid_usd,
+            implied_vol=deribit_ctx.mark_iv / 100.0,
+            option_type="call",
+        ),
+    ]
+    pme_positions_long_spread = [
         OptionPosition(
             strike=deribit_ctx.k1_strike,
             direction="long",
@@ -206,15 +237,25 @@ async def evaluate_investment(
         ),
     ]
 
-    pme_margin_result = calculate_pme_margin(
-        positions=pme_positions,
+    pme_margin_short = calculate_pme_margin(
+        positions=pme_positions_short_spread,
+        current_index_price=deribit_ctx.spot,
+        days_to_expiry=deribit_ctx.T * 365.0,
+        pme_params=PMEParams(),
+    )
+    pme_margin_long = calculate_pme_margin(
+        positions=pme_positions_long_spread,
         current_index_price=deribit_ctx.spot,
         days_to_expiry=deribit_ctx.T * 365.0,
         pme_params=PMEParams(),
     )
 
-    im_value_usd = float(pme_margin_result["c_dr_usd"])
+    im_usd_s1 = float(pme_margin_short["c_dr_usd"])
+    im_usd_s2 = float(pme_margin_long["c_dr_usd"])
+    im_value_usd = max(im_usd_s1, im_usd_s2)
     im_value_btc = im_value_usd / deribit_ctx.spot if deribit_ctx.spot else 0.0
+    im_btc_s1 = im_usd_s1 / deribit_ctx.spot if deribit_ctx.spot else 0.0
+    im_btc_s2 = im_usd_s2 / deribit_ctx.spot if deribit_ctx.spot else 0.0
 
     # === 4. 调用统一的收益 / 风险计算引擎 ===
     calc_input = CalculationInput(
@@ -259,27 +300,51 @@ async def evaluate_investment(
     # === 2. 拆解成本结构 ===
     # 这三部分结构在 strategy.calculate_costs 里定义好：
     # Total_Cost = Open_Cost + Holding_Cost + Close_Cost
-    open_cost = float(result.costs.Open_Cost)
-    holding_cost = float(result.costs.Holding_Cost)
-    close_cost_base = float(result.costs.Close_Cost)
+    costs_yes = result.costs
+    costs_no = result.costs_strategy2 or result.costs
+
+    open_cost_yes = float(costs_yes.Open_Cost)
+    holding_cost_yes = float(costs_yes.Holding_Cost)
+    close_cost_base_yes = float(costs_yes.Close_Cost)
+
+    open_cost_no = float(costs_no.Open_Cost)
+    holding_cost_no = float(costs_no.Holding_Cost)
+    close_cost_base_no = float(costs_no.Close_Cost)
 
     # strategy.calculate_costs 里：
     #   pm_slippage = Inv_Base * Slippage_Rate
     #   close_cost = pm_slippage + settlement_fee + blockchain_close
     # 这里用当时传给 main_calculation 的 slippage_rate_used 还原：
-    pm_slippage_base = inv_base_usd * slippage_rate_used
+    pm_slippage_base = (
+        inv_base_usd * (slippage_rate_used / (1.0 + slippage_rate_used))
+        if slippage_rate_used > -0.99
+        else inv_base_usd * slippage_rate_used
+    )
     blockchain_close = 0.025
     # 防止浮点误差搞出负数，做个 max(...)
-    settlement_fee = max(close_cost_base - pm_slippage_base - blockchain_close, 0.0)
+    settlement_fee_yes = max(
+        close_cost_base_yes - pm_slippage_base - blockchain_close, 0.0
+    )
+    settlement_fee_no = max(
+        close_cost_base_no - pm_slippage_base - blockchain_close, 0.0
+    )
 
     # === 3. 分别用 YES / NO 自己的 PM 滑点重建 close 成本 ===
     # 目前我们沿用之前的口径：只用 open 时刻的滑点率来代表 PM 滑点，
     # 如果以后要把 close 的滑点也加进去，可以在这里调整权重。
-    close_cost_yes = inv_base_usd * pm_yes_slip_open + settlement_fee + blockchain_close
-    close_cost_no = inv_base_usd * pm_no_slip_open + settlement_fee + blockchain_close
+    close_cost_yes = (
+        inv_base_usd * (pm_yes_slip_open / (1.0 + pm_yes_slip_open))
+        + settlement_fee_yes
+        + blockchain_close
+    )
+    close_cost_no = (
+        inv_base_usd * (pm_no_slip_open / (1.0 + pm_no_slip_open))
+        + settlement_fee_no
+        + blockchain_close
+    )
 
-    total_costs_yes = open_cost + holding_cost + close_cost_yes
-    total_costs_no = open_cost + holding_cost + close_cost_no
+    total_costs_yes = open_cost_yes + holding_cost_yes + close_cost_yes
+    total_costs_no = open_cost_no + holding_cost_no + close_cost_no
 
     return InvestmentResult(
         investment=inv_base_usd,
@@ -287,8 +352,18 @@ async def evaluate_investment(
         ev_no=ev_no,
         total_costs_yes=total_costs_yes,
         total_costs_no=total_costs_no,
+        open_cost_yes=open_cost_yes,
+        open_cost_no=open_cost_no,
+        holding_cost_yes=holding_cost_yes,
+        holding_cost_no=holding_cost_no,
+        close_cost_yes=close_cost_yes,
+        close_cost_no=close_cost_no,
         im_usd=im_value_usd,
         im_btc=im_value_btc,
+        im_usd_strategy1=im_usd_s1,
+        im_usd_strategy2=im_usd_s2,
+        im_btc_strategy1=im_btc_s1,
+        im_btc_strategy2=im_btc_s2,
         contracts=float(amount_contracts),
         pm_yes_slippage=pm_yes_slip_open,
         pm_no_slippage=pm_no_slip_open,
