@@ -18,11 +18,14 @@ from utils.market_context import (
     build_polymarket_state,
     make_summary_table,
 )
-from core.deribit_client import DeribitUserCfg
-from core.polymarket_client import PolymarketClient
+from fetch_data.polymarket_client import PolymarketClient
 from utils.dataloader import load_manual_data
 from utils.init_markets import init_markets
 from utils.save_result import save_result_csv
+from dataclasses import asdict
+from fastapi import FastAPI, HTTPException
+
+app = FastAPI()
 
 console = Console()
 load_dotenv()
@@ -233,7 +236,6 @@ def build_events_for_date(config: dict, target_date: date) -> List[dict]:
 
 async def loop_event(
     data: dict,
-    deribit_user_cfg: DeribitUserCfg,
     investments: Iterable[float],
     output_csv: str,
     instruments_map: dict,
@@ -259,7 +261,6 @@ async def loop_event(
             inv_base_usd=inv_base_usd,
             deribit_ctx=deribit_ctx,
             poly_ctx=poly_ctx,
-            deribit_user_cfg=deribit_user_cfg,
         )
 
         ev_yes = result.ev_yes
@@ -289,12 +290,6 @@ async def run_monitor(config: dict) -> None:
         3. 为每个 strike 生成具体事件（含 K_poly/k1/k2 到期时间等）
         4. 调 init_markets 构建 Deribit instruments_map
     """
-    deribit_user_cfg = DeribitUserCfg(
-        user_id=os.getenv("test_deribit_user_id", ""),
-        client_id=os.getenv("test_deribit_client_id", ""),
-        client_secret=os.getenv("test_deribit_client_secret", ""),
-    )
-
     thresholds = config["thresholds"]
     investments = thresholds["INVESTMENTS"]
     output_csv = thresholds["OUTPUT_CSV"]
@@ -343,7 +338,6 @@ async def run_monitor(config: dict) -> None:
                 try:
                     await loop_event(
                         data=data,
-                        deribit_user_cfg=deribit_user_cfg,
                         investments=investments,
                         output_csv=output_csv,
                         instruments_map=instruments_map,
@@ -365,3 +359,115 @@ async def main(config_path: str = "config.yaml") -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+def _prepare_events_for_api(config_path: str = "config.yaml"):
+    """
+    为 API 调用准备当前 T+1 的事件列表和 Deribit instruments_map。
+    逻辑尽量复用 run_monitor 中的配置和生成方式，但不进入无限循环。
+    """
+    # 复用原来的配置加载逻辑
+    config = load_manual_data(config_path)
+
+    now_utc = datetime.now(timezone.utc)
+    target_date = now_utc.date() + timedelta(days=1)
+
+    # 复用原来的事件生成逻辑
+    events = build_events_for_date(config, target_date)
+
+    instruments_map: Dict[str, Dict[str, Any]] = {}
+    if events:
+        cfg_for_markets = dict(config)
+        cfg_for_markets["events"] = events
+        # 复用原来的 Deribit 合约匹配逻辑
+        instruments_map = init_markets(cfg_for_markets, day_offset=0)
+
+    return target_date, events, instruments_map
+
+
+@app.get("/health")
+async def health() -> Dict[str, Any]:
+    """健康检查端点，用于探活。"""
+    return {"status": "ok"}
+
+
+@app.get("/api/pm")
+async def api_pm_snapshot() -> Dict[str, Any]:
+    """
+    /api/pm → 返回当前 T+1 所有配置事件的 Polymarket 快照列表。
+    """
+    target_date, events, _ = _prepare_events_for_api()
+    if not events:
+        raise HTTPException(
+            status_code=404,
+            detail="No events available for current target date",
+        )
+
+    snapshots: List[Dict[str, Any]] = []
+
+    for data in events:
+        try:
+            # 直接复用原来的 PolymarketState 构造逻辑
+            poly_ctx = build_polymarket_state(data)
+            snapshots.append(asdict(poly_ctx))
+        except Exception as exc:
+            # 单个市场失败不影响其它市场，返回错误信息方便排查
+            snapshots.append(
+                {
+                    "event_title": data.get("polymarket", {}).get("event_title"),
+                    "market_title": data.get("polymarket", {}).get("market_title"),
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "target_date": target_date.isoformat(),
+        "markets": snapshots,
+    }
+
+
+@app.get("/api/dr")
+async def api_dr_snapshot() -> Dict[str, Any]:
+    """
+    /api/dr → 返回当前 T+1 所有配置事件的 Deribit 行情快照列表。
+    """
+    target_date, events, instruments_map = _prepare_events_for_api()
+    if not events:
+        raise HTTPException(
+            status_code=404,
+            detail="No events available for current target date",
+        )
+    if not instruments_map:
+        raise HTTPException(
+            status_code=503,
+            detail="Instruments map is empty",
+        )
+
+    snapshots: List[Dict[str, Any]] = []
+
+    for data in events:
+        try:
+            # 直接复用原来的 DeribitMarketContext 构造逻辑
+            deribit_ctx = build_deribit_context(data, instruments_map)
+            snapshots.append(asdict(deribit_ctx))
+        except Exception as exc:
+            snapshots.append(
+                {
+                    "event_title": data.get("polymarket", {}).get("event_title"),
+                    "market_title": data.get("polymarket", {}).get("market_title"),
+                    "error": str(exc),
+                }
+            )
+
+    return {
+        "target_date": target_date.isoformat(),
+        "markets": snapshots,
+    }
+
+
+@app.get("/api/ev")
+async def api_ev_placeholder() -> Dict[str, Any]:
+    """
+    /api/ev → 目前为占位实现，返回空的 EV 列表。
+    后续可以在此接入 InvestmentResult 等完整 EV 计算结果。
+    """
+    return {"ev": []}

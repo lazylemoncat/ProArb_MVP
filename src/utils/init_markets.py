@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from core.deribit_client import DeribitStream
+from fetch_data.deribit_client import DeribitClient
 
 
 def parse_timestamp(exp: Any) -> Optional[float]:
@@ -34,26 +34,26 @@ def init_markets(config: Dict[str, Any], day_offset: int = 0) -> Dict[str, Dict[
         k2_explicit = parse_timestamp(m["deribit"].get("k2_expiration"))
 
         if k1_explicit and k2_explicit:
-            inst_k1, k1_exp = DeribitStream.find_option_instrument(
+            inst_k1, k1_exp = DeribitClient.find_option_instrument(
                 k1,
                 call=True,
                 currency=asset,
                 exp_timestamp=k1_explicit,
             )
-            inst_k2, k2_exp = DeribitStream.find_option_instrument(
+            inst_k2, k2_exp = DeribitClient.find_option_instrument(
                 k2,
                 call=True,
                 currency=asset,
                 exp_timestamp=k2_explicit,
             )
         else:
-            inst_k1, k1_exp = DeribitStream.find_option_instrument(
+            inst_k1, k1_exp = DeribitClient.find_option_instrument(
                 k1,
                 call=True,
                 currency=asset,
                 day_offset=day_offset,
             )
-            inst_k2, k2_exp = DeribitStream.find_option_instrument(
+            inst_k2, k2_exp = DeribitClient.find_option_instrument(
                 k2,
                 call=True,
                 currency=asset,

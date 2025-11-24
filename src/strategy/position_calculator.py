@@ -1,4 +1,3 @@
-# strategy/position_calculator.py
 from dataclasses import dataclass
 
 @dataclass

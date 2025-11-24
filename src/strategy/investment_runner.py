@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from core.deribit_client import DeribitUserCfg
-from core.polymarket_client import get_polymarket_slippage
+from fetch_data.get_polymarket_slippage import get_polymarket_slippage
 from strategy.early_exit import make_exit_decision
 from strategy.models import ExitDecision, OptionPosition, Position
 from strategy.strategy import (
@@ -100,7 +99,6 @@ async def evaluate_investment(
     inv_base_usd: float,
     deribit_ctx: DeribitMarketContext,
     poly_ctx: PolymarketState,
-    deribit_user_cfg: DeribitUserCfg,
 ) -> InvestmentResult:
     """对单笔投资进行完整的 Slippage、保证金、EV 等测算。"""
 
@@ -112,9 +110,9 @@ async def evaluate_investment(
             side="buy",
             amount_type="usd",
         )
-        pm_yes_avg_open = float(pm_yes_open["avg_price"])
-        pm_yes_shares_open = float(pm_yes_open["shares_executed"])
-        pm_yes_slip_open = float(pm_yes_open["slippage_pct"]) / 100.0
+        pm_yes_avg_open = float(pm_yes_open.avg_price)
+        pm_yes_shares_open = float(pm_yes_open.shares)
+        pm_yes_slip_open = float(pm_yes_open.slippage_pct) / 100.0
 
         pm_yes_close = await get_polymarket_slippage(
             poly_ctx.yes_token_id,
@@ -122,8 +120,8 @@ async def evaluate_investment(
             side="sell",
             amount_type="shares",
         )
-        pm_yes_avg_close = float(pm_yes_close["avg_price"])
-        pm_yes_slip_close = float(pm_yes_close["slippage_pct"]) / 100.0
+        pm_yes_avg_close = float(pm_yes_close.avg_price)
+        pm_yes_slip_close = float(pm_yes_close.slippage_pct) / 100.0
 
         pm_no_open = await get_polymarket_slippage(
             poly_ctx.no_token_id,
@@ -131,9 +129,9 @@ async def evaluate_investment(
             side="buy",
             amount_type="usd",
         )
-        pm_no_avg_open = float(pm_no_open["avg_price"])
-        pm_no_shares_open = float(pm_no_open["shares_executed"])
-        pm_no_slip_open = float(pm_no_open["slippage_pct"]) / 100.0
+        pm_no_avg_open = float(pm_no_open.avg_price)
+        pm_no_shares_open = float(pm_no_open.shares)
+        pm_no_slip_open = float(pm_no_open.slippage_pct) / 100.0
 
         pm_no_close = await get_polymarket_slippage(
             poly_ctx.no_token_id,
@@ -141,12 +139,12 @@ async def evaluate_investment(
             side="sell",
             amount_type="shares",
         )
-        pm_no_avg_close = float(pm_no_close["avg_price"])
-        pm_no_slip_close = float(pm_no_close["slippage_pct"]) / 100.0
+        pm_no_avg_close = float(pm_no_close.avg_price)
+        pm_no_slip_close = float(pm_no_close.slippage_pct) / 100.0
 
     except Exception as exc:
         # 交由上层统一处理
-        raise RuntimeError("Polymarket slippage calculation failed") from exc
+        raise RuntimeError("Polymarket slippage calculation failed", exc) from exc
 
     slippage_rate_used = max(pm_yes_slip_open, pm_no_slip_open)
 
