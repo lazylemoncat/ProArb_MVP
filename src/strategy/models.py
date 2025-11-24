@@ -123,6 +123,7 @@ class CalculationOutput:
     annualized_metrics_strategy2: AnnualizedMetrics = None
     bs_pricing_edge: 'PricingEdge' = None  # BS 定价偏差分析（可选）
     greeks: 'Greeks' = None  # 期权 Greeks（可选）
+    costs_strategy2: CostOutput | None = None
 
 # ==================== BS Pricer 数据类（从 bs_pricer.py 整合）====================
 

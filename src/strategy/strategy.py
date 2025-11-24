@@ -755,32 +755,47 @@ def calculate_strategy2(input_data: CalculationInput) -> StrategyOutput:
 
 def calculate_costs(
     input_data: CalculationInput,
-    # holding_days: float,
-    use_pme_margin: bool = True
+    use_pme_margin: bool = True,
+    bull_spread: Literal["short", "long"] = "short",
 ) -> CostOutput:
     """
     计算各项成本
 
     Args:
         input_data: 输入参数
-        holding_days: 持仓天数（如果为 None，则从 days_to_expiry 计算）
         use_pme_margin: 是否使用 PME 风险矩阵计算保证金（默认 True）
+        bull_spread: 牛市价差方向：
+            - "short": 卖出牛市价差（短 K1，多 K2）→ 适用于策略一
+            - "long" : 买入牛市价差（多 K1，短 K2）→ 适用于策略二
     """
-    # if holding_days is None:
     holding_days = input_data.days_to_expiry
 
     # ====================================================================
     # 开仓成本（使用精确费用计算）
     # ====================================================================
+    # PM 开仓滑点（入场买 YES/NO，用同一滑点率近似）
+    slip = input_data.Slippage_Rate
+    pm_slippage_open = (
+        input_data.Inv_Base * (slip / (1.0 + slip)) if slip > -0.99 else input_data.Inv_Base * slip
+    )
+
+    # 方向会影响手续费（买腿 / 卖腿的定价）
+    if bull_spread == "short":
+        buy_leg_price = input_data.Price_Option2  # 多 K2
+        sell_leg_price = input_data.Price_Option1  # 短 K1
+    else:
+        buy_leg_price = input_data.Price_Option1  # 多 K1
+        sell_leg_price = input_data.Price_Option2  # 短 K2
+
     deribit_fee = calculate_deribit_bull_spread_entry_cost(
-        buy_leg_price=input_data.Price_Option1,
-        sell_leg_price=input_data.Price_Option2,
+        buy_leg_price=buy_leg_price,
+        sell_leg_price=sell_leg_price,
         index_price=input_data.BTC_Price,
         contracts=input_data.contracts,
         slippage_per_contract=0.05
     )
     blockchain_open = 0.025
-    open_cost = deribit_fee + blockchain_open
+    open_cost = deribit_fee + blockchain_open + pm_slippage_open
 
     # ====================================================================
     # 持仓成本（使用 PME 保证金或简化值）
@@ -789,25 +804,45 @@ def calculate_costs(
     pme_worst_scenario = None
 
     if use_pme_margin:
-        # 构建期权头寸用于 PME 计算
-        positions = [
-            OptionPosition(
-                strike=input_data.K1,
-                direction="long",
-                contracts=input_data.contracts,
-                current_price=input_data.Price_Option1,
-                implied_vol=input_data.sigma,
-                option_type="call"
-            ),
-            OptionPosition(
-                strike=input_data.K2,
-                direction="short",
-                contracts=input_data.contracts,
-                current_price=input_data.Price_Option2,
-                implied_vol=input_data.sigma,
-                option_type="call"
-            ),
-        ]
+        # 构建期权头寸用于 PME 计算（方向与牛市价差一致）
+        if bull_spread == "short":
+            positions = [
+                OptionPosition(
+                    strike=input_data.K1,
+                    direction="short",
+                    contracts=input_data.contracts,
+                    current_price=input_data.Price_Option1,
+                    implied_vol=input_data.sigma,
+                    option_type="call"
+                ),
+                OptionPosition(
+                    strike=input_data.K2,
+                    direction="long",
+                    contracts=input_data.contracts,
+                    current_price=input_data.Price_Option2,
+                    implied_vol=input_data.sigma,
+                    option_type="call"
+                ),
+            ]
+        else:
+            positions = [
+                OptionPosition(
+                    strike=input_data.K1,
+                    direction="long",
+                    contracts=input_data.contracts,
+                    current_price=input_data.Price_Option1,
+                    implied_vol=input_data.sigma,
+                    option_type="call"
+                ),
+                OptionPosition(
+                    strike=input_data.K2,
+                    direction="short",
+                    contracts=input_data.contracts,
+                    current_price=input_data.Price_Option2,
+                    implied_vol=input_data.sigma,
+                    option_type="call"
+                ),
+            ]
 
         pme_result = calculate_pme_margin(
             positions=positions,
@@ -829,15 +864,20 @@ def calculate_costs(
     # ====================================================================
     # 平仓成本
     # ====================================================================
-    # Polymarket 滑点
-    pm_slippage = input_data.Inv_Base * input_data.Slippage_Rate
-
-    # Deribit Settlement Fee（估算）
-    settlement_fee = calculate_deribit_settlement_fee(
-        expected_settlement_price=input_data.BTC_Price,
-        expected_option_value=(input_data.Price_Option1 + input_data.Price_Option2) / 2,
-        contracts=input_data.contracts
+    # Polymarket 滑点（出场，复用同一滑点率近似）
+    pm_slippage = (
+        input_data.Inv_Base * (slip / (1.0 + slip)) if slip > -0.99 else input_data.Inv_Base * slip
     )
+
+    # Deribit Settlement Fee（日度 / 周度期权免结算费）
+    if input_data.days_to_expiry <= 7.0:
+        settlement_fee = 0.0
+    else:
+        settlement_fee = calculate_deribit_settlement_fee(
+            expected_settlement_price=input_data.BTC_Price,
+            expected_option_value=(input_data.Price_Option1 + input_data.Price_Option2) / 2,
+            contracts=input_data.contracts
+        )
 
     blockchain_close = 0.025
     close_cost = pm_slippage + settlement_fee + blockchain_close
@@ -977,15 +1017,20 @@ def main_calculation(
     strategy1 = calculate_strategy1(input_data)
     strategy2 = calculate_strategy2(input_data)
 
-    # 计算成本
-    costs = calculate_costs(input_data, use_pme_margin=use_pme_margin)
+    # 计算成本：策略一（卖牛市价差）与策略二（买牛市价差）分别计算
+    costs_strategy1 = calculate_costs(
+        input_data, use_pme_margin=use_pme_margin, bull_spread="short"
+    )
+    costs_strategy2 = calculate_costs(
+        input_data, use_pme_margin=use_pme_margin, bull_spread="long"
+    )
 
     # 计算预期盈亏
     expected_pnl_strategy1 = calculate_expected_pnl_strategy1(
-        input_data, probabilities, costs, strategy1
+        input_data, probabilities, costs_strategy1, strategy1
     )
     expected_pnl_strategy2 = calculate_expected_pnl_strategy2(
-        input_data, probabilities, costs, strategy2
+        input_data, probabilities, costs_strategy2, strategy2
     )
 
     # 计算年化指标（可选）
@@ -993,13 +1038,19 @@ def main_calculation(
     annualized_metrics_strategy2 = None
 
     if calculate_annualized:
-        total_capital = input_data.Total_Investment + (
-            costs.PME_Margin_USD if use_pme_margin else input_data.Margin_Requirement
+        total_capital_s1 = input_data.Total_Investment + (
+            costs_strategy1.PME_Margin_USD
+            if use_pme_margin
+            else input_data.Margin_Requirement
         )
-
+        total_capital_s2 = input_data.Total_Investment + (
+            costs_strategy2.PME_Margin_USD
+            if use_pme_margin
+            else input_data.Margin_Requirement
+        )
         annualized_metrics_strategy1 = calculate_annualized_metrics(
             expected_pnl=expected_pnl_strategy1,
-            total_capital=total_capital,
+            total_capital=total_capital_s1,
             days_to_expiry=input_data.days_to_expiry,
             risk_free_rate=input_data.r,
             volatility=input_data.sigma
@@ -1007,7 +1058,7 @@ def main_calculation(
 
         annualized_metrics_strategy2 = calculate_annualized_metrics(
             expected_pnl=expected_pnl_strategy2,
-            total_capital=total_capital,
+            total_capital=total_capital_s2,
             days_to_expiry=input_data.days_to_expiry,
             risk_free_rate=input_data.r,
             volatility=input_data.sigma
@@ -1043,7 +1094,8 @@ def main_calculation(
         probabilities=probabilities,
         strategy1=strategy1,
         strategy2=strategy2,
-        costs=costs,
+        costs=costs_strategy1,
+        costs_strategy2=costs_strategy2,
         expected_pnl_strategy1=expected_pnl_strategy1,
         expected_pnl_strategy2=expected_pnl_strategy2,
         annualized_metrics_strategy1=annualized_metrics_strategy1,
