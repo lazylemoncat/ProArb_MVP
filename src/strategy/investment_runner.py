@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 from ..fetch_data.get_polymarket_slippage import get_polymarket_slippage
 from .early_exit import make_exit_decision
@@ -120,12 +120,24 @@ class InvestmentResult:
             "asset": deribit_ctx.asset,
             "investment": self.investment,
             "selected_strategy": strategy,  # 明确标识选择的策略
+
+            # === Polymarket 原始字段（便于 API 直接使用）===
+            "pm_event_title": poly_ctx.event_title,
+            "pm_event_id": poly_ctx.event_id,
+            "pm_market_title": poly_ctx.market_title,
+            "pm_market_id": poly_ctx.market_id,
+            "pm_yes_token_id": poly_ctx.yes_token_id,
+            "pm_no_token_id": poly_ctx.no_token_id,
+
             # === 市场价格相关 ===
             "spot": deribit_ctx.spot,
             "poly_yes_price": poly_ctx.yes_price,
             "poly_no_price": poly_ctx.no_price,
             "deribit_prob": deribit_ctx.deribit_prob,
-            # === Deribit 参数 ===
+
+            # === Deribit 参数（原始行情 + 定价参数） ===
+            "inst_k1": deribit_ctx.inst_k1,
+            "inst_k2": deribit_ctx.inst_k2,
             "K1": deribit_ctx.k1_strike,
             "K2": deribit_ctx.k2_strike,
             "K_poly": deribit_ctx.K_poly,
@@ -133,10 +145,48 @@ class InvestmentResult:
             "days_to_expiry": self.calc_input.days_to_expiry,
             "sigma": deribit_ctx.mark_iv / 100.0,
             "r": deribit_ctx.r,
+
+            # BTC 计价
             "k1_bid_btc": deribit_ctx.k1_bid_btc,
             "k1_ask_btc": deribit_ctx.k1_ask_btc,
             "k2_bid_btc": deribit_ctx.k2_bid_btc,
             "k2_ask_btc": deribit_ctx.k2_ask_btc,
+            "k1_mid_btc": deribit_ctx.k1_mid_btc,
+            "k2_mid_btc": deribit_ctx.k2_mid_btc,
+
+            # USD 计价
+            "k1_bid_usd": deribit_ctx.k1_bid_usd,
+            "k1_ask_usd": deribit_ctx.k1_ask_usd,
+            "k2_bid_usd": deribit_ctx.k2_bid_usd,
+            "k2_ask_usd": deribit_ctx.k2_ask_usd,
+            "k1_mid_usd": deribit_ctx.k1_mid_usd,
+            "k2_mid_usd": deribit_ctx.k2_mid_usd,
+
+            # 波动率 / 手续费
+            "k1_iv": deribit_ctx.k1_iv,
+            "k2_iv": deribit_ctx.k2_iv,
+            "k1_fee_approx": deribit_ctx.k1_fee_approx,
+            "k2_fee_approx": deribit_ctx.k2_fee_approx,
+            "mark_iv": deribit_ctx.mark_iv,
+            "k1_expiration_timestamp": deribit_ctx.k1_expiration_timestamp,
+
+            # === EV 算法核心结果（整体视角） ===
+            "ev_yes": self.ev_yes,
+            "ev_no": self.ev_no,
+            "total_costs_yes": self.total_costs_yes,
+            "total_costs_no": self.total_costs_no,
+            "im_usd": self.im_usd,
+            "im_btc": self.im_btc,
+            "contracts": self.contracts,
+            "pm_yes_slippage": self.pm_yes_slippage,
+            "pm_no_slippage": self.pm_no_slippage,
+            "open_cost_yes": self.open_cost_yes,
+            "open_cost_no": self.open_cost_no,
+            "holding_cost_yes": self.holding_cost_yes,
+            "holding_cost_no": self.holding_cost_no,
+            "close_cost_yes": self.close_cost_yes,
+            "close_cost_no": self.close_cost_no,
+
             # === 策略1完整数据 ===
             "net_ev_strategy1": self.net_ev_strategy1,
             "gross_ev_strategy1": self.gross_ev_strategy1,
@@ -146,6 +196,8 @@ class InvestmentResult:
             "close_cost_strategy1": self.close_cost_strategy1,
             "contracts_strategy1": self.contracts_strategy1,
             "im_usd_strategy1": self.im_usd_strategy1,
+            "im_btc_strategy1": self.im_btc_strategy1,
+
             # === 策略2完整数据 ===
             "net_ev_strategy2": self.net_ev_strategy2,
             "gross_ev_strategy2": self.gross_ev_strategy2,
@@ -155,6 +207,8 @@ class InvestmentResult:
             "close_cost_strategy2": self.close_cost_strategy2,
             "contracts_strategy2": self.contracts_strategy2,
             "im_usd_strategy2": self.im_usd_strategy2,
+            "im_btc_strategy2": self.im_btc_strategy2,
+
             # === PM市场价格详情（用于套利分析）===
             "best_ask_strategy1": self.best_ask_strategy1,
             "best_bid_strategy1": self.best_bid_strategy1,
@@ -164,6 +218,7 @@ class InvestmentResult:
             "best_bid_strategy2": self.best_bid_strategy2,
             "mid_price_strategy2": self.mid_price_strategy2,
             "spread_strategy2": self.spread_strategy2,
+
             # === 执行参数 ===
             "slippage_rate_used": self.slippage_rate_used,
         }
@@ -314,7 +369,7 @@ async def evaluate_investment(
     inv_base_usd: float,
     deribit_ctx: DeribitMarketContext,
     poly_ctx: PolymarketState,
-) -> InvestmentResult:
+) -> Tuple[InvestmentResult, int]:
     """对单笔投资进行完整的 Slippage、保证金、EV 等测算。"""
 
     # === 1. Polymarket slippage 估计 ===
@@ -463,8 +518,8 @@ async def evaluate_investment(
         pm_shares=pm_yes_shares_open,
         pm_avg_open=pm_yes_avg_open,
         pm_avg_close=pm_yes_avg_close,
-        best_ask=float(pm_yes_open["best_ask"]),  # 买入YES时的最优卖价
-        best_bid=float(pm_yes_close["best_bid"]),  # 卖出YES时的最优买价
+        best_ask=float(pm_yes_open.best_ask or pm_yes_open.avg_price),  # 买入YES时的最优卖价
+        best_bid=float(pm_yes_close.best_bid or pm_yes_close.avg_price),  # 卖出YES时的最优买价
         deribit_costs=result_strategy1.deribit_costs_strategy1,
         deribit_ctx=deribit_ctx,
     )
@@ -477,8 +532,8 @@ async def evaluate_investment(
         pm_shares=pm_no_shares_open,
         pm_avg_open=pm_no_avg_open,
         pm_avg_close=pm_no_avg_close,
-        best_ask=float(pm_no_open["best_ask"]),  # 买入NO时的最优卖价
-        best_bid=float(pm_no_close["best_bid"]),  # 卖出NO时的最优买价
+        best_ask=float(pm_no_open.best_ask or pm_no_open.avg_price),  # 买入NO时的最优卖价
+        best_bid=float(pm_no_close.best_bid or pm_no_close.avg_price),  # 卖出NO时的最优买价
         deribit_costs=result_strategy2.deribit_costs_strategy2,
         deribit_ctx=deribit_ctx,
     )
@@ -608,14 +663,14 @@ async def evaluate_investment(
         close_cost_strategy1=costs_strategy1.close_cost,
         close_cost_strategy2=costs_strategy2.close_cost,
         # === PM市场价格详情（用于套利分析）===
-        best_ask_strategy1=float(pm_yes_open["best_ask"]),
-        best_bid_strategy1=float(pm_yes_close["best_bid"]),
-        mid_price_strategy1=float(pm_yes_open["mid_price"]),
-        spread_strategy1=float(pm_yes_open["spread"]),
-        best_ask_strategy2=float(pm_no_open["best_ask"]),
-        best_bid_strategy2=float(pm_no_close["best_bid"]),
-        mid_price_strategy2=float(pm_no_open["mid_price"]),
-        spread_strategy2=float(pm_no_open["spread"]),
+        best_ask_strategy1=float(pm_yes_open.best_ask or pm_yes_open.avg_price),
+        best_bid_strategy1=float(pm_yes_close.best_bid or pm_yes_close.avg_price),
+        mid_price_strategy1=float(pm_yes_open.mid_price or pm_yes_open.avg_price),
+        spread_strategy1=float(pm_yes_open.spread or 0.0),
+        best_ask_strategy2=float(pm_no_open.best_ask or pm_no_open.avg_price),
+        best_bid_strategy2=float(pm_no_close.best_bid or pm_no_close.avg_price),
+        mid_price_strategy2=float(pm_no_open.mid_price or pm_no_open.avg_price),
+        spread_strategy2=float(pm_no_open.spread or 0.0),
     )
 
     return result, optimal_strategy

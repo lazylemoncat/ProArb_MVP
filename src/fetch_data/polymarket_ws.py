@@ -2,12 +2,16 @@ import asyncio
 import json
 from typing import Literal
 
+import ssl
+import certifi
 import websockets
 from websockets.legacy.client import WebSocketClientProtocol, connect
 
 CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 WS_TIMEOUT = 10.0  # WebSocket 等待 orderbook 的超时时间（秒）
 
+# SSL 配置 - 使用 certifi 提供的 CA 证书
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 class PolymarketWS:
     """
@@ -28,10 +32,12 @@ class PolymarketWS:
         确保有一个可用的 websocket 连接并返回它。
         """
         if cls._ws is None or getattr(cls._ws, "closed", False):
-            cls._ws = await connect(CLOB_WS_URL)
+            cls._ws = await connect(CLOB_WS_URL, ssl=SSL_CONTEXT)
 
         if cls._lock is None:
             cls._lock = asyncio.Lock()
+        if not cls._ws:
+            raise Exception("can not connect polymarket websocket")
 
         return cls._ws
     

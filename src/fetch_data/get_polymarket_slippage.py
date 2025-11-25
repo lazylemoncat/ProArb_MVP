@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import json
-from typing import Literal
+from typing import Literal, Optional
 
 import websockets
 
@@ -11,11 +11,17 @@ from .polymarket_ws import PolymarketWS
 class Polymarket_Slippage:
     asset_id: str
     avg_price: float
+    # 实际成交份额（兼容老代码的 .shares 写法）
     shares: float
     total_cost_usd: float
     slippage_pct: float
     side: Literal["buy", "sell"]
     amount_type: Literal["usd", "shares"]
+    # === 新增：盘口信息，用于套利分析 ===
+    best_ask: Optional[float] = None
+    best_bid: Optional[float] = None
+    mid_price: Optional[float] = None
+    spread: Optional[float] = None
 
 def _simulate_fill(
     book: list[tuple[float, float]],
@@ -114,6 +120,7 @@ async def get_polymarket_slippage(
     if amount <= 0:
         raise ValueError("amount must be positive")
 
+    # 先获取当前方向的盘口，用于模拟吃单
     book = await PolymarketWS.fetch_orderbook(
         asset_id=asset_id,
         side=side,
@@ -126,110 +133,46 @@ async def get_polymarket_slippage(
         amount_type=amount_type,
     )
 
+    # === 额外获取盘口信息（best_ask / best_bid / mid / spread）===
+    # 当前方向最佳价
+    best_side_price = book[0][0] if book else None
+
+    # 反方向盘口（只需要最优一档）
+    other_side = "sell" if side == "buy" else "buy"
+    try:
+        other_book = await PolymarketWS.fetch_orderbook(
+            asset_id=asset_id,
+            side=other_side,
+        )
+    except Exception:
+        other_book = []
+
+    other_side_price = other_book[0][0] if other_book else None
+
+    if side == "buy":
+        best_ask = best_side_price
+        best_bid = other_side_price
+    else:
+        best_bid = best_side_price
+        best_ask = other_side_price
+
+    if best_ask is not None and best_bid is not None:
+        mid_price = (best_ask + best_bid) / 2.0
+        spread = best_ask - best_bid
+    else:
+        mid_price = None
+        spread = None
+
     return Polymarket_Slippage(
-        asset_id = asset_id,
-        avg_price = round(avg_price, 6),
-        shares = round(total_size, 6),
-        total_cost_usd = round(total_cost, 6),
-        slippage_pct = round(slippage_pct, 6),
-        side = side,
-        amount_type = amount_type,
+        asset_id=asset_id,
+        avg_price=round(avg_price, 6),
+        shares=round(total_size, 6),
+        total_cost_usd=round(total_cost, 6),
+        slippage_pct=round(slippage_pct, 6),
+        side=side,
+        amount_type=amount_type,
+        best_ask=best_ask,
+        best_bid=best_bid,
+        mid_price=mid_price,
+        spread=spread,
     )
-
-async def get_polymarket_slippage_(
-    asset_id: str,
-    amount: float,
-    side: Literal["buy", "sell"] = "buy",
-    amount_type: Literal["usd", "shares"] = "usd",
-) -> Polymarket_Slippage:
-    """
-    基于当前 orderbook 估算 Polymarket 交易的滑点。:contentReference[oaicite:9]{index=9}
-
-    amount_type = "usd"（默认） → 花多少 USD 吃单
-    amount_type = "shares"     → 买/卖多少份额，而不是多少美元
-    """
-    CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
-    async with websockets.connect(CLOB_WS_URL) as ws:
-        await ws.send(json.dumps({"assets_ids": [asset_id], "type": "market"}))
-
-        while True:
-            msg = await ws.recv()
-            data = json.loads(msg)
-
-            if isinstance(data, list):
-                if len(data) == 0:
-                    raise ValueError("Empty websocket data from Polymarket")
-                data = data[0]
-
-            if data.get("event_type") == "book" and data.get("asset_id") == asset_id:
-                if side == "buy":
-                    book = sorted(
-                        data.get("asks", []), key=lambda x: float(x["price"])
-                    )
-                elif side == "sell":
-                    book = sorted(
-                        data.get("bids", []),
-                        key=lambda x: float(x["price"]),
-                        reverse=True,
-                    )
-                else:
-                    raise ValueError("side must be 'buy' or 'sell'")
-
-                total_cost, total_size = 0.0, 0.0
-
-                # 按 USD 或 shares 计算吃单
-                if amount_type == "usd":
-                    remaining_usd = amount
-                    for lvl in book:
-                        price = float(lvl["price"])
-                        size = float(lvl["size"])
-                        level_value = price * size
-
-                        if remaining_usd >= level_value:
-                            total_cost += level_value
-                            total_size += size
-                            remaining_usd -= level_value
-                        else:
-                            total_cost += remaining_usd
-                            total_size += remaining_usd / price
-                            remaining_usd = 0
-                            break
-
-                elif amount_type == "shares":
-                    remaining_shares = amount
-                    for lvl in book:
-                        price = float(lvl["price"])
-                        size = float(lvl["size"])
-
-                        if remaining_shares >= size:
-                            total_cost += size * price
-                            total_size += size
-                            remaining_shares -= size
-                        else:
-                            total_cost += remaining_shares * price
-                            total_size += remaining_shares
-                            remaining_shares = 0
-                            break
-
-                else:
-                    raise ValueError("amount_type must be 'usd' or 'shares'")
-
-                if total_size == 0:
-                    raise ValueError("Insufficient liquidity")
-
-                avg_price = total_cost / total_size
-                best_price = float(book[0]["price"])
-                if side == "buy":
-                    slippage_pct = (avg_price - best_price) / best_price * 100
-                else:
-                    slippage_pct = (best_price - avg_price) / best_price * 100
-
-                return Polymarket_Slippage(
-                    asset_id=asset_id,
-                    avg_price=round(avg_price, 6),
-                    shares=round(total_size, 6),
-                    total_cost_usd=round(total_cost, 6),
-                    slippage_pct=round(slippage_pct, 6),
-                    side=side,
-                    amount_type=amount_type
-                )
