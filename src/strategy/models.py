@@ -116,14 +116,16 @@ class CalculationOutput:
     probabilities: ProbabilityOutput
     strategy1: StrategyOutput
     strategy2: StrategyOutput
-    costs: CostOutput
+    costs: CostOutput | None  # 已废弃，保留以兼容旧代码
     expected_pnl_strategy1: ExpectedPnlOutput
     expected_pnl_strategy2: ExpectedPnlOutput
     annualized_metrics_strategy1: AnnualizedMetrics = None
     annualized_metrics_strategy2: AnnualizedMetrics = None
     bs_pricing_edge: 'PricingEdge' = None  # BS 定价偏差分析（可选）
     greeks: 'Greeks' = None  # 期权 Greeks（可选）
-    costs_strategy2: CostOutput | None = None
+    costs_strategy2: CostOutput | None = None  # 已废弃，保留以兼容旧代码
+    deribit_costs_strategy1: dict | None = None  # 新增：Deribit 费用（策略1）
+    deribit_costs_strategy2: dict | None = None  # 新增：Deribit 费用（策略2）
 
 # ==================== BS Pricer 数据类（从 bs_pricer.py 整合）====================
 

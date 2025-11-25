@@ -260,6 +260,7 @@ async def loop_event(
                 inv_base_usd=inv_base_usd,
                 deribit_ctx=deribit_ctx,
                 poly_ctx=poly_ctx,
+                deribit_user_cfg=deribit_user_cfg,
             )
 
             ev_yes = result.ev_yes
