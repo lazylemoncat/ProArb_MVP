@@ -1,42 +1,66 @@
-# 使用 Debian 系 Python 镜像
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1
+# 固定到 Debian 12(bookworm)，避免 python:3.12-slim 跟随 Debian testing(trixie) 导致 apt 源不稳定
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    # 让 Python 能直接找到 src 下面的 utils / fetch_data / strategy 等包
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app \
+    EV_REFRESH_SECONDS=10 \
+    LOG_LEVEL=INFO
 
 WORKDIR /app
 
-# 1. 删掉默认 deb.debian.org 的 sources 文件
-# 2. 写入阿里云镜像源
+# ====== apt 换源（阿里云）======
+# 说明：Debian 12 默认使用 /etc/apt/sources.list.d/debian.sources（不是 sources.list）
 RUN rm -f /etc/apt/sources.list.d/debian.sources && \
-    printf 'deb http://mirrors.aliyun.com/debian bookworm main contrib non-free non-free-firmware\n\
-deb http://mirrors.aliyun.com/debian bookworm-updates main contrib non-free non-free-firmware\n\
-deb http://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free non-free-firmware\n' > /etc/apt/sources.list
+    printf 'deb https://mirrors.aliyun.com/debian bookworm main contrib non-free non-free-firmware\n\
+deb https://mirrors.aliyun.com/debian bookworm-updates main contrib non-free non-free-firmware\n\
+deb https://mirrors.aliyun.com/debian-security bookworm-security main contrib non-free non-free-firmware\n' > /etc/apt/sources.list
 
-# 安装 nginx
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends nginx && \
+# 最小系统依赖：ca-certificates（HTTPS）、（可选）tzdata
+# 注：不再通过 apt 安装 supervisor/curl，避免 apt 拉包失败；supervisor 用 pip 装。
+RUN apt-get -o Acquire::Retries=5 update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# 拷贝整个项目
-COPY . /app
+# ====== pip 换源（阿里云 PyPI）======
+# 如你不想换源，删掉下面两行即可。
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com
 
-# 安装 Python 依赖：
-# 1) FastAPI + Uvicorn
-# 2) 根据 pyproject.toml 安装项目本身
-RUN pip install --no-cache-dir "fastapi" "uvicorn[standard]" && \
-    pip install --no-cache-dir .
+# Install Python deps from pyproject.toml（不依赖 build backend）
+COPY pyproject.toml /app/pyproject.toml
+RUN python - <<'PY'
+import subprocess, sys
+import tomllib
+with open('pyproject.toml','rb') as f:
+    data = tomllib.load(f)
+deps = list(data.get('project', {}).get('dependencies', []))
+extra = ['uvicorn[standard]', 'fastapi', 'python-dotenv', 'certifi', 'supervisor']
+subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-cache-dir', '--upgrade', 'pip'])
+subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-cache-dir', *deps, *extra])
+PY
 
-# 使用自己的 nginx 配置
-RUN rm -f /etc/nginx/sites-enabled/default || true
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# App code + default config（线上建议 bind-mount）
+COPY src /app/src
+COPY config.yaml /app/config.yaml
+RUN mkdir -p /app/data
 
-EXPOSE 80
+# Supervisor config（单容器跑 monitor + api）
+COPY supervisord.conf /etc/supervisord.conf
 
-# 同时运行：
-# - 监控：python -m utils.main    （src/utils/main.py）
-# - FastAPI：uvicorn utils.main:app
-# - nginx：前台运行
-CMD ["sh", "-c", "python -u -m src.main & uvicorn src.main:app --host 0.0.0.0 --port 8000 & nginx -g 'daemon off;'"]
+EXPOSE 8000
+
+# 不依赖 curl 的健康检查（用 Python 标准库请求）
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python - <<'PY'\n\
+import urllib.request\n\
+import sys\n\
+try:\n\
+    urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()\n\
+except Exception:\n\
+    sys.exit(1)\n\
+PY
+
+# 用 pip 安装的 supervisor 启动（前台）
+CMD ["python", "-m", "supervisor.supervisord", "-n", "-c", "/etc/supervisord.conf"]

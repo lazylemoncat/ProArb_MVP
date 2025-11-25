@@ -2,7 +2,7 @@
 thresholds:
   OUTPUT_CSV: "data/results.csv"
   ev_spread_min: 0.05
-  check_interval_sec: 120
+  check_interval_sec: 10
   INVESTMENTS: [1000]
   MARGIN_USD: 1000
 
