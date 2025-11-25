@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fetch_data.deribit_client import DeribitClient
+from ..fetch_data.deribit_client import DeribitClient
 
 
 def parse_timestamp(exp: Any) -> Optional[float]:

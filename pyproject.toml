@@ -11,6 +11,7 @@ dependencies = [
     "nest-asyncio>=1.6.0",
     "pandas>=2.3.3",
     "playwright>=1.55.0",
+    "pyaml>=25.7.0",
     "pytest>=8.4.2",
     "pyyaml>=6.0.3",
     "requests>=2.32.5",

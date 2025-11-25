@@ -8,7 +8,6 @@ PUBLIC_SEARCH_URL = f"{BASE_URL}/public-search"
 GET_MARKET_BY_ID_URL = f"{BASE_URL}/markets/{{market_id}}"
 GET_EVENT_BY_ID_URL = f"{BASE_URL}/events/{{event_id}}"
 
-CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 HTTP_TIMEOUT = 10  # 秒
 
 class PolymarketAPI:

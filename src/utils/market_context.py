@@ -9,10 +9,10 @@ from typing import Any, Dict
 from rich import box
 from rich.table import Table
 
-from fetch_data.deribit_api import DeribitAPI
-from fetch_data.deribit_client import DeribitClient
-from fetch_data.polymarket_client import PolymarketClient
-from strategy.probability_engine import bs_probability_gt
+from ..fetch_data.deribit_api import DeribitAPI
+from ..fetch_data.deribit_client import DeribitClient
+from ..fetch_data.polymarket_client import PolymarketClient
+from ..strategy.probability_engine import bs_probability_gt
 
 
 @dataclass

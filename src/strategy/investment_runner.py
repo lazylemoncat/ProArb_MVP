@@ -3,17 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from fetch_data.get_polymarket_slippage import get_polymarket_slippage
-from strategy.early_exit import make_exit_decision
-from strategy.models import ExitDecision, OptionPosition, Position
-from strategy.strategy import (
+from ..fetch_data.get_polymarket_slippage import get_polymarket_slippage
+from .early_exit import make_exit_decision
+from .models import ExitDecision, OptionPosition, Position
+from .strategy import (
     BlackScholesPricer,
     CalculationInput,
     PMEParams,
     calculate_pme_margin,
     main_calculation,
 )
-from utils.market_context import DeribitMarketContext, PolymarketState
+from ..utils.market_context import DeribitMarketContext, PolymarketState
 
 
 @dataclass
@@ -157,7 +157,7 @@ async def evaluate_investment(
 
     except Exception as exc:
         # 保留底层错误信息，便于定位（例如流动性不足/盘口为空）
-        raise RuntimeError(f"Polymarket slippage calculation failed: {exc}") from exc
+        raise RuntimeError("Polymarket slippage calculation failed: ", exc) from exc
 
     slippage_rate_used = max(pm_yes_slip_open, pm_no_slip_open)
 

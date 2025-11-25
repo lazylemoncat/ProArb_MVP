@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import os
 import re
@@ -10,18 +8,18 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 
-from strategy.investment_runner import InvestmentResult, evaluate_investment
-from utils.market_context import (
+from .strategy.investment_runner import InvestmentResult, evaluate_investment
+from .utils.market_context import (
     DeribitMarketContext,
     PolymarketState,
     build_deribit_context,
     build_polymarket_state,
     make_summary_table,
 )
-from fetch_data.polymarket_client import PolymarketClient
-from utils.dataloader import load_manual_data
-from utils.init_markets import init_markets
-from utils.save_result import save_result_csv
+from .fetch_data.polymarket_client import PolymarketClient
+from .utils.dataloader import load_manual_data
+from .utils.init_markets import init_markets
+from .utils.save_result import save_result_csv
 from dataclasses import asdict
 from fastapi import FastAPI, HTTPException
 

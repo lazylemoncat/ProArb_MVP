@@ -84,6 +84,8 @@ class DeribitAPI:
         instrument_name = selected["instrument_name"]
         expiration_timestamp = selected["expiration_timestamp"]
 
+        print(f"{strike}, {instrument_name}")
+
         return instrument_name, expiration_timestamp
     
     @staticmethod
@@ -146,3 +148,86 @@ class DeribitAPI:
         resp.raise_for_status()
 
         return resp.json()
+    
+def _time_window_test(name: str, func, *args, window_seconds: float = 1.0) -> None:
+    """
+    在给定时间窗口内，顺序不断调用 func(*args)，用于测试
+    “在 X 秒内能成功调用多少次”。
+
+    :param name: 测试名称（用于打印）
+    :param func: 要测试的函数（例如 DeribitAPI.get_spot_price）
+    :param args: 函数的位置参数
+    :param window_seconds: 时间窗口（秒），例如 1 或 10
+    """
+    import time
+
+    start = time.perf_counter()
+    end_time = start + window_seconds
+
+    attempts = 0
+    successes = 0
+    errors = 0
+    last_error = None
+
+    while time.perf_counter() < end_time:
+        attempts += 1
+        try:
+            func(*args)
+        except Exception as e:  # noqa: BLE001
+            errors += 1
+            last_error = e
+        else:
+            successes += 1
+
+    real_elapsed = time.perf_counter() - start
+    success_rate = (successes / attempts * 100.0) if attempts else 0.0
+    rps = (successes / real_elapsed) if real_elapsed > 0 else 0.0
+
+    print(
+        f"[{name}] window={window_seconds:.2f}s, "
+        f"attempts={attempts}, success={successes}, errors={errors}, "
+        f"success_rate={success_rate:.1f}%, success_rps≈{rps:.2f}"
+    )
+    if last_error is not None:
+        print(f"  last error: {last_error!r}")
+
+
+def main() -> None:
+    """
+    顺序重复调用 DeribitAPI 的接口，分别在 1 秒和 10 秒窗口内测试。
+
+    如需修改窗口长度或要测试的接口，直接改下面的参数即可。
+    """
+    print("=== DeribitAPI.get_spot_price(btc_usd) ===")
+    _time_window_test(
+        "get_spot_price(btc_usd) 1s",
+        DeribitAPI.get_spot_price,
+        "btc_usd",
+        window_seconds=1.0,
+    )
+    _time_window_test(
+        "get_spot_price(btc_usd) 10s",
+        DeribitAPI.get_spot_price,
+        "btc_usd",
+        window_seconds=10.0,
+    )
+
+    print("\n=== DeribitAPI.get_deribit_option_data(BTC, option) ===")
+    _time_window_test(
+        "get_deribit_option_data(BTC, option) 1s",
+        DeribitAPI.get_deribit_option_data,
+        "BTC",
+        "option",
+        window_seconds=1.0,
+    )
+    _time_window_test(
+        "get_deribit_option_data(BTC, option) 10s",
+        DeribitAPI.get_deribit_option_data,
+        "BTC",
+        "option",
+        window_seconds=10.0,
+    )
+
+
+if __name__ == "__main__":
+    main()

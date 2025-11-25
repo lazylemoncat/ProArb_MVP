@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Literal
 
+import websockets
 from websockets.legacy.client import WebSocketClientProtocol, connect
 
 CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -33,49 +34,30 @@ class PolymarketWS:
             cls._lock = asyncio.Lock()
 
         return cls._ws
-
+    
     @classmethod
-    async def fetch_orderbook(
+    async def fetch_orderbook_once(
         cls,
         asset_id: str,
         side: Literal["buy", "sell"],
         timeout: float = WS_TIMEOUT,
     ) -> list[tuple[float, float]]:
         """
-        通过 websocket 订阅并获取指定 asset 的 orderbook。
-        返回排序后的价格档列表：
-        [
-            (price, size),
-            ...
-        ]
+        不复用 websocket，每次调用单独建立连接获取一次 orderbook。
 
-        side:
-            - "buy"  -> 返回 asks，按价格从低到高排序（买单吃 ask）
-            - "sell" -> 返回 bids，按价格从高到低排序（卖单吃 bid）
+        用法与 fetch_orderbook 完全一致，但不会受到旧连接状态的影响。
         """
         if side not in ("buy", "sell"):
             raise ValueError("side must be 'buy' or 'sell'")
 
-        ws = await cls._ensure_ws()
-        assert cls._lock is not None
-
-        async with cls._lock:
-            # 订阅指定 asset 的市场数据
+        # 每次调用都新建连接，避免复用导致的超时 / 脏状态
+        async with connect(CLOB_WS_URL) as ws:
             await ws.send(json.dumps({"assets_ids": [asset_id], "type": "market"}))
 
             while True:
-                try:
-                    raw_msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
-                except asyncio.TimeoutError:
-                    raise asyncio.TimeoutError(
-                        f"Timed out waiting for orderbook of asset_id={asset_id}"
-                    )
-
-                try:
-                    data = json.loads(raw_msg)
-                except json.JSONDecodeError:
-                    # 收到脏数据就跳过
-                    continue
+                # raw_msg = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                raw_msg = await ws.recv()
+                data = json.loads(raw_msg)
 
                 # 兼容 list / dict 两种结构
                 if isinstance(data, list):
@@ -97,6 +79,8 @@ class PolymarketWS:
 
                 book: list[tuple[float, float]] = []
                 for level in raw_book:
+                    if not isinstance(level, dict):
+                        continue
                     try:
                         price = float(level["price"])
                         size = float(level["size"])
@@ -114,6 +98,58 @@ class PolymarketWS:
                 # 买单吃 ask：从低到高；卖单吃 bid：从高到低
                 book.sort(key=lambda x: x[0], reverse=(side == "sell"))
                 return book
+
+    @classmethod
+    async def fetch_orderbook(
+        cls,
+        asset_id: str,
+        side: Literal["buy", "sell"],
+    ) -> list[tuple[float, float]]:
+        async with websockets.connect(CLOB_WS_URL) as ws:
+            await ws.send(json.dumps({"assets_ids": [asset_id], "type": "market"}))
+
+            while True:
+                msg = await ws.recv()
+                data = json.loads(msg)
+
+                if isinstance(data, list):
+                    if len(data) == 0:
+                        raise ValueError("Empty websocket data from Polymarket")
+                    data = data[0]
+
+                if data.get("event_type") != "book":
+                    continue
+                if data.get("asset_id") != asset_id:
+                    continue
+
+                # 先取原始的 orderbook 列表（还是 list[dict]）
+                raw_book = data.get("asks", []) if side == "buy" else data.get("bids", [])
+                if not raw_book:
+                    raise ValueError(f"Empty orderbook for asset_id {asset_id}")
+
+                book: list[tuple[float, float]] = []
+                for level in raw_book:
+                    if not isinstance(level, dict):
+                        continue
+                    try:
+                        price = float(level["price"])
+                        size = float(level["size"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if price <= 0 or size <= 0:
+                        continue
+                    book.append((price, size))
+
+                if not book:
+                    raise ValueError(
+                        f"No valid price levels in orderbook for asset_id {asset_id}"
+                    )
+
+                # 买单吃 ask：从低到高；卖单吃 bid：从高到低
+                book.sort(key=lambda x: x[0], reverse=(side == "sell"))
+                return book
+
+                    
 
     @classmethod
     async def close(cls) -> None:
