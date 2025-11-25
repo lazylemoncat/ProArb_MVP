@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
 from typing import Any, Literal
 
+import certifi
 import requests
 import websockets
 
@@ -16,6 +18,11 @@ GET_EVENT_BY_ID_URL = f"{BASE_URL}/events/{{event_id}}"
 CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 HTTP_TIMEOUT = 10  # 秒
 
+# SSL 配置 - 使用certifi提供的CA证书
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+REQUESTS_SESSION = requests.Session()
+REQUESTS_SESSION.verify = certifi.where()
+
 class PolymarketClient:
     """
     Polymarket HTTP API 封装：
@@ -26,7 +33,7 @@ class PolymarketClient:
     @staticmethod
     def get_market_list() -> Any:
         """获取所有市场列表"""
-        response = requests.get(LIST_MARKET_URL, timeout=HTTP_TIMEOUT)
+        response = REQUESTS_SESSION.get(LIST_MARKET_URL, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         return response.json()
 
@@ -34,7 +41,7 @@ class PolymarketClient:
     def get_market_by_id(market_id: str) -> Any:
         """根据市场 ID 获取市场详情"""
         url = GET_MARKET_BY_ID_URL.format(market_id=market_id)
-        response = requests.get(url, timeout=HTTP_TIMEOUT)
+        response = REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         return response.json()
 
@@ -42,7 +49,7 @@ class PolymarketClient:
     def get_market_public_search(querystring: str) -> Any:
         """根据问题关键词搜索市场"""
         params = {"q": querystring}
-        response = requests.get(PUBLIC_SEARCH_URL, params=params)
+        response = REQUESTS_SESSION.get(PUBLIC_SEARCH_URL, params=params)
         response.raise_for_status()
         return response.json()
 
@@ -62,7 +69,7 @@ class PolymarketClient:
     def get_event_by_id(event_id: str) -> Any:
         """根据 event_id 获取事件详情"""
         url = GET_EVENT_BY_ID_URL.format(event_id=event_id)
-        response = requests.get(url, timeout=HTTP_TIMEOUT)
+        response = REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         return response.json()
     
@@ -189,7 +196,7 @@ async def get_polymarket_slippage(
     amount_type = "usd"（默认） → 花多少 USD 吃单
     amount_type = "shares"     → 买/卖多少份额，而不是多少美元
     """
-    async with websockets.connect(CLOB_WS_URL) as ws:
+    async with websockets.connect(CLOB_WS_URL, ssl=SSL_CONTEXT) as ws:
         await ws.send(json.dumps({"assets_ids": [asset_id], "type": "market"}))
 
         while True:
@@ -202,16 +209,21 @@ async def get_polymarket_slippage(
                 data = data[0]
 
             if data.get("event_type") == "book" and data.get("asset_id") == asset_id:
+                # Get both sides of the orderbook for spread calculation
+                asks = sorted(data.get("asks", []), key=lambda x: float(x["price"]))
+                bids = sorted(data.get("bids", []), key=lambda x: float(x["price"]), reverse=True)
+
+                # Extract best_bid and best_ask
+                best_ask = float(asks[0]["price"]) if asks else None
+                best_bid = float(bids[0]["price"]) if bids else None
+                mid_price = (best_ask + best_bid) / 2 if best_ask and best_bid else None
+                spread = best_ask - best_bid if best_ask and best_bid else None
+
+                # Select the correct side for execution simulation
                 if side == "buy":
-                    book = sorted(
-                        data.get("asks", []), key=lambda x: float(x["price"])
-                    )
+                    book = asks
                 elif side == "sell":
-                    book = sorted(
-                        data.get("bids", []),
-                        key=lambda x: float(x["price"]),
-                        reverse=True,
-                    )
+                    book = bids
                 else:
                     raise ValueError("side must be 'buy' or 'sell'")
 
@@ -273,6 +285,11 @@ async def get_polymarket_slippage(
                     "slippage_pct": round(slippage_pct, 6),
                     "side": side,
                     "amount_type": amount_type,
+                    # New fields for arbitrage precision
+                    "best_ask": round(best_ask, 6) if best_ask else None,
+                    "best_bid": round(best_bid, 6) if best_bid else None,
+                    "mid_price": round(mid_price, 6) if mid_price else None,
+                    "spread": round(spread, 6) if spread else None,
                 }
 
 

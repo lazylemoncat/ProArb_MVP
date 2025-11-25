@@ -255,27 +255,46 @@ async def loop_event(
     for inv in investments:
         inv_base_usd = float(inv)
 
-        result: InvestmentResult = await evaluate_investment(
-            inv_base_usd=inv_base_usd,
-            deribit_ctx=deribit_ctx,
-            poly_ctx=poly_ctx,
-            deribit_user_cfg=deribit_user_cfg,
-        )
+        try:
+            result, strategy = await evaluate_investment(
+                inv_base_usd=inv_base_usd,
+                deribit_ctx=deribit_ctx,
+                poly_ctx=poly_ctx,
+                deribit_user_cfg=deribit_user_cfg,
+            )
 
-        ev_yes = result.ev_yes
-        ev_no = result.ev_no
-        im_final_usd = result.im_usd
+            ev_yes = result.ev_yes
+            ev_no = result.ev_no
+            im_final_usd = result.im_usd
 
-        console.print(
-            f"💰 {inv_base_usd:.0f} | "
-            f"EV_yes={ev_yes:.2f} | EV_no={ev_no:.2f} | "
-            f"IM={im_final_usd:.2f} | "
-            f"EV/IM_yes={(ev_yes / im_final_usd):.3f} | "
-            f"EV/IM_no={(ev_no / im_final_usd):.3f}"
-        )
+            # 获取两个策略的完整数据
+            net_ev_strategy1 = result.net_ev_strategy1
+            net_ev_strategy2 = result.net_ev_strategy2
 
-        row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx)
-        save_result_csv(row, output_csv)
+            # 计算 EV/IM 比率（避免除零错误）
+            ev_im_yes = (ev_yes / im_final_usd) if im_final_usd > 0 else 0.0
+            ev_im_no = (ev_no / im_final_usd) if im_final_usd > 0 else 0.0
+
+            console.print(
+                f"💰 {inv_base_usd:.0f} | "
+                f"EV_yes={ev_yes:.2f} | EV_no={ev_no:.2f} | "
+                f"IM={im_final_usd:.2f} | "
+                f"EV/IM_yes={ev_im_yes:.3f} | "
+                f"EV/IM_no={ev_im_no:.3f} | "
+                f"策略1_EV={net_ev_strategy1:.2f} | 策略2_EV={net_ev_strategy2:.2f}"
+            )
+
+            # 🔍 DEBUG: 显示合约数量
+            console.print(f"🔍 [DEBUG] 合约数量: {result.contracts:.6f}")
+
+            row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
+            save_result_csv(row, output_csv)
+
+        except Exception as e:
+            console.print(f"❌ 处理 {inv_base_usd:.0f} USD 投资时出错: {e}")
+            import traceback
+            console.print(f"详细错误: {traceback.format_exc()}")
+            continue
 
 
 async def run_monitor(config: dict) -> None:

@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import ssl
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import certifi
 import requests
 import websockets
 from websockets import ClientConnection
@@ -16,6 +18,11 @@ TEST_WS_URL = "wss://test.deribit.com/ws/api/v2"
 
 DERIBIT_WS = WS_URL
 HTTP_TIMEOUT = 10  # 秒
+
+# SSL 配置 - 使用certifi提供的CA证书
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+REQUESTS_SESSION = requests.Session()
+REQUESTS_SESSION.verify = certifi.where()
 
 # ============================================================
 # 基础配置对象
@@ -38,7 +45,7 @@ def get_spot_price(index_name: Literal["btc_usd", "eth_usd"] = "btc_usd") -> flo
     """
     url = f"{BASE_URL}/public/get_index_price"
     params = {"index_name": index_name}
-    r = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
+    r = REQUESTS_SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     data = r.json()
     return float(data["result"]["index_price"])
@@ -58,7 +65,7 @@ def get_deribit_option_data(
     返回的 bid_price / ask_price 为期权价格，以标的计价（例如 BTC / ETH）。
     """
     url = f"{BASE_URL}/public/get_book_summary_by_currency"
-    resp = requests.get(url, params={"currency": currency, "kind": kind}, timeout=HTTP_TIMEOUT)
+    resp = REQUESTS_SESSION.get(url, params={"currency": currency, "kind": kind}, timeout=HTTP_TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
 
@@ -238,7 +245,7 @@ class DeribitStream:
         """
         url = f"{BASE_URL}/public/get_instruments"
         params = {"currency": currency, "kind": "option", "expired": "false"}
-        r = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
+        r = REQUESTS_SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         instruments = r.json()["result"]
 
@@ -293,7 +300,7 @@ class DeribitStream:
         """
         url = f"{BASE_URL}/public/get_instruments"
         params = {"currency": currency, "kind": "option", "expired": "false"}
-        r = requests.get(url, params=params, timeout=HTTP_TIMEOUT).json()
+        r = REQUESTS_SESSION.get(url, params=params, timeout=HTTP_TIMEOUT).json()
         instruments = r["result"]
 
         callput = "call" if call else "put"
