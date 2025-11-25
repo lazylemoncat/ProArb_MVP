@@ -9,9 +9,10 @@ from typing import Any, Dict
 from rich import box
 from rich.table import Table
 
-from core.deribit_client import get_spot_price, get_deribit_option_data
-from core.polymarket_client import PolymarketClient
-from strategy.probability_engine import bs_probability_gt
+from ..fetch_data.deribit_api import DeribitAPI
+from ..fetch_data.deribit_client import DeribitClient
+from ..fetch_data.polymarket_client import PolymarketClient
+from ..strategy.probability_engine import bs_probability_gt
 
 
 @dataclass
@@ -99,7 +100,7 @@ def build_deribit_context(
     asset = instruments_map[title]["asset"]
 
     spot_symbol = "btc_usd" if asset.upper() == "BTC" else "eth_usd"
-    spot = float(get_spot_price(spot_symbol))
+    spot = float(DeribitAPI.get_spot_price(spot_symbol))
 
     inst_k1 = instruments_map[title]["k1"]
     inst_k2 = instruments_map[title]["k2"]
@@ -107,16 +108,16 @@ def build_deribit_context(
         raise ValueError(f"无法找到 {title} 对应的 Deribit 期权合约")
 
     # === Deribit 报价（BTC 单位）===
-    deribit_list = get_deribit_option_data(currency=asset)
-    k1_info = next((d for d in deribit_list if d.get("instrument_name") == inst_k1), {})
-    k2_info = next((d for d in deribit_list if d.get("instrument_name") == inst_k2), {})
-    if not k1_info or not k2_info:
+    deribit_list = DeribitClient.get_deribit_option_data(currency=asset)
+    k1_info = next((d for d in deribit_list if d.instrument_name == inst_k1), None)
+    k2_info = next((d for d in deribit_list if d.instrument_name == inst_k2), None)
+    if k1_info is None or k2_info is None:
         raise RuntimeError("missing deribit option quotes")
 
-    k1_bid_btc = float(k1_info["bid_price"])
-    k1_ask_btc = float(k1_info["ask_price"])
-    k2_bid_btc = float(k2_info["bid_price"])
-    k2_ask_btc = float(k2_info["ask_price"])
+    k1_bid_btc = float(k1_info.bid_price)
+    k1_ask_btc = float(k1_info.ask_price)
+    k2_bid_btc = float(k2_info.bid_price)
+    k2_ask_btc = float(k2_info.ask_price)
     k1_mid_btc = (k1_bid_btc + k1_ask_btc) / 2.0
     k2_mid_btc = (k2_bid_btc + k2_ask_btc) / 2.0
 
@@ -128,10 +129,10 @@ def build_deribit_context(
     k1_mid_usd = k1_mid_btc * spot
     k2_mid_usd = k2_mid_btc * spot
 
-    k1_iv = float(k1_info["mark_iv"])
-    k2_iv = float(k2_info["mark_iv"])
-    k1_fee_approx = float(k1_info["fee"])
-    k2_fee_approx = float(k2_info["fee"])
+    k1_iv = float(k1_info.mark_iv)
+    k2_iv = float(k2_info.mark_iv)
+    k1_fee_approx = float(k1_info.fee)
+    k2_fee_approx = float(k2_info.fee)
 
     mark_iv = _choose_mark_iv(k1_iv, k2_iv)
 
@@ -196,7 +197,7 @@ def build_polymarket_state(data: Dict[str, Any]) -> PolymarketState:
 
     event_id = PolymarketClient.get_event_id_public_search(event_title)
     market_id = PolymarketClient.get_market_id_by_market_title(event_id, market_title)
-    market_data = PolymarketClient.get_market_by_id(market_id)
+    market_data = PolymarketClient.get_market_data_by_market_title(event_id, market_title)
 
     outcome_prices = market_data.get("outcomePrices")
     yes_price, no_price = 0.0, 0.0
@@ -215,7 +216,7 @@ def build_polymarket_state(data: Dict[str, Any]) -> PolymarketState:
         else:
             raise ValueError(f"Unexpected outcomePrices length: {len(prices)}")
 
-    tokens = PolymarketClient.get_clob_token_ids_by_market(market_id)
+    tokens = PolymarketClient.get_clob_token_ids_by_market_title(event_id, market_title)
     yes_token_id = tokens["yes_token_id"]
     no_token_id = tokens["no_token_id"]
 

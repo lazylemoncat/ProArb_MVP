@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Dict, Any, Optional, Literal
 
-from core.polymarket_client import (
+from fetch_data.polymarket_client import (
     get_polymarket_slippage,
     PolymarketClient,
 )
@@ -89,7 +89,7 @@ async def resolve_pm_token_id(
         market_id = PolymarketClient.get_market_id_by_market_title(
             event_id, market_title
         )
-        tokens = PolymarketClient.get_clob_token_ids_by_market(market_id)
+        tokens = PolymarketClient.get_clob_token_ids_by_market_id(market_id)
     except Exception as e:
         print(
             f"[early_exit_monitor] 解析 Polymarket token 失败: "
