@@ -17,10 +17,10 @@ events:
       k1_offset: -1000     # 比 Polymarket 阈值低 1000
       k2_offset: 1000      # 比 Polymarket 阈值高 1000
 
-  - name: "ETH above ___ template"
-    asset: "ETH"
-    polymarket:
-      event_title: "Ethereum above ___ on November 17?"
-    deribit:
-      k1_offset: -25
-      k2_offset: 25
+  # - name: "ETH above ___ template"
+  #   asset: "ETH"
+  #   polymarket:
+  #     event_title: "Ethereum above ___ on November 17?"
+  #   deribit:
+  #     k1_offset: -25
+  #     k2_offset: 25
