@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 
 from .utils.dataloader import load_manual_data
-from .services.data_adapter import CACHE, load_pm_snapshot, load_db_snapshot, refresh_cache
+from .services.api_models import DBSnapshotResponse, EVResponse, HealthResponse, PMSnapshotResponse
+from .services.data_adapter import CACHE, load_db_snapshot, load_pm_snapshot, refresh_cache
 
 app = FastAPI(title="arb-engine")
 
@@ -38,14 +40,13 @@ def _get_csv_path() -> str:
     return thresholds.get("OUTPUT_CSV", "data/results.csv")
 
 
-async def _background_ev_loop() -> None:
+async def _background_loop() -> None:
     """
     后台刷新循环：每 10 秒读一次 CSV，刷新快照缓存（pm/db/ev）。
     """
     csv_path = _get_csv_path()
     logger.info("background loop starting refresh_seconds=%s csv=%s", REFRESH_SECONDS, csv_path)
 
-    # 启动即刷新一次
     refresh_cache(csv_path)
 
     while True:
@@ -55,61 +56,75 @@ async def _background_ev_loop() -> None:
 
 @app.on_event("startup")
 async def _on_startup() -> None:
-    asyncio.create_task(_background_ev_loop())
+    asyncio.create_task(_background_loop())
 
 
-@app.get("/api/health")
-async def api_health() -> Dict[str, Any]:
-    """
-    Jo schema: /api/health
-    """
-    return {
-        "status": "ok",
-        "service": "arb-engine",
-        "timestamp": CACHE.last_refresh_epoch or int(__import__("time").time()),
-    }
+@app.get("/api/health", response_model=HealthResponse)
+async def api_health() -> HealthResponse:
+    # 返回当前时间，更符合 health 语义；也能保证不断变化
+    return HealthResponse(status="ok", service="arb-engine", timestamp=int(time.time()))
 
 
-@app.get("/api/pm")
-async def api_pm(market_id: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+@app.get("/api/pm", response_model=PMSnapshotResponse)
+async def api_pm(market_id: Optional[str] = Query(default=None)) -> PMSnapshotResponse:
     """
     Jo schema: /api/pm
-    默认返回 CSV 中“最新 market”的快照；可选 market_id=BTC_108000 返回指定市场。
+    - 不传 market_id：返回后台缓存的“最新市场快照”（10 秒刷新一次）
+    - 传 market_id：直接从 CSV 读取并输出该 market 的最新快照
     """
     csv_path = _get_csv_path()
 
     try:
+        if market_id is None:
+            if CACHE.pm is None:
+                refresh_cache(csv_path)
+            if CACHE.pm is None:
+                raise HTTPException(status_code=503, detail=f"pm snapshot not available: {CACHE.last_error}")
+            return CACHE.pm
         return load_pm_snapshot(csv_path, market_id=market_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
 
-@app.get("/api/db")
-async def api_db(market_id: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+@app.get("/api/db", response_model=DBSnapshotResponse)
+async def api_db(market_id: Optional[str] = Query(default=None)) -> DBSnapshotResponse:
     """
     Jo schema: /api/db
-    默认返回 CSV 中“最新 market”的快照；可选 market_id=BTC_108000 返回指定市场。
+    - 不传 market_id：返回后台缓存的“最新市场快照”（10 秒刷新一次）
+    - 传 market_id：直接从 CSV 读取并输出该 market 的最新快照
     """
     csv_path = _get_csv_path()
 
     try:
+        if market_id is None:
+            if CACHE.db is None:
+                refresh_cache(csv_path)
+            if CACHE.db is None:
+                raise HTTPException(status_code=503, detail=f"db snapshot not available: {CACHE.last_error}")
+            return CACHE.db
         return load_db_snapshot(csv_path, market_id=market_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
 
-@app.get("/api/ev")
-async def api_ev() -> Dict[str, Any]:
+@app.get("/api/ev", response_model=EVResponse)
+async def api_ev() -> EVResponse:
     """
     Jo schema: /api/ev
-    聚合输出机会列表（从 CSV 中最新快照计算/整理）。
+    缓存输出（10 秒刷新一次）。
     """
+    csv_path = _get_csv_path()
+
     if CACHE.ev is None:
-        refresh_cache(_get_csv_path())
+        refresh_cache(csv_path)
     if CACHE.ev is None:
         raise HTTPException(status_code=503, detail=f"ev snapshot not available: {CACHE.last_error}")
     return CACHE.ev
