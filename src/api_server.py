@@ -7,10 +7,22 @@ import time
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from .utils.dataloader import load_manual_data
-from .services.api_models import DBSnapshotResponse, EVResponse, HealthResponse, PMSnapshotResponse
+from .services.api_models import (
+    DBSnapshotResponse,
+    EVResponse,
+    HealthResponse,
+    PMSnapshotResponse,
+    TradeExecuteRequest,
+    TradeExecuteResponse,
+    TradeSimRequest,
+    TradeSimResponse,
+    ApiErrorResponse,
+)
 from .services.data_adapter import CACHE, load_db_snapshot, load_pm_snapshot, refresh_cache
+from .services.trade_service import TradeApiError, execute_trade, simulate_trade
 
 app = FastAPI(title="arb-engine")
 
@@ -59,19 +71,25 @@ async def _on_startup() -> None:
     asyncio.create_task(_background_loop())
 
 
+@app.exception_handler(TradeApiError)
+async def _trade_api_error_handler(request, exc: TradeApiError):
+    payload = ApiErrorResponse(
+        error=True,
+        error_code=exc.error_code,
+        message=exc.message,
+        timestamp=int(time.time()),
+        details=exc.details,
+    )
+    return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
+
+
 @app.get("/api/health", response_model=HealthResponse)
 async def api_health() -> HealthResponse:
-    # 返回当前时间，更符合 health 语义；也能保证不断变化
     return HealthResponse(status="ok", service="arb-engine", timestamp=int(time.time()))
 
 
 @app.get("/api/pm", response_model=PMSnapshotResponse)
 async def api_pm(market_id: Optional[str] = Query(default=None)) -> PMSnapshotResponse:
-    """
-    Jo schema: /api/pm
-    - 不传 market_id：返回后台缓存的“最新市场快照”（10 秒刷新一次）
-    - 传 market_id：直接从 CSV 读取并输出该 market 的最新快照
-    """
     csv_path = _get_csv_path()
 
     try:
@@ -92,11 +110,6 @@ async def api_pm(market_id: Optional[str] = Query(default=None)) -> PMSnapshotRe
 
 @app.get("/api/db", response_model=DBSnapshotResponse)
 async def api_db(market_id: Optional[str] = Query(default=None)) -> DBSnapshotResponse:
-    """
-    Jo schema: /api/db
-    - 不传 market_id：返回后台缓存的“最新市场快照”（10 秒刷新一次）
-    - 传 market_id：直接从 CSV 读取并输出该 market 的最新快照
-    """
     csv_path = _get_csv_path()
 
     try:
@@ -117,10 +130,6 @@ async def api_db(market_id: Optional[str] = Query(default=None)) -> DBSnapshotRe
 
 @app.get("/api/ev", response_model=EVResponse)
 async def api_ev() -> EVResponse:
-    """
-    Jo schema: /api/ev
-    缓存输出（10 秒刷新一次）。
-    """
     csv_path = _get_csv_path()
 
     if CACHE.ev is None:
@@ -128,3 +137,40 @@ async def api_ev() -> EVResponse:
     if CACHE.ev is None:
         raise HTTPException(status_code=503, detail=f"ev snapshot not available: {CACHE.last_error}")
     return CACHE.ev
+
+
+# ----------------------
+# Trade endpoints (POST)
+# ----------------------
+
+@app.post("/api/trade/sim", response_model=TradeSimResponse)
+async def api_trade_sim(payload: TradeSimRequest) -> TradeSimResponse:
+    csv_path = _get_csv_path()
+    result = simulate_trade(csv_path=csv_path, market_id=payload.market_id, investment_usd=payload.investment_usd)
+    return TradeSimResponse(
+        timestamp=int(time.time()),
+        market_id=payload.market_id,
+        investment_usd=payload.investment_usd,
+        result=result,
+        status="SIMULATION",
+    )
+
+
+@app.post("/api/trade/execute", response_model=TradeExecuteResponse)
+async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteResponse:
+    csv_path = _get_csv_path()
+    result, status, tx_id, message = await execute_trade(
+        csv_path=csv_path,
+        market_id=payload.market_id,
+        investment_usd=payload.investment_usd,
+        dry_run=payload.dry_run,
+    )
+    return TradeExecuteResponse(
+        timestamp=int(time.time()),
+        market_id=payload.market_id,
+        investment_usd=payload.investment_usd,
+        result=result,
+        status=status,
+        tx_id=tx_id,
+        message=message,
+    )

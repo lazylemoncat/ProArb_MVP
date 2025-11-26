@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Any, Dict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,6 +13,15 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     service: str = "arb-engine"
     timestamp: int = Field(..., description="Epoch seconds")
+
+
+# ---------- Shared ----------
+
+class DataFreshness(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stale: bool
+    last_updated: int = Field(..., description="Epoch seconds")
 
 
 # ---------- PM snapshot ----------
@@ -32,13 +41,6 @@ class PMOrderBook(BaseModel):
 
     yes: PMOrderBookSide
     no: PMOrderBookSide
-
-
-class DataFreshness(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    stale: bool
-    last_updated: int = Field(..., description="Epoch seconds")
 
 
 class PMSnapshotResponse(BaseModel):
@@ -162,3 +164,64 @@ class EVResponse(BaseModel):
     total_markets_analyzed: int
     markets_with_opportunities: int
     opportunities: List[Opportunity]
+
+
+# ---------- Trade Simulation & Execution ----------
+
+class TradeSimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market_id: str
+    investment_usd: float
+
+
+class TradeExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market_id: str
+    investment_usd: float
+    dry_run: bool = True
+
+
+class TradeResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    direction: Literal["yes", "no"]
+    ev_usd: float
+    roi_pct: float
+    total_cost_usd: float
+    net_profit_usd: float
+    im_usd: float
+    im_btc: float
+    contracts: float
+    slippage_pct: float
+
+
+class TradeSimResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp: int
+    market_id: str
+    investment_usd: float
+    result: TradeResult
+    status: Literal["SIMULATION"] = "SIMULATION"
+
+
+class TradeExecuteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp: int
+    market_id: str
+    investment_usd: float
+    result: TradeResult
+    status: Literal["DRY_RUN", "EXECUTED"]
+    tx_id: Optional[str] = None
+    message: Optional[str] = None
+
+
+class ApiErrorResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error: bool = True
+    error_code: str
+    message: str
+    timestamp: int
+    details: Dict[str, Any]

@@ -5,38 +5,18 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 
-def _read_existing_header(path: Path) -> List[str] | None:
-    try:
-        with path.open("r", newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-            return header or None
-    except FileNotFoundError:
-        return None
-
-
-def _rewrite_with_merged_header(path: Path, merged_header: List[str]) -> None:
-    # 读取旧数据
+def _read_existing_header(path: Path) -> List[str]:
     with path.open("r", newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with tmp_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=merged_header, extrasaction="ignore")
-        writer.writeheader()
-        for r in rows:
-            out = {k: r.get(k, "") for k in merged_header}
-            writer.writerow(out)
-
-    tmp_path.replace(path)
+        reader = csv.reader(f)
+        header = next(reader, [])
+    return [h for h in header if h]
 
 
 def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> None:
     """
-    保存结果到 CSV 文件：
-    - 如果文件不存在则写入表头；
-    - 如果文件已存在但“字段列表变化”，会自动合并表头并重写旧文件（保证 API 读起来不乱列）。
+    保存结果到 CSV 文件。
+    - 如果文件不存在：写入表头 + 首行
+    - 如果文件已存在：确保表头包含本次 row 的全部列；如发现新列则自动升级表头并重写文件
 
     Args:
         row: 待保存的单行数据（key 为列名）
@@ -45,26 +25,43 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
     path = Path(csv_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    new_header = list(row.keys())
-    old_header = _read_existing_header(path)
-
-    if old_header is None:
+    if not path.exists():
+        header = list(row.keys())
         with path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=new_header)
+            writer = csv.DictWriter(f, fieldnames=header)
             writer.writeheader()
             writer.writerow(row)
         return
 
-    if old_header != new_header:
-        merged = list(old_header)
-        for k in new_header:
-            if k not in merged:
-                merged.append(k)
-        _rewrite_with_merged_header(path, merged)
-        header = merged
-    else:
-        header = old_header
+    existing_header = _read_existing_header(path)
+    # 兼容旧文件：如果文件存在但没有 header（异常情况）
+    if not existing_header:
+        existing_header = list(row.keys())
 
+    # 合并 header（保持旧顺序，新增字段追加到末尾）
+    new_header = list(existing_header)
+    for k in row.keys():
+        if k not in new_header:
+            new_header.append(k)
+
+    if new_header != existing_header:
+        # 需要升级 header：读出旧数据，重写一个包含新 header 的文件
+        with path.open("r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            existing_rows = list(reader)
+
+        tmp_path = path.with_suffix(".tmp")
+        with tmp_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=new_header)
+            writer.writeheader()
+            for r in existing_rows:
+                writer.writerow(r)
+            writer.writerow(row)
+
+        tmp_path.replace(path)
+        return
+
+    # header 不变：直接追加
     with path.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=header)
-        writer.writerow({k: row.get(k, "") for k in header})
+        writer = csv.DictWriter(f, fieldnames=existing_header)
+        writer.writerow(row)

@@ -120,24 +120,26 @@ class InvestmentResult:
             "asset": deribit_ctx.asset,
             "investment": self.investment,
             "selected_strategy": strategy,  # 明确标识选择的策略
-
-            # === Polymarket 原始字段（便于 API 直接使用）===
+            # === 执行所需字段（用于 trade/execute）===
+            # API market_id（例如 BTC_108000），用于 server 端定位
+            "market_id": f"{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}",
+            # Polymarket 元信息（用于下单）
             "pm_event_title": poly_ctx.event_title,
-            "pm_event_id": poly_ctx.event_id,
             "pm_market_title": poly_ctx.market_title,
+            "pm_event_id": poly_ctx.event_id,
             "pm_market_id": poly_ctx.market_id,
-            "pm_yes_token_id": poly_ctx.yes_token_id,
-            "pm_no_token_id": poly_ctx.no_token_id,
+            "yes_token_id": poly_ctx.yes_token_id,
+            "no_token_id": poly_ctx.no_token_id,
+            # Deribit 合约名（用于下单）
+            "inst_k1": deribit_ctx.inst_k1,
+            "inst_k2": deribit_ctx.inst_k2,
 
             # === 市场价格相关 ===
             "spot": deribit_ctx.spot,
             "poly_yes_price": poly_ctx.yes_price,
             "poly_no_price": poly_ctx.no_price,
             "deribit_prob": deribit_ctx.deribit_prob,
-
-            # === Deribit 参数（原始行情 + 定价参数） ===
-            "inst_k1": deribit_ctx.inst_k1,
-            "inst_k2": deribit_ctx.inst_k2,
+            # === Deribit 参数 ===
             "K1": deribit_ctx.k1_strike,
             "K2": deribit_ctx.k2_strike,
             "K_poly": deribit_ctx.K_poly,
@@ -145,48 +147,10 @@ class InvestmentResult:
             "days_to_expiry": self.calc_input.days_to_expiry,
             "sigma": deribit_ctx.mark_iv / 100.0,
             "r": deribit_ctx.r,
-
-            # BTC 计价
             "k1_bid_btc": deribit_ctx.k1_bid_btc,
             "k1_ask_btc": deribit_ctx.k1_ask_btc,
             "k2_bid_btc": deribit_ctx.k2_bid_btc,
             "k2_ask_btc": deribit_ctx.k2_ask_btc,
-            "k1_mid_btc": deribit_ctx.k1_mid_btc,
-            "k2_mid_btc": deribit_ctx.k2_mid_btc,
-
-            # USD 计价
-            "k1_bid_usd": deribit_ctx.k1_bid_usd,
-            "k1_ask_usd": deribit_ctx.k1_ask_usd,
-            "k2_bid_usd": deribit_ctx.k2_bid_usd,
-            "k2_ask_usd": deribit_ctx.k2_ask_usd,
-            "k1_mid_usd": deribit_ctx.k1_mid_usd,
-            "k2_mid_usd": deribit_ctx.k2_mid_usd,
-
-            # 波动率 / 手续费
-            "k1_iv": deribit_ctx.k1_iv,
-            "k2_iv": deribit_ctx.k2_iv,
-            "k1_fee_approx": deribit_ctx.k1_fee_approx,
-            "k2_fee_approx": deribit_ctx.k2_fee_approx,
-            "mark_iv": deribit_ctx.mark_iv,
-            "k1_expiration_timestamp": deribit_ctx.k1_expiration_timestamp,
-
-            # === EV 算法核心结果（整体视角） ===
-            "ev_yes": self.ev_yes,
-            "ev_no": self.ev_no,
-            "total_costs_yes": self.total_costs_yes,
-            "total_costs_no": self.total_costs_no,
-            "im_usd": self.im_usd,
-            "im_btc": self.im_btc,
-            "contracts": self.contracts,
-            "pm_yes_slippage": self.pm_yes_slippage,
-            "pm_no_slippage": self.pm_no_slippage,
-            "open_cost_yes": self.open_cost_yes,
-            "open_cost_no": self.open_cost_no,
-            "holding_cost_yes": self.holding_cost_yes,
-            "holding_cost_no": self.holding_cost_no,
-            "close_cost_yes": self.close_cost_yes,
-            "close_cost_no": self.close_cost_no,
-
             # === 策略1完整数据 ===
             "net_ev_strategy1": self.net_ev_strategy1,
             "gross_ev_strategy1": self.gross_ev_strategy1,
@@ -196,8 +160,7 @@ class InvestmentResult:
             "close_cost_strategy1": self.close_cost_strategy1,
             "contracts_strategy1": self.contracts_strategy1,
             "im_usd_strategy1": self.im_usd_strategy1,
-            "im_btc_strategy1": self.im_btc_strategy1,
-
+            "im_btc_strategy1": (self.im_usd_strategy1 / deribit_ctx.spot) if deribit_ctx.spot else 0.0,
             # === 策略2完整数据 ===
             "net_ev_strategy2": self.net_ev_strategy2,
             "gross_ev_strategy2": self.gross_ev_strategy2,
@@ -207,8 +170,7 @@ class InvestmentResult:
             "close_cost_strategy2": self.close_cost_strategy2,
             "contracts_strategy2": self.contracts_strategy2,
             "im_usd_strategy2": self.im_usd_strategy2,
-            "im_btc_strategy2": self.im_btc_strategy2,
-
+            "im_btc_strategy2": (self.im_usd_strategy2 / deribit_ctx.spot) if deribit_ctx.spot else 0.0,
             # === PM市场价格详情（用于套利分析）===
             "best_ask_strategy1": self.best_ask_strategy1,
             "best_bid_strategy1": self.best_bid_strategy1,
@@ -218,7 +180,6 @@ class InvestmentResult:
             "best_bid_strategy2": self.best_bid_strategy2,
             "mid_price_strategy2": self.mid_price_strategy2,
             "spread_strategy2": self.spread_strategy2,
-
             # === 执行参数 ===
             "slippage_rate_used": self.slippage_rate_used,
         }
