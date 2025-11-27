@@ -4,6 +4,10 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     v = os.getenv(name)

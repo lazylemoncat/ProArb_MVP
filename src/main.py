@@ -1,14 +1,20 @@
 import asyncio
 import os
 import re
-from datetime import datetime, timezone, date, timedelta
-from typing import Iterable, Dict, Any, List
+from dataclasses import asdict
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, List
 
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
 from rich.console import Console
 from rich.panel import Panel
 
+from .fetch_data.polymarket_client import PolymarketClient
 from .strategy.investment_runner import InvestmentResult, evaluate_investment
+from .telegram.singleton import get_worker
+from .utils.dataloader import load_manual_data
+from .utils.init_markets import init_markets
 from .utils.market_context import (
     DeribitMarketContext,
     PolymarketState,
@@ -16,17 +22,59 @@ from .utils.market_context import (
     build_polymarket_state,
     make_summary_table,
 )
-from .fetch_data.polymarket_client import PolymarketClient
-from .utils.dataloader import load_manual_data
-from .utils.init_markets import init_markets
 from .utils.save_result import save_result_csv
-from dataclasses import asdict
-from fastapi import FastAPI, HTTPException
 
 app = FastAPI()
 
 console = Console()
 load_dotenv()
+
+def _iso_utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _fmt_market_title(asset: str, k_poly: float) -> str:
+    # e.g. "BTC > $100,000"
+    try:
+        return f"{asset.upper()} > ${int(round(float(k_poly))):,}"
+    except Exception:
+        return f"{asset.upper()} > {k_poly}"
+
+
+class _ComponentHealth:
+    """只在 down->up/up->down 变化时发 error/recovery，避免刷屏。"""
+    def __init__(self, tg_worker):
+        self.tg = tg_worker
+        self.down_since: dict[str, datetime] = {}
+        self.last_error_sent: dict[str, datetime] = {}
+
+    def error(self, component: str, error_msg: str) -> None:
+        now = datetime.now(timezone.utc)
+        if component not in self.down_since:
+            self.down_since[component] = now
+            self.tg.publish({
+                "type": "error",
+                "data": {
+                    "component": component,
+                    "error_msg": error_msg,
+                    "timestamp": _iso_utc_now(),
+                }
+            })
+
+    def recovery(self, component: str) -> None:
+        if component not in self.down_since:
+            return
+        now = datetime.now(timezone.utc)
+        since = self.down_since.pop(component)
+        mins = max(0.0, (now - since).total_seconds() / 60.0)
+        self.tg.publish({
+            "type": "recovery",
+            "data": {
+                "component": component,
+                "downtime_minutes": mins,
+                "timestamp": _iso_utc_now(),
+            }
+        })
 
 
 def rotate_event_title_date(template_title: str, target_date: date) -> str:
@@ -237,18 +285,36 @@ async def loop_event(
     investments: Iterable[float],
     output_csv: str,
     instruments_map: dict,
+    *,
+    tg_worker,
+    health: _ComponentHealth,
+    thresholds: dict,
+    opp_state: dict,
 ) -> None:
-    """
-    处理单个事件：
-    - 抓取 Deribit / Polymarket 行情
-    - 计算各档投资的 EV
-    - 输出到终端和 CSV
-    """
-    deribit_ctx: DeribitMarketContext = build_deribit_context(data, instruments_map)
-    poly_ctx: PolymarketState = build_polymarket_state(data)
+    # 机会提醒阈值：用你 config.yaml 的 ev_spread_min 作为“概率优势”最小值（例如 0.05 = 5%）
+    prob_edge_min = float(thresholds.get("ev_spread_min", 0.0))
+    net_ev_min = float(thresholds.get("notify_net_ev_min", 0.0))  # 可选：不配就默认 0
+    cooldown_sec = float(thresholds.get("telegram_opportunity_cooldown_sec", 300))  # 可选：默认 5 分钟
+
+    start_ts = datetime.now(timezone.utc)
+
+    # --- Deribit ---
+    try:
+        deribit_ctx: DeribitMarketContext = build_deribit_context(data, instruments_map)
+        health.recovery("Deribit API")
+    except Exception as exc:
+        health.error("Deribit API", f"{exc}")
+        return
+
+    # --- Polymarket ---
+    try:
+        poly_ctx: PolymarketState = build_polymarket_state(data)
+        health.recovery("Polymarket API")
+    except Exception as exc:
+        health.error("Polymarket API", f"{exc}")
+        return
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
     table = make_summary_table(deribit_ctx, poly_ctx, timestamp=timestamp)
     console.print(table)
 
@@ -261,37 +327,74 @@ async def loop_event(
                 deribit_ctx=deribit_ctx,
                 poly_ctx=poly_ctx,
             )
+            health.recovery("投资引擎")
 
-            ev_yes = result.ev_yes
-            ev_no = result.ev_no
-            im_final_usd = result.im_usd
+            # 选中策略的净EV
+            net_ev = float(result.ev_yes if strategy == 1 else result.ev_no)
 
-            # 获取两个策略的完整数据
-            net_ev_strategy1 = result.net_ev_strategy1
-            net_ev_strategy2 = result.net_ev_strategy2
+            # 方向一致的“概率/价格”
+            pm_price = float(poly_ctx.yes_price if strategy == 1 else poly_ctx.no_price)
+            deribit_price = float(deribit_ctx.deribit_prob if strategy == 1 else (1.0 - deribit_ctx.deribit_prob))
+            prob_diff = (deribit_price - pm_price) * 100.0
 
-            # 计算 EV/IM 比率（避免除零错误）
-            ev_im_yes = (ev_yes / im_final_usd) if im_final_usd > 0 else 0.0
-            ev_im_no = (ev_no / im_final_usd) if im_final_usd > 0 else 0.0
+            data_lag_seconds = (datetime.now(timezone.utc) - start_ts).total_seconds()
 
+            denom = inv_base_usd + float(result.im_usd or 0.0)
+            roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
+            roi_str = f"{roi_pct:.2f}%"
+
+            # 控制台输出
             console.print(
-                f"💰 {inv_base_usd:.0f} | "
-                f"EV_yes={ev_yes:.2f} | EV_no={ev_no:.2f} | "
-                f"IM={im_final_usd:.2f} | "
-                f"EV/IM_yes={ev_im_yes:.3f} | "
-                f"EV/IM_no={ev_im_no:.3f} | "
-                f"策略1_EV={net_ev_strategy1:.2f} | 策略2_EV={net_ev_strategy2:.2f}"
+                f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
+                f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
+                f"IM={float(result.im_usd):.2f}"
             )
 
-            # 🔍 DEBUG: 显示合约数量
-            console.print(f"🔍 [DEBUG] 合约数量: {result.contracts:.6f}")
-
+            # 写 CSV
             row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
             save_result_csv(row, output_csv)
 
-        except Exception as e:
-            console.print(f"❌ 处理 {inv_base_usd:.0f} USD 投资时出错: {e}")
+            # --- 机会提醒（Bot1） ---
+            # 条件：净EV>0 且 概率优势 >= ev_spread_min
+            print(net_ev, net_ev_min, net_ev > net_ev_min, deribit_price, pm_price, deribit_price - pm_price, prob_edge_min, (deribit_price - pm_price) >= prob_edge_min)
+            if net_ev > net_ev_min and (deribit_price - pm_price) >= prob_edge_min:
+                market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
+
+                key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}:S{strategy}"
+                now = datetime.now(timezone.utc)
+                last = opp_state.get(key)
+
+                should_send = True
+                if last and cooldown_sec > 0:
+                    last_ts, last_ev = last
+                    if (now - last_ts).total_seconds() < cooldown_sec and net_ev <= (last_ev + 1.0):
+                        should_send = False
+
+                print(should_send)
+                should_send = True
+                if should_send:
+                    tg_worker.publish({
+                        "type": "opportunity",
+                        "data": {
+                            "market_title": market_title,
+                            "net_ev": net_ev,
+                            "strategy": int(strategy),
+                            "prob_diff": prob_diff,
+                            "pm_price": pm_price,
+                            "deribit_price": deribit_price,
+                            "investment": inv_base_usd,
+                            "data_lag_seconds": data_lag_seconds,
+                            "ROI": roi_str,
+                            "timestamp": _iso_utc_now(),
+                        }
+                    })
+                    opp_state[key] = (now, net_ev)
+
+        except Exception as exc:
+            # 投资引擎/滑点/盘口不足等都归到“投资引擎”
+            health.error("投资引擎", f"{_fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)} | {exc}")
             import traceback
+            console.print(f"❌ 处理 {inv_base_usd:.0f} USD 投资时出错: {exc}")
             console.print(f"详细错误: {traceback.format_exc()}")
             continue
 
@@ -311,6 +414,10 @@ async def run_monitor(config: dict) -> None:
     investments = thresholds["INVESTMENTS"]
     output_csv = thresholds["OUTPUT_CSV"]
     check_interval = thresholds["check_interval_sec"]
+
+    tg_worker = get_worker()
+    health = _ComponentHealth(tg_worker)
+    opp_state: dict = {}
 
     current_target_date: date | None = None
     events: List[dict] = []
@@ -358,6 +465,10 @@ async def run_monitor(config: dict) -> None:
                         investments=investments,
                         output_csv=output_csv,
                         instruments_map=instruments_map,
+                        tg_worker=tg_worker,
+                        health=health,
+                        thresholds=thresholds,
+                        opp_state=opp_state,
                     )
                 except Exception as e:
                     title = data.get("polymarket", {}).get("market_title", "UNKNOWN")
