@@ -1,0 +1,104 @@
+mode:
+  dry_run: true            # execute endpoint always returns DRY_RUN
+  allow_execute: true      # set false to disable trading completely
+  log_trades: true         # CSV-based trade logging
+
+
+# ----------------------------------------------------------------------------
+# FILTERS — used BEFORE calling EV engine
+# ----------------------------------------------------------------------------
+filters:
+
+  # Minimum profitability thresholds  
+  ev:
+    min_ev_usd_1000: 0             # ±EV (usd per $1k investment)
+    min_ev_pct: 0.0                 # EV percentage threshold (%)
+    min_divergence: 0.01            # PM price vs DR implied prob
+
+  # Liquidity safety  
+  liquidity:
+    min_pm_liquidity_usd: 3000      # ensures PM can absorb size
+    min_dr_liquidity_contracts: 3   # ensures DR spread is real
+
+  # Stale data protection  
+  staleness:
+    max_pm_age_sec: 30
+    max_db_age_sec: 15
+    max_ev_age_sec: 60
+
+# ----------------------------------------------------------------------------
+# RISK LIMITS — mapped directly into /trade/sim + /trade/execute
+# ----------------------------------------------------------------------------
+risk_limits:
+
+  sizing:
+    default_investment_usd: 1000
+    max_investment_usd: 2000       # hard cap for any single trade
+    max_daily_total_usd: 20000     # optional (MVP ignored if not used)
+
+  portfolio:
+    max_open_positions: 3
+
+  slippage:
+    max_slippage_pct: 0.02         # used for both PM and DR
+
+  expiry:
+    min_minutes_to_dr_expiry: 10   # avoid near-expiry Deribit
+    min_minutes_to_pm_resolution: 60
+
+
+# ----------------------------------------------------------------------------
+# EXECUTION SETTINGS
+# (MVP = only dry-run mode, no live Polymarket/Deribit orders)
+# ----------------------------------------------------------------------------
+execution:
+
+  polymarket:
+    enabled: false                 # future use
+    max_spend_usdc: 2000
+
+  deribit:
+    enabled: false                 # future use
+    post_only: true
+    reduce_only: false
+
+
+# ----------------------------------------------------------------------------
+# ALERTS / NOTIFICATIONS
+# ----------------------------------------------------------------------------
+alerts:
+  telegram:
+    enabled: true
+
+    # BOT TOKENS FROM ENV VARIABLES
+    alert_bot_token_env: "TELEGRAM_BOT_TOKEN_ALERT"
+    trading_bot_token_env: "TELEGRAM_BOT_TOKEN_TRADING"
+    chat_id_env: "TELEGRAM_CHAT_ID"
+
+    # Which messages to send
+    send_opportunities: true
+    send_trade_executions: true
+    send_errors: true
+    send_recoveries: true
+
+    # Retry logic for sending messages
+    max_retries: 3
+    retry_delay_seconds: 1
+    retry_backoff: 2
+
+
+# ----------------------------------------------------------------------------
+# SECURITY — matches POST /trade/sim and /trade/execute
+# ----------------------------------------------------------------------------
+auth:
+  api_key_env: "Trading_api_key"
+  allowed_ips: 147.182.136.246
+
+
+
+# ----------------------------------------------------------------------------
+# LOGGING
+# ----------------------------------------------------------------------------
+logging:
+  trade_log_csv: "/data/trades.csv"
+  enable_debug: true
