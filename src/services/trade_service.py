@@ -124,6 +124,8 @@ def build_trade_result_from_row(row: Dict[str, Any]) -> TradeResult:
         default=_safe_float(row.get(f"net_ev_strategy{strategy}"), 0.0),
     )
     total_cost = _safe_float(row.get(f"total_cost_strategy{strategy}"), default=0.0)
+
+    # net_profit_usd 返回的是 net_ev（即扣除成本后的净期望值）
     net_profit = _safe_float(row.get(f"net_ev_strategy{strategy}"), default=(gross - total_cost))
 
     investment = _safe_float(row.get("investment"), default=0.0)
@@ -139,12 +141,13 @@ def build_trade_result_from_row(row: Dict[str, Any]) -> TradeResult:
         slip = row.get("pm_yes_slippage") if strategy == 1 else row.get("pm_no_slippage")
     slippage_pct = _safe_float(slip, default=0.0)
 
+    # 返回的字段需要区分 gross_ev 和 net_ev
     return TradeResult(
         direction=direction,  # "yes" / "no"
-        ev_usd=float(gross),
+        ev_usd=float(gross),  # 确保返回的是 gross_ev
         roi_pct=float(roi_pct),
         total_cost_usd=float(total_cost),
-        net_profit_usd=float(net_profit),
+        net_profit_usd=float(net_profit),  # 返回的是 net_ev
         im_usd=float(im_usd),
         im_btc=float(im_btc),
         contracts=float(contracts),

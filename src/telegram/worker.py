@@ -29,25 +29,19 @@ class _Bots:
 
 
 class TelegramWorker:
-    """Async queue worker that routes JSON messages to two Telegram bots."""
+    """Async queue worker that routes JSON messages to Telegram bots."""
 
     def __init__(self, settings: Optional[TelegramSettings] = None):
         self.settings = settings or TelegramSettings()
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
         self._queue: Optional[asyncio.Queue[str]] = None
         self._task: Optional[asyncio.Task] = None
-
         self._bots: Optional[_Bots] = None
         self._lim_alert: Optional[AsyncRateLimiter] = None
         self._lim_trading: Optional[AsyncRateLimiter] = None
 
         self._started = False
-
-    # -----------------
-    # lifecycle
-    # -----------------
 
     def start(self) -> None:
         if self._started:
@@ -58,7 +52,7 @@ class TelegramWorker:
             self._started = True
             return
 
-        if not (self.settings.alert_enabled or self.settings.trading_enabled):
+        if not self.settings.alert_enabled and not self.settings.trading_enabled:
             logger.info("telegram enabled but both bots disabled (alert_enabled=false, trading_enabled=false)")
             self._started = True
             return
@@ -86,80 +80,8 @@ class TelegramWorker:
 
         self._started = True
 
-    async def aclose(self) -> None:
-        if self._task:
-            self._task.cancel()
-
-        if self._bots:
-            if self._bots.alert:
-                await self._bots.alert.close()
-            if self._bots.trading:
-                await self._bots.trading.close()
-
-    # -----------------
-    # publish
-    # -----------------
-
-    def _should_drop_by_type(self, msg: Dict[str, Any]) -> bool:
-        t = msg.get("type")
-        if t == "trade":
-            return not self.settings.trading_enabled
-        # 其他类型（opportunity/error/recovery）都属于 alert bot
-        return not self.settings.alert_enabled
-
-    def publish(self, message: Dict[str, Any]) -> None:
-        """Thread-safe, non-blocking publish. Drops on overload."""
-        if not self._started:
-            self.start()
-
-        if not self.settings.enabled or self._loop is None or self._queue is None:
-            return
-
-        # 新增：按 bot 开关提前丢弃
-        if self._should_drop_by_type(message):
-            return
-
-        try:
-            payload = json.dumps(message, ensure_ascii=False)
-        except Exception as exc:
-            logger.exception("failed to json.dumps telegram message: %s", exc)
-            return
-
-        def _put_nowait() -> None:
-            try:
-                self._queue.put_nowait(payload)
-            except asyncio.QueueFull:
-                logger.warning("telegram queue full, drop message")
-
-        if self._loop.is_running():
-            self._loop.call_soon_threadsafe(_put_nowait)
-
-    async def publish_async(self, message: Dict[str, Any]) -> None:
-        if not self._started:
-            self.start()
-
-        if not self.settings.enabled or self._queue is None:
-            return
-
-        if self._should_drop_by_type(message):
-            return
-
-        try:
-            payload = json.dumps(message, ensure_ascii=False)
-        except Exception as exc:
-            logger.exception("failed to json.dumps telegram message: %s", exc)
-            return
-
-        try:
-            self._queue.put_nowait(payload)
-        except asyncio.QueueFull:
-            logger.warning("telegram queue full, drop message")
-
-    # -----------------
-    # internals
-    # -----------------
-
     def _start_in_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """在事件循环中启动 Telegram worker"""
         self._loop = loop
         self._queue = asyncio.Queue(maxsize=self.settings.queue_maxsize)
 
@@ -186,6 +108,7 @@ class TelegramWorker:
         )
 
     def _start_in_thread(self) -> None:
+        """在后台线程中启动 Telegram worker"""
         self._thread = threading.Thread(target=self._thread_main, name="telegram-worker-thread", daemon=True)
         self._thread.start()
         logger.info("telegram worker started in background thread")
@@ -200,10 +123,55 @@ class TelegramWorker:
             loop.run_until_complete(self.aclose())
             loop.close()
 
-    async def _send_with_retry(self, bot: TelegramBotClient, limiter: AsyncRateLimiter, text: str) -> None:
-        delay = self.settings.retry_delay_seconds
+    async def aclose(self) -> None:
+        """异步关闭 Telegram worker"""
+        if self._task:
+            self._task.cancel()
+
+        if self._bots:
+            if self._bots.alert:
+                await self._bots.alert.close()
+            if self._bots.trading:
+                await self._bots.trading.close()
+
+    def _should_send_opportunity_alert(self, message: Dict[str, Any]) -> bool:
+        """判断是否满足正 EV 才发送 Alert Bot 消息"""
+        # 只在 opportunity 类型消息且 net_ev > 0 时发送
+        if message.get("type") == "opportunity":
+            net_ev = message.get("data", {}).get("net_ev", 0.0)
+            return net_ev > 0  # 只发送正 EV 的消息
+        return False
+
+    def publish(self, message: Dict[str, Any]) -> None:
+        """线程安全、非阻塞的发布消息，超载丢弃"""
+        if not self._started:
+            self.start()
+
+        if not self.settings.enabled or self._loop is None or self._queue is None:
+            return
+
+        # 只在正 EV 时发送 Alert Bot 消息
+        if not self._should_send_opportunity_alert(message):
+            return
+
+        try:
+            payload = json.dumps(message, ensure_ascii=False)
+        except Exception as exc:
+            logger.exception("failed to json.dumps telegram message: %s", exc)
+            return
+
+        def _put_nowait() -> None:
+            try:
+                self._queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                logger.warning("telegram queue full, drop message")
+
+        if self._loop.is_running():
+            self._loop.call_soon_threadsafe(_put_nowait)
+
+    async def _send_with_retry(self, bot: TelegramBotClient, text: str) -> None:
+        """带重试逻辑的消息发送"""
         for attempt in range(self.settings.max_retries + 1):
-            await limiter.acquire()
             ok, err = await bot.send_text(text, parse_mode=None)
             if ok:
                 return
@@ -211,11 +179,12 @@ class TelegramWorker:
             if attempt >= self.settings.max_retries:
                 raise RuntimeError(err or "unknown send error")
 
-            sleep_for = delay * (self.settings.retry_backoff ** attempt)
+            sleep_for = self.settings.retry_delay_seconds * (self.settings.retry_backoff ** attempt)
             logger.warning("telegram send failed attempt=%s err=%s sleep=%.2fs", attempt + 1, err, sleep_for)
             await asyncio.sleep(sleep_for)
 
     def _deadletter(self, raw: str, reason: str) -> None:
+        """将无效消息记录到死信队列"""
         try:
             Path(self.settings.deadletter_path).parent.mkdir(parents=True, exist_ok=True)
             with open(self.settings.deadletter_path, "a", encoding="utf-8") as f:
@@ -224,6 +193,7 @@ class TelegramWorker:
             logger.exception("failed to write deadletter")
 
     async def _run(self) -> None:
+        """处理消息队列并发送"""
         assert self._queue is not None
         assert self._bots is not None
 
@@ -236,8 +206,8 @@ class TelegramWorker:
                 self._deadletter(raw, f"json_parse_error:{exc}")
                 continue
 
-            # 新增：按开关丢弃（避免关闭 alert 后还走 schema/format）
-            if self._should_drop_by_type(obj):
+            # 判断是否需要丢弃消息（只有正 EV 的消息会被发送）
+            if not self._should_send_opportunity_alert(obj):
                 continue
 
             try:
@@ -246,28 +216,8 @@ class TelegramWorker:
                 self._deadletter(raw, f"schema_validation_error:{exc}")
                 continue
 
-            msg_type = obj.get("type")
-            is_trade = msg_type == "trade"
-
-            bot: Optional[TelegramBotClient]
-            limiter: Optional[AsyncRateLimiter]
-
-            if is_trade:
-                bot = self._bots.trading
-                limiter = self._lim_trading
-            else:
-                bot = self._bots.alert
-                limiter = self._lim_alert
-
-            # 理论上不会 None（因为 start 时已经校验过），但防御一下
-            if bot is None or limiter is None:
-                continue
-
             text = format_message(msg)
-
-            try:
-                await self._send_with_retry(bot, limiter, text)
-                logger.info("telegram sent type=%s", msg_type)
-            except Exception as exc:
-                logger.exception("telegram send failed final: %s", exc)
-                self._deadletter(raw, f"send_failed:{exc}")
+            bot = self._bots.alert
+            if bot:
+                await self._send_with_retry(bot, text)
+                logger.info("telegram sent opportunity message")

@@ -298,7 +298,7 @@ async def loop_event(
 
     start_ts = datetime.now(timezone.utc)
 
-    # --- Deribit ---
+    # --- Deribit --- 
     try:
         deribit_ctx: DeribitMarketContext = build_deribit_context(data, instruments_map)
         health.recovery("Deribit API")
@@ -306,7 +306,7 @@ async def loop_event(
         health.error("Deribit API", f"{exc}")
         return
 
-    # --- Polymarket ---
+    # --- Polymarket --- 
     try:
         poly_ctx: PolymarketState = build_polymarket_state(data)
         health.recovery("Polymarket API")
@@ -350,12 +350,7 @@ async def loop_event(
                 f"IM={float(result.im_usd):.2f}"
             )
 
-            # 写 CSV
-            row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
-            save_result_csv(row, output_csv)
-
-            # --- 机会提醒（Bot1） ---
-            # 条件：净EV>0 且 概率优势 >= ev_spread_min
+            # --- 机会提醒（Bot1） --- 
             if net_ev > net_ev_min and (deribit_price - pm_price) >= prob_edge_min:
                 market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
 
@@ -388,11 +383,8 @@ async def loop_event(
                     opp_state[key] = (now, net_ev)
 
         except Exception as exc:
-            # 投资引擎/滑点/盘口不足等都归到“投资引擎”
             health.error("投资引擎", f"{_fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)} | {exc}")
-            import traceback
             console.print(f"❌ 处理 {inv_base_usd:.0f} USD 投资时出错: {exc}")
-            console.print(f"详细错误: {traceback.format_exc()}")
             continue
 
 
