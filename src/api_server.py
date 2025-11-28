@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from .utils.dataloader import load_manual_data
+from .utils.dataloader import load_all_configs
 from .services.api_models import (
     DBSnapshotResponse,
     EVResponse,
@@ -42,7 +42,7 @@ _CONFIG_CACHE: Dict[str, Any] | None = None
 def _get_config() -> Dict[str, Any]:
     global _CONFIG_CACHE
     if _CONFIG_CACHE is None:
-        _CONFIG_CACHE = load_manual_data(CONFIG_PATH)
+        _CONFIG_CACHE = load_all_configs()
     return _CONFIG_CACHE
 
 

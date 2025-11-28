@@ -7,7 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Callable
+from typing import Any, Dict, Optional
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -24,20 +24,12 @@ _TELEGRAM_MESSAGE_ADAPTER = TypeAdapter(TelegramMessage)
 
 @dataclass
 class _Bots:
-    alert: TelegramBotClient
-    trading: TelegramBotClient
+    alert: Optional[TelegramBotClient]
+    trading: Optional[TelegramBotClient]
 
 
 class TelegramWorker:
-    """Async queue worker that routes JSON messages to two Telegram bots.
-
-    - Non-blocking publish (sync + async)
-    - Validate payloads (Pydantic)
-    - Route by type
-    - Retry with exponential backoff
-    - Rate limit per bot
-    - Dead-letter output (jsonl)
-    """
+    """Async queue worker that routes JSON messages to two Telegram bots."""
 
     def __init__(self, settings: Optional[TelegramSettings] = None):
         self.settings = settings or TelegramSettings()
@@ -66,9 +58,23 @@ class TelegramWorker:
             self._started = True
             return
 
-        if not (self.settings.bot_token_alert and self.settings.bot_token_trading and self.settings.chat_id):
-            logger.warning("telegram enabled but missing token/chat_id; alert=%s trading=%s chat_id=%s",
-                           bool(self.settings.bot_token_alert), bool(self.settings.bot_token_trading), bool(self.settings.chat_id))
+        if not (self.settings.alert_enabled or self.settings.trading_enabled):
+            logger.info("telegram enabled but both bots disabled (alert_enabled=false, trading_enabled=false)")
+            self._started = True
+            return
+
+        if not self.settings.chat_id:
+            logger.warning("telegram enabled but missing chat_id")
+            self._started = True
+            return
+
+        if self.settings.alert_enabled and not self.settings.bot_token_alert:
+            logger.warning("telegram alert enabled but missing TELEGRAM_BOT_TOKEN_ALERT")
+            self._started = True
+            return
+
+        if self.settings.trading_enabled and not self.settings.bot_token_trading:
+            logger.warning("telegram trading enabled but missing TELEGRAM_BOT_TOKEN_TRADING")
             self._started = True
             return
 
@@ -83,13 +89,23 @@ class TelegramWorker:
     async def aclose(self) -> None:
         if self._task:
             self._task.cancel()
+
         if self._bots:
-            await self._bots.alert.close()
-            await self._bots.trading.close()
+            if self._bots.alert:
+                await self._bots.alert.close()
+            if self._bots.trading:
+                await self._bots.trading.close()
 
     # -----------------
     # publish
     # -----------------
+
+    def _should_drop_by_type(self, msg: Dict[str, Any]) -> bool:
+        t = msg.get("type")
+        if t == "trade":
+            return not self.settings.trading_enabled
+        # 其他类型（opportunity/error/recovery）都属于 alert bot
+        return not self.settings.alert_enabled
 
     def publish(self, message: Dict[str, Any]) -> None:
         """Thread-safe, non-blocking publish. Drops on overload."""
@@ -97,6 +113,10 @@ class TelegramWorker:
             self.start()
 
         if not self.settings.enabled or self._loop is None or self._queue is None:
+            return
+
+        # 新增：按 bot 开关提前丢弃
+        if self._should_drop_by_type(message):
             return
 
         try:
@@ -121,6 +141,9 @@ class TelegramWorker:
         if not self.settings.enabled or self._queue is None:
             return
 
+        if self._should_drop_by_type(message):
+            return
+
         try:
             payload = json.dumps(message, ensure_ascii=False)
         except Exception as exc:
@@ -140,15 +163,27 @@ class TelegramWorker:
         self._loop = loop
         self._queue = asyncio.Queue(maxsize=self.settings.queue_maxsize)
 
-        self._bots = _Bots(
-            alert=TelegramBotClient(self.settings.bot_token_alert, self.settings.chat_id),
-            trading=TelegramBotClient(self.settings.bot_token_trading, self.settings.chat_id),
+        alert_bot = (
+            TelegramBotClient(self.settings.bot_token_alert, self.settings.chat_id)
+            if self.settings.alert_enabled and self.settings.bot_token_alert
+            else None
         )
-        self._lim_alert = AsyncRateLimiter(self.settings.max_messages_per_second)
-        self._lim_trading = AsyncRateLimiter(self.settings.max_messages_per_second)
+        trading_bot = (
+            TelegramBotClient(self.settings.bot_token_trading, self.settings.chat_id)
+            if self.settings.trading_enabled and self.settings.bot_token_trading
+            else None
+        )
+
+        self._bots = _Bots(alert=alert_bot, trading=trading_bot)
+        self._lim_alert = AsyncRateLimiter(self.settings.max_messages_per_second) if alert_bot else None
+        self._lim_trading = AsyncRateLimiter(self.settings.max_messages_per_second) if trading_bot else None
 
         self._task = loop.create_task(self._run(), name="telegram-worker")
-        logger.info("telegram worker started in main event loop")
+        logger.info(
+            "telegram worker started (alert=%s trading=%s)",
+            bool(alert_bot),
+            bool(trading_bot),
+        )
 
     def _start_in_thread(self) -> None:
         self._thread = threading.Thread(target=self._thread_main, name="telegram-worker-thread", daemon=True)
@@ -191,8 +226,6 @@ class TelegramWorker:
     async def _run(self) -> None:
         assert self._queue is not None
         assert self._bots is not None
-        assert self._lim_alert is not None
-        assert self._lim_trading is not None
 
         while True:
             raw = await self._queue.get()
@@ -203,24 +236,38 @@ class TelegramWorker:
                 self._deadletter(raw, f"json_parse_error:{exc}")
                 continue
 
+            # 新增：按开关丢弃（避免关闭 alert 后还走 schema/format）
+            if self._should_drop_by_type(obj):
+                continue
+
             try:
                 msg = _TELEGRAM_MESSAGE_ADAPTER.validate_python(obj)
             except ValidationError as exc:
                 self._deadletter(raw, f"schema_validation_error:{exc}")
                 continue
 
-            # route
-            bot = self._bots.alert
-            limiter = self._lim_alert
-            if obj.get("type") == "trade":
+            msg_type = obj.get("type")
+            is_trade = msg_type == "trade"
+
+            bot: Optional[TelegramBotClient]
+            limiter: Optional[AsyncRateLimiter]
+
+            if is_trade:
                 bot = self._bots.trading
                 limiter = self._lim_trading
+            else:
+                bot = self._bots.alert
+                limiter = self._lim_alert
+
+            # 理论上不会 None（因为 start 时已经校验过），但防御一下
+            if bot is None or limiter is None:
+                continue
 
             text = format_message(msg)
 
             try:
                 await self._send_with_retry(bot, limiter, text)
-                logger.info("telegram sent type=%s", obj.get("type"))
+                logger.info("telegram sent type=%s", msg_type)
             except Exception as exc:
                 logger.exception("telegram send failed final: %s", exc)
                 self._deadletter(raw, f"send_failed:{exc}")

@@ -13,7 +13,7 @@ from rich.panel import Panel
 from .fetch_data.polymarket_client import PolymarketClient
 from .strategy.investment_runner import InvestmentResult, evaluate_investment
 from .telegram.singleton import get_worker
-from .utils.dataloader import load_manual_data
+from .utils.dataloader import load_all_configs
 from .utils.init_markets import init_markets
 from .utils.market_context import (
     DeribitMarketContext,
@@ -356,7 +356,6 @@ async def loop_event(
 
             # --- 机会提醒（Bot1） ---
             # 条件：净EV>0 且 概率优势 >= ev_spread_min
-            print(net_ev, net_ev_min, net_ev > net_ev_min, deribit_price, pm_price, deribit_price - pm_price, prob_edge_min, (deribit_price - pm_price) >= prob_edge_min)
             if net_ev > net_ev_min and (deribit_price - pm_price) >= prob_edge_min:
                 market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
 
@@ -370,8 +369,6 @@ async def loop_event(
                     if (now - last_ts).total_seconds() < cooldown_sec and net_ev <= (last_ev + 1.0):
                         should_send = False
 
-                print(should_send)
-                should_send = True
                 if should_send:
                     tg_worker.publish({
                         "type": "opportunity",
@@ -481,7 +478,7 @@ async def run_monitor(config: dict) -> None:
 
 
 async def main(config_path: str = "config.yaml") -> None:
-    config = load_manual_data(config_path)
+    config = load_all_configs()
     await run_monitor(config)
 
 

@@ -4,7 +4,7 @@ Build:
   docker build -t arb-engine:single .
 
 Run（建议挂载 data 和 config）：
-   docker run -d --name proarb --env-file .env -e CONFIG_PATH=/app/config.yaml -e EV_REFRESH_SECONDS=10 -p 8000:8000 -v $(pwd)/data:/app/data -v $(pwd)/config.yaml:/app/config.yaml:ro lazylemonkitty/proarb_build:latest
+   docker run -d --name proarb --env-file .env -e CONFIG_PATH=/app/config.yaml  -e TRADING_CONFIG_PATH=/app/trading_config.yaml -e EV_REFRESH_SECONDS=10 -p 8000:8000 -v $(pwd)/data:/app/data -v $(pwd)/config.yaml:/app/config.yaml:ro -v $(pwd)/trading_config.yaml:/app/trading_config.yaml:ro lazylemonkitty/proarb_build:latest
 
 Check:
   curl http://127.0.0.1:8000/api/health
