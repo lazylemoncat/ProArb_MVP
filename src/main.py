@@ -370,25 +370,32 @@ async def loop_event(
                     f"ROI {roi_pct:.2f}% 低于最小阈值 {min_roi_pct:.2f}%"
                 )
 
-            csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
-            csv_row.update(
-                {
-                    "roi_pct": roi_pct,
-                    "net_ev_selected": net_ev,
-                    "prob_diff_pct": prob_diff,
-                    "pm_price_selected": pm_price,
-                    "validation_errors": "；".join(validation_errors),
-                }
-            )
-            save_result_csv(csv_row, csv_path=output_csv)
-
-            meets_opportunity_gate = net_ev > net_ev_min and (deribit_price - pm_price) >= prob_edge_min
-
-            if validation_errors or not meets_opportunity_gate:
-                if validation_errors:
-                    console.print(
-                        f"⏭️ 跳过 {inv_base_usd:.0f} USD 交易，原因: {'；'.join(validation_errors)}"
-                    )
+            if validation_errors:
+                tg_worker.publish(
+                    {
+                        "type": "trade",
+                        "data": {
+                            "action": "开仓",
+                            "strategy": int(strategy),
+                            "market_title": _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly),
+                            "pm_side": "买入",
+                            "pm_token": "YES" if strategy == 1 else "NO",
+                            "pm_price": pm_price,
+                            "pm_amount_usd": inv_base_usd,
+                            "deribit_action": "卖出牛差" if strategy == 1 else "买入牛差",
+                            "deribit_k1": float(deribit_ctx.k1_strike),
+                            "deribit_k2": float(deribit_ctx.k2_strike),
+                            "deribit_contracts": float(result.contracts),
+                            "fees_total": float(result.total_costs_yes if strategy == 1 else result.total_costs_no),
+                            "slippage_usd": 0.0,
+                            "open_cost": float(result.open_cost_yes if strategy == 1 else result.open_cost_no),
+                            "margin_usd": float(result.im_usd),
+                            "net_ev": net_ev,
+                            "note": "；".join(validation_errors),
+                            "timestamp": _iso_utc_now(),
+                        },
+                    }
+                )
                 continue
 
             # 控制台输出
