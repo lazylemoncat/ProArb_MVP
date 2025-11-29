@@ -61,6 +61,7 @@ def format_message(msg: TelegramMessage) -> str:
             "💰 交易已执行\n"
             f"类型: {d.action}\n"
             f"策略: {d.strategy}\n"
+            f"模拟: {str(bool(d.simulate)).lower()}\n"
             f"市场: {d.market_title}\n"
             f"PM: {d.pm_side} {d.pm_token} @ ${d.pm_price:.4f} (${_fmt_money(d.pm_amount_usd, 0)})\n"
             f"Deribit: {d.deribit_action} {d.deribit_k1}-{d.deribit_k2} ({d.deribit_contracts:.6f}份)\n"

@@ -300,6 +300,7 @@ async def loop_event(
     max_pm_price = float(thresholds.get("max_pm_price", 1.0))
     min_net_ev_accept = float(thresholds.get("min_net_ev", float("-inf")))
     min_roi_pct = float(thresholds.get("min_roi_pct", float("-inf")))
+    dry_trade_mode = bool(thresholds.get("dry_trade", False))
 
     start_ts = datetime.now(timezone.utc)
 
@@ -348,6 +349,9 @@ async def loop_event(
             roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
             roi_str = f"{roi_pct:.2f}%"
 
+            prob_edge_pct = abs(prob_diff) / 100.0
+            meets_opportunity_gate = prob_edge_pct >= prob_edge_min and net_ev >= net_ev_min
+
             validation_errors = []
             if float(result.contracts) < min_contract_size:
                 validation_errors.append(
@@ -370,31 +374,15 @@ async def loop_event(
                     f"ROI {roi_pct:.2f}% 低于最小阈值 {min_roi_pct:.2f}%"
                 )
 
+            if not meets_opportunity_gate:
+                validation_errors.append(
+                    f"未满足机会提醒条件 (|Δprob|={prob_edge_pct:.4f}, 净EV=${net_ev:.2f})"
+                )
+
             if validation_errors:
-                tg_worker.publish(
-                    {
-                        "type": "trade",
-                        "data": {
-                            "action": "开仓",
-                            "strategy": int(strategy),
-                            "market_title": _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly),
-                            "pm_side": "买入",
-                            "pm_token": "YES" if strategy == 1 else "NO",
-                            "pm_price": pm_price,
-                            "pm_amount_usd": inv_base_usd,
-                            "deribit_action": "卖出牛差" if strategy == 1 else "买入牛差",
-                            "deribit_k1": float(deribit_ctx.k1_strike),
-                            "deribit_k2": float(deribit_ctx.k2_strike),
-                            "deribit_contracts": float(result.contracts),
-                            "fees_total": float(result.total_costs_yes if strategy == 1 else result.total_costs_no),
-                            "slippage_usd": 0.0,
-                            "open_cost": float(result.open_cost_yes if strategy == 1 else result.open_cost_no),
-                            "margin_usd": float(result.im_usd),
-                            "net_ev": net_ev,
-                            "note": "；".join(validation_errors),
-                            "timestamp": _iso_utc_now(),
-                        },
-                    }
+                console.print(
+                    "⏸️ [yellow]未满足所有交易条件，已跳过通知/下单：[/yellow] "
+                    + "；".join(validation_errors)
                 )
                 continue
 
@@ -444,6 +432,7 @@ async def loop_event(
                         "action": "开仓",
                         "strategy": int(strategy),
                         "market_title": _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly),
+                        "simulate": dry_trade_mode,
                         "pm_side": "买入",
                         "pm_token": "YES" if strategy == 1 else "NO",
                         "pm_price": pm_price,
