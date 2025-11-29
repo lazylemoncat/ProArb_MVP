@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..telegram.singleton import get_worker
+from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
 # trading executors (async)
 from ..trading.deribit_trade import DeribitUserCfg, execute_vertical_spread
@@ -57,14 +58,9 @@ def _compute_api_market_id(row: Dict[str, Any]) -> str:
 
 
 def _read_csv_rows(csv_path: str) -> list[Dict[str, Any]]:
+    ensure_csv_file(csv_path, header=RESULTS_CSV_HEADER)
+
     path = Path(csv_path)
-    if not path.exists():
-        raise TradeApiError(
-            error_code="MISSING_DATA",
-            message=f"Results CSV not found at {csv_path}",
-            details={"csv_path": csv_path},
-            status_code=503,
-        )
     with path.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
@@ -276,8 +272,8 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         "contracts": contracts,
         "entry_price_pm": limit_price,
         "im_usd": result.im_usd,
-        "entry_timestamp": datetime.now().isoformat(),
-        "status": "OPEN"  # 初始状态为 "OPEN"
+        "entry_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "OPEN",
     }
 
     save_position_to_csv(position_data)
@@ -305,6 +301,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                 "action": "开仓",
                 "strategy": int(strategy),
                 "market_title": market_title,
+                "simulate": bool(dry_run),
                 "pm_side": "买入",
                 "pm_token": "YES" if strategy == 1 else "NO",
                 "pm_price": float(limit_price),          # 注意：这里用 limit_price 近似成交均价
