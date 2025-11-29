@@ -11,6 +11,7 @@ from fetch_data.polymarket_client import (
     get_polymarket_slippage,
     PolymarketClient,
 )
+from utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file
 
 
 # ==================== 配置：路径 & 策略参数 ====================
@@ -160,8 +161,10 @@ def load_positions_from_csv(path: str) -> List[CsvPosition]:
     """
     positions: List[CsvPosition] = []
 
-    if not os.path.exists(path):
-        print(f"[early_exit_monitor] 输入 CSV 不存在: {path}")
+    ensure_csv_file(path, header=RESULTS_CSV_HEADER)
+
+    if os.path.getsize(path) == 0:
+        print(f"[early_exit_monitor] 输入 CSV 不存在或为空: {path}")
         return positions
 
     with open(path, "r", newline="", encoding="utf-8") as f:
@@ -386,9 +389,7 @@ def write_results_to_csv(results: List[EarlyExitResult], output_path: str) -> No
     ]
     fieldnames = base_fields + extra_fields
 
-    output_dir = os.path.dirname(output_path)
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
+    ensure_csv_file(output_path, header=fieldnames)
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

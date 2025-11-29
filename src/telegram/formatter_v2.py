@@ -57,19 +57,22 @@ def format_message(msg: TelegramMessage) -> str:
 
     if isinstance(msg, TradeMessage):
         d = msg.data
-        return (
-            "💰 交易已执行\n"
-            f"类型: {d.action}\n"
-            f"策略: {d.strategy}\n"
-            f"市场: {d.market_title}\n"
-            f"PM: {d.pm_side} {d.pm_token} @ ${d.pm_price:.4f} (${_fmt_money(d.pm_amount_usd, 0)})\n"
-            f"Deribit: {d.deribit_action} {d.deribit_k1}-{d.deribit_k2} ({d.deribit_contracts:.6f}份)\n"
-            f"手续费: ${_fmt_money(d.fees_total)} | 滑点: ${_fmt_money(d.slippage_usd)}\n"
-            f"开仓成本: ${_fmt_money(d.open_cost)} | 保证金: ${_fmt_money(d.margin_usd)}\n"
-            f"预期净收益: ${_fmt_money(d.net_ev)}\n"
-            f"备注: {d.note}\n" if d.note else ""
-            f"⏰ {_fmt_ts_iso_to_utc(d.timestamp)}"
-        )
+        lines = [
+            "💰 交易已执行",
+            f"类型: {d.action}",
+            f"策略: {d.strategy}",
+            f"模拟: {str(bool(d.simulate)).lower()}",
+            f"市场: {d.market_title}",
+            f"PM: {d.pm_side} {d.pm_token} @ ${d.pm_price:.4f} (${_fmt_money(d.pm_amount_usd, 0)})",
+            f"Deribit: {d.deribit_action} {d.deribit_k1}-{d.deribit_k2} ({d.deribit_contracts:.6f}份)",
+            f"手续费: ${_fmt_money(d.fees_total)} | 滑点: ${_fmt_money(d.slippage_usd)}",
+            f"开仓成本: ${_fmt_money(d.open_cost)} | 保证金: ${_fmt_money(d.margin_usd)}",
+            f"预期净收益: ${_fmt_money(d.net_ev)}",
+            f"备注: {d.note}" if d.note else None,
+            f"⏰ {_fmt_ts_iso_to_utc(d.timestamp)}",
+        ]
+
+        return "\n".join(line for line in lines if line is not None)
 
     # Should be unreachable due to discriminator
     return str(msg)

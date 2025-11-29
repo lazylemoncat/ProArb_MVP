@@ -1,8 +1,142 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Sequence
+
+
+@dataclass(frozen=True)
+class ResultsCsvHeader:
+    """Canonical results.csv columns kept as a dataclass for easy edits and comments."""
+
+    timestamp: str = "timestamp"
+    market_title: str = "market_title"
+    asset: str = "asset"
+    investment: str = "investment"
+    selected_strategy: str = "selected_strategy"
+    market_id: str = "market_id"
+    pm_event_title: str = "pm_event_title"
+    pm_market_title: str = "pm_market_title"
+    pm_event_id: str = "pm_event_id"
+    pm_market_id: str = "pm_market_id"
+    yes_token_id: str = "yes_token_id"
+    no_token_id: str = "no_token_id"
+    inst_k1: str = "inst_k1"
+    inst_k2: str = "inst_k2"
+    spot: str = "spot"
+    poly_yes_price: str = "poly_yes_price"
+    poly_no_price: str = "poly_no_price"
+    deribit_prob: str = "deribit_prob"
+    K1: str = "K1"
+    K2: str = "K2"
+    K_poly: str = "K_poly"
+    T: str = "T"
+    days_to_expiry: str = "days_to_expiry"
+    sigma: str = "sigma"
+    r: str = "r"
+    k1_bid_btc: str = "k1_bid_btc"
+    k1_ask_btc: str = "k1_ask_btc"
+    k2_bid_btc: str = "k2_bid_btc"
+    k2_ask_btc: str = "k2_ask_btc"
+    net_ev_strategy1: str = "net_ev_strategy1"
+    gross_ev_strategy1: str = "gross_ev_strategy1"
+    total_cost_strategy1: str = "total_cost_strategy1"
+    open_cost_strategy1: str = "open_cost_strategy1"
+    holding_cost_strategy1: str = "holding_cost_strategy1"
+    close_cost_strategy1: str = "close_cost_strategy1"
+    contracts_strategy1: str = "contracts_strategy1"
+    im_usd_strategy1: str = "im_usd_strategy1"
+    im_btc_strategy1: str = "im_btc_strategy1"
+    net_ev_strategy2: str = "net_ev_strategy2"
+    gross_ev_strategy2: str = "gross_ev_strategy2"
+    total_cost_strategy2: str = "total_cost_strategy2"
+    open_cost_strategy2: str = "open_cost_strategy2"
+    holding_cost_strategy2: str = "holding_cost_strategy2"
+    close_cost_strategy2: str = "close_cost_strategy2"
+    contracts_strategy2: str = "contracts_strategy2"
+    im_usd_strategy2: str = "im_usd_strategy2"
+    im_btc_strategy2: str = "im_btc_strategy2"
+    best_ask_strategy1: str = "best_ask_strategy1"
+    best_bid_strategy1: str = "best_bid_strategy1"
+    mid_price_strategy1: str = "mid_price_strategy1"
+    spread_strategy1: str = "spread_strategy1"
+    best_ask_strategy2: str = "best_ask_strategy2"
+    best_bid_strategy2: str = "best_bid_strategy2"
+    mid_price_strategy2: str = "mid_price_strategy2"
+    spread_strategy2: str = "spread_strategy2"
+    slippage_rate_used: str = "slippage_rate_used"
+
+    def as_list(self) -> List[str]:
+        return [
+            self.timestamp,
+            self.market_title,
+            self.asset,
+            self.investment,
+            self.selected_strategy,
+            self.market_id,
+            self.pm_event_title,
+            self.pm_market_title,
+            self.pm_event_id,
+            self.pm_market_id,
+            self.yes_token_id,
+            self.no_token_id,
+            self.inst_k1,
+            self.inst_k2,
+            self.spot,
+            self.poly_yes_price,
+            self.poly_no_price,
+            self.deribit_prob,
+            self.K1,
+            self.K2,
+            self.K_poly,
+            self.T,
+            self.days_to_expiry,
+            self.sigma,
+            self.r,
+            self.k1_bid_btc,
+            self.k1_ask_btc,
+            self.k2_bid_btc,
+            self.k2_ask_btc,
+            self.net_ev_strategy1,
+            self.gross_ev_strategy1,
+            self.total_cost_strategy1,
+            self.open_cost_strategy1,
+            self.holding_cost_strategy1,
+            self.close_cost_strategy1,
+            self.contracts_strategy1,
+            self.im_usd_strategy1,
+            self.im_btc_strategy1,
+            self.net_ev_strategy2,
+            self.gross_ev_strategy2,
+            self.total_cost_strategy2,
+            self.open_cost_strategy2,
+            self.holding_cost_strategy2,
+            self.close_cost_strategy2,
+            self.contracts_strategy2,
+            self.im_usd_strategy2,
+            self.im_btc_strategy2,
+            self.best_ask_strategy1,
+            self.best_bid_strategy1,
+            self.mid_price_strategy1,
+            self.spread_strategy1,
+            self.best_ask_strategy2,
+            self.best_bid_strategy2,
+            self.mid_price_strategy2,
+            self.spread_strategy2,
+            self.slippage_rate_used,
+        ]
+
+
+RESULTS_CSV_HEADER = ResultsCsvHeader()
+
+
+def _normalize_header(header: Iterable[str] | ResultsCsvHeader | None) -> List[str]:
+    if header is None:
+        return []
+    if isinstance(header, ResultsCsvHeader):
+        return header.as_list()
+    return list(header)
 
 
 def _read_existing_header(path: Path) -> List[str]:
@@ -10,6 +144,37 @@ def _read_existing_header(path: Path) -> List[str]:
         reader = csv.reader(f)
         header = next(reader, [])
     return [h for h in header if h]
+
+
+def ensure_csv_file(
+    csv_path: str, header: Iterable[str] | ResultsCsvHeader | None = None
+) -> None:
+    """
+    Ensure the parent directory exists and the csv file is present.
+
+    If ``header`` is provided and the file did not exist, write that header.
+    Otherwise, just touch the file so downstream readers don't fail on missing
+    paths.
+    """
+
+    path = Path(csv_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    normalized_header: Sequence[str] = _normalize_header(header)
+
+    if path.exists():
+        if normalized_header and path.stat().st_size == 0:
+            with path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=list(normalized_header))
+                writer.writeheader()
+        return
+
+    if normalized_header:
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(normalized_header))
+            writer.writeheader()
+    else:
+        path.touch()
 
 
 def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> None:
