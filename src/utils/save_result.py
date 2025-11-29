@@ -130,6 +130,17 @@ class ResultsCsvHeader:
 
 RESULTS_CSV_HEADER = ResultsCsvHeader()
 
+POSITIONS_CSV_HEADER = [
+    "trade_id",
+    "market_id",
+    "direction",
+    "contracts",
+    "entry_price_pm",
+    "im_usd",
+    "entry_timestamp",
+    "status",
+]
+
 
 def _normalize_header(header: Iterable[str] | ResultsCsvHeader | None) -> List[str]:
     if header is None:
@@ -175,6 +186,23 @@ def ensure_csv_file(
             writer.writeheader()
     else:
         path.touch()
+
+
+def save_position_to_csv(row: Dict[str, Any], csv_path: str = "data/positions.csv") -> None:
+    """Append a single position row to ``positions.csv`` with a stable header.
+
+    The header order is defined by ``POSITIONS_CSV_HEADER`` to keep the file
+    consistent for downstream readers.
+    """
+
+    ensure_csv_file(csv_path, header=POSITIONS_CSV_HEADER)
+
+    # Restrict to the known header fields to avoid accidental schema drift.
+    filtered_row = {key: row.get(key) for key in POSITIONS_CSV_HEADER}
+
+    with Path(csv_path).open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(POSITIONS_CSV_HEADER))
+        writer.writerow(filtered_row)
 
 
 def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> None:

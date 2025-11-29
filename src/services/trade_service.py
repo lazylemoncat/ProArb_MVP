@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..telegram.singleton import get_worker
-from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file
+from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
 # trading executors (async)
 from ..trading.deribit_trade import DeribitUserCfg, execute_vertical_spread
@@ -272,8 +272,8 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         "contracts": contracts,
         "entry_price_pm": limit_price,
         "im_usd": result.im_usd,
-        "entry_timestamp": datetime.now().isoformat(),
-        "status": "OPEN"  # 初始状态为 "OPEN"
+        "entry_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "OPEN",
     }
 
     save_position_to_csv(position_data)
