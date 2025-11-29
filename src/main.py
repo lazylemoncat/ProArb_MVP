@@ -360,6 +360,38 @@ async def loop_event(
             prob_edge_pct = abs(prob_diff) / 100.0
             meets_opportunity_gate = prob_edge_pct >= prob_edge_min and net_ev >= net_ev_min
 
+            market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
+
+            # --- 正 EV 机会提醒（Alert Bot） ---
+            if net_ev > 0:
+                key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}:S{strategy}"
+                now = datetime.now(timezone.utc)
+                last = opp_state.get(key)
+
+                should_send = True
+                if last and cooldown_sec > 0:
+                    last_ts, last_ev = last
+                    if (now - last_ts).total_seconds() < cooldown_sec and net_ev <= (last_ev + 1.0):
+                        should_send = False
+
+                if should_send:
+                    tg_worker.publish({
+                        "type": "opportunity",
+                        "data": {
+                            "market_title": market_title,
+                            "net_ev": net_ev,
+                            "strategy": int(strategy),
+                            "prob_diff": prob_diff,
+                            "pm_price": pm_price,
+                            "deribit_price": deribit_price,
+                            "investment": inv_base_usd,
+                            "data_lag_seconds": data_lag_seconds,
+                            "ROI": roi_str,
+                            "timestamp": _iso_utc_now(),
+                        }
+                    })
+                    opp_state[key] = (now, net_ev)
+
             validation_errors = []
             if float(result.contracts) < min_contract_size:
                 validation_errors.append(
@@ -400,38 +432,6 @@ async def loop_event(
                 f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
                 f"IM={float(result.im_usd):.2f}"
             )
-
-            # --- 机会提醒（Bot1） --- 
-            if meets_opportunity_gate:
-                market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
-
-                key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}:S{strategy}"
-                now = datetime.now(timezone.utc)
-                last = opp_state.get(key)
-
-                should_send = True
-                if last and cooldown_sec > 0:
-                    last_ts, last_ev = last
-                    if (now - last_ts).total_seconds() < cooldown_sec and net_ev <= (last_ev + 1.0):
-                        should_send = False
-
-                if should_send:
-                    tg_worker.publish({
-                        "type": "opportunity",
-                        "data": {
-                            "market_title": market_title,
-                            "net_ev": net_ev,
-                            "strategy": int(strategy),
-                            "prob_diff": prob_diff,
-                            "pm_price": pm_price,
-                            "deribit_price": deribit_price,
-                            "investment": inv_base_usd,
-                            "data_lag_seconds": data_lag_seconds,
-                            "ROI": roi_str,
-                            "timestamp": _iso_utc_now(),
-                        }
-                    })
-                    opp_state[key] = (now, net_ev)
 
             # 写入本次检测结果
             csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
