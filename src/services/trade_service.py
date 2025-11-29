@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..telegram.singleton import get_worker
+from ..utils.save_result import ensure_csv_file
 
 # trading executors (async)
 from ..trading.deribit_trade import DeribitUserCfg, execute_vertical_spread
@@ -57,14 +58,9 @@ def _compute_api_market_id(row: Dict[str, Any]) -> str:
 
 
 def _read_csv_rows(csv_path: str) -> list[Dict[str, Any]]:
+    ensure_csv_file(csv_path)
+
     path = Path(csv_path)
-    if not path.exists():
-        raise TradeApiError(
-            error_code="MISSING_DATA",
-            message=f"Results CSV not found at {csv_path}",
-            details={"csv_path": csv_path},
-            status_code=503,
-        )
     with path.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)

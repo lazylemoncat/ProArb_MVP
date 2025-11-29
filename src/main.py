@@ -22,7 +22,7 @@ from .utils.market_context import (
     build_polymarket_state,
     make_summary_table,
 )
-from .utils.save_result import save_result_csv
+from .utils.save_result import ensure_csv_file, save_result_csv
 
 app = FastAPI()
 
@@ -304,6 +304,9 @@ async def loop_event(
 
     start_ts = datetime.now(timezone.utc)
 
+    # 确保数据目录/CSV 文件存在
+    ensure_csv_file(output_csv)
+
     # --- Deribit --- 
     try:
         deribit_ctx: DeribitMarketContext = build_deribit_context(data, instruments_map)
@@ -424,6 +427,10 @@ async def loop_event(
                         }
                     })
                     opp_state[key] = (now, net_ev)
+
+            # 写入本次检测结果
+            csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
+            save_result_csv(csv_row, csv_path=output_csv)
 
             tg_worker.publish(
                 {
