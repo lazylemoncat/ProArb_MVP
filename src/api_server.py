@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
@@ -50,6 +52,16 @@ def _get_csv_path() -> str:
     cfg = _get_config()
     thresholds = cfg.get("thresholds") or {}
     return thresholds.get("OUTPUT_CSV", "data/results.csv")
+
+
+def _position_csv_path() -> str:
+    return "position.csv"
+
+
+def _should_force_dry_trade() -> bool:
+    cfg = _get_config()
+    thresholds = cfg.get("thresholds") or {}
+    return bool(thresholds.get("dry_trade", False))
 
 
 async def _background_loop() -> None:
@@ -158,13 +170,24 @@ async def api_trade_sim(payload: TradeSimRequest) -> TradeSimResponse:
 
 router = APIRouter()
 
-def save_position_to_csv(data: dict, file_path: str = 'positions.csv'):
+
+def save_position_to_csv(data: dict, file_path: Optional[str] = None):
     """保存头寸信息到 CSV 文件"""
+    file_path = file_path or _position_csv_path()
     file_exists = os.path.isfile(file_path)
-    
+
     # 打开文件并写入头寸数据
     with open(file_path, mode='a', newline='', encoding='utf-8') as file:
-        fieldnames = ["trade_id", "market_id", "direction", "contracts", "entry_price_pm", "im_usd", "entry_timestamp", "status"]
+        fieldnames = [
+            "trade_id",
+            "market_id",
+            "direction",
+            "contracts",
+            "total_cost_usd",
+            "im_usd",
+            "entry_timestamp",
+            "status",
+        ]
         writer = csv.DictWriter(file, fieldnames=fieldnames)
 
         # 如果是文件首次写入，则写入表头
@@ -176,26 +199,29 @@ def save_position_to_csv(data: dict, file_path: str = 'positions.csv'):
 @router.post("/api/trade/execute")
 async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteResponse:
     csv_path = _get_csv_path()
+    dry_run = True if _should_force_dry_trade() else payload.dry_run
+
     result, status, tx_id, message = await execute_trade(
         csv_path=csv_path,
         market_id=payload.market_id,
         investment_usd=payload.investment_usd,
-        dry_run=payload.dry_run,
+        dry_run=dry_run,
     )
 
     # 保存头寸信息到 CSV
+    result_data = result.model_dump()
     position_data = {
         "trade_id": tx_id,
         "market_id": payload.market_id,
-        "direction": result["direction"],
-        "contracts": result["contracts"],
-        "entry_price_pm": result["entry_price_pm"],
-        "im_usd": result["im_usd"],
+        "direction": result_data.get("direction"),
+        "contracts": result_data.get("contracts"),
+        "total_cost_usd": result_data.get("total_cost_usd"),
+        "im_usd": result_data.get("im_usd"),
         "entry_timestamp": datetime.now().isoformat(),
-        "status": "OPEN"  # 初始状态为 "OPEN"
+        "status": status,
     }
 
-    save_position_to_csv(position_data)
+    save_position_to_csv(position_data, file_path=_position_csv_path())
 
     return TradeExecuteResponse(
         timestamp=int(time.time()),
@@ -209,7 +235,7 @@ async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteRespons
 
 @app.get("/api/trade/positions")
 async def get_positions():
-    positions_file = 'positions.csv'
+    positions_file = _position_csv_path()
 
     if not os.path.exists(positions_file):
         return {"positions": [], "summary": {"open_positions": 0, "total_margin_usd": 0, "unrealized_pnl_usd": 0}}
@@ -225,21 +251,22 @@ async def get_positions():
         for row in reader:
             # 假设 CSV 中的每一行包含必要的数据
             position = {
-                "trade_id": row["trade_id"],
-                "market_id": row["market_id"],
-                "direction": row["direction"],
-                "contracts": float(row["contracts"]),
-                "entry_price_pm": float(row["entry_price_pm"]),
-                "entry_timestamp": row["entry_timestamp"],
-                "im_usd": float(row["im_usd"]),
-                "status": row["status"],
+                "trade_id": row.get("trade_id"),
+                "market_id": row.get("market_id"),
+                "direction": row.get("direction"),
+                "contracts": float(row.get("contracts", 0) or 0),
+                "total_cost_usd": float(row.get("total_cost_usd", 0) or 0),
+                "entry_timestamp": row.get("entry_timestamp"),
+                "im_usd": float(row.get("im_usd", 0) or 0),
+                "status": row.get("status"),
                 "current_price_pm": 0.497,  # 假设当前价格（可以根据需求从外部 API 获取）
-                "unrealized_pnl_usd": float(row["im_usd"]) * 0.497 - float(row["entry_price_pm"]) * float(row["contracts"]),  # 简单计算未实现盈亏
-                "current_ev_usd": float(row["im_usd"]) * 0.497,  # 假设 EV 基于当前价格
+                "unrealized_pnl_usd": float(row.get("im_usd", 0) or 0) * 0.497 - float(row.get("total_cost_usd", 0) or 0),  # 简单计算未实现盈亏
+                "current_ev_usd": float(row.get("im_usd", 0) or 0) * 0.497,  # 假设 EV 基于当前价格
             }
 
             positions.append(position)
-            if row["status"] == "OPEN":
+            status = (row.get("status") or "").upper()
+            if status in ("OPEN", "DRY_RUN", "EXECUTED"):
                 open_positions_count += 1
                 total_margin += position["im_usd"]
                 total_unrealized_pnl += position["unrealized_pnl_usd"]

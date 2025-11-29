@@ -36,6 +36,7 @@ class TradeData(BaseModel):
     open_cost: float
     margin_usd: float
     net_ev: float
+    note: Optional[str] = None
     timestamp: str
 
 

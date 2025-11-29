@@ -295,6 +295,11 @@ async def loop_event(
     prob_edge_min = float(thresholds.get("ev_spread_min", 0.0))
     net_ev_min = float(thresholds.get("notify_net_ev_min", 0.0))  # 可选：不配就默认 0
     cooldown_sec = float(thresholds.get("telegram_opportunity_cooldown_sec", 300))  # 可选：默认 5 分钟
+    min_contract_size = float(thresholds.get("min_contract_size", 0.0))
+    min_pm_price = float(thresholds.get("min_pm_price", 0.0))
+    max_pm_price = float(thresholds.get("max_pm_price", 1.0))
+    min_net_ev_accept = float(thresholds.get("min_net_ev", float("-inf")))
+    min_roi_pct = float(thresholds.get("min_roi_pct", float("-inf")))
 
     start_ts = datetime.now(timezone.utc)
 
@@ -342,6 +347,68 @@ async def loop_event(
             denom = inv_base_usd + float(result.im_usd or 0.0)
             roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
             roi_str = f"{roi_pct:.2f}%"
+
+            validation_errors = []
+            if float(result.contracts) < min_contract_size:
+                validation_errors.append(
+                    f"合约数 {float(result.contracts):.4f} 小于最小合约单位 {min_contract_size}"
+                )
+            if pm_price < min_pm_price:
+                validation_errors.append(
+                    f"PM 价格 {pm_price:.4f} 低于最小阈值 {min_pm_price}"
+                )
+            if pm_price > max_pm_price:
+                validation_errors.append(
+                    f"PM 价格 {pm_price:.4f} 高于最大阈值 {max_pm_price}"
+                )
+            if net_ev < min_net_ev_accept:
+                validation_errors.append(
+                    f"净EV ${net_ev:.2f} 低于最小阈值 ${min_net_ev_accept:.2f}"
+                )
+            if roi_pct < min_roi_pct:
+                validation_errors.append(
+                    f"ROI {roi_pct:.2f}% 低于最小阈值 {min_roi_pct:.2f}%"
+                )
+
+            csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
+            csv_row.update(
+                {
+                    "roi_pct": roi_pct,
+                    "net_ev_selected": net_ev,
+                    "prob_diff_pct": prob_diff,
+                    "pm_price_selected": pm_price,
+                    "validation_errors": "；".join(validation_errors),
+                }
+            )
+            save_result_csv(csv_row, csv_path=output_csv)
+
+            if validation_errors:
+                tg_worker.publish(
+                    {
+                        "type": "trade",
+                        "data": {
+                            "action": "开仓",
+                            "strategy": int(strategy),
+                            "market_title": _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly),
+                            "pm_side": "买入",
+                            "pm_token": "YES" if strategy == 1 else "NO",
+                            "pm_price": pm_price,
+                            "pm_amount_usd": inv_base_usd,
+                            "deribit_action": "卖出牛差" if strategy == 1 else "买入牛差",
+                            "deribit_k1": float(deribit_ctx.k1_strike),
+                            "deribit_k2": float(deribit_ctx.k2_strike),
+                            "deribit_contracts": float(result.contracts),
+                            "fees_total": float(result.total_costs_yes if strategy == 1 else result.total_costs_no),
+                            "slippage_usd": 0.0,
+                            "open_cost": float(result.open_cost_yes if strategy == 1 else result.open_cost_no),
+                            "margin_usd": float(result.im_usd),
+                            "net_ev": net_ev,
+                            "note": "；".join(validation_errors),
+                            "timestamp": _iso_utc_now(),
+                        },
+                    }
+                )
+                continue
 
             # 控制台输出
             console.print(
