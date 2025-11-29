@@ -12,6 +12,7 @@ from rich.panel import Panel
 
 from .fetch_data.polymarket_client import PolymarketClient
 from .strategy.investment_runner import InvestmentResult, evaluate_investment
+from .services.trade_service import TradeApiError, execute_trade
 from .telegram.singleton import get_worker
 from .utils.dataloader import load_all_configs
 from .utils.init_markets import init_markets
@@ -25,7 +26,6 @@ from .utils.market_context import (
 from .utils.save_result import (
     RESULTS_CSV_HEADER,
     ensure_csv_file,
-    save_position_to_csv,
     save_result_csv,
 )
 
@@ -437,49 +437,25 @@ async def loop_event(
             csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
             save_result_csv(csv_row, csv_path=output_csv)
 
-            tg_worker.publish(
-                {
-                    "type": "trade",
-                    "data": {
-                        "action": "开仓",
-                        "strategy": int(strategy),
-                        "market_title": _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly),
-                        "simulate": dry_trade_mode,
-                        "pm_side": "买入",
-                        "pm_token": "YES" if strategy == 1 else "NO",
-                        "pm_price": pm_price,
-                        "pm_amount_usd": inv_base_usd,
-                        "deribit_action": "卖出牛差" if strategy == 1 else "买入牛差",
-                        "deribit_k1": float(deribit_ctx.k1_strike),
-                        "deribit_k2": float(deribit_ctx.k2_strike),
-                        "deribit_contracts": float(result.contracts),
-                        "fees_total": float(result.total_costs_yes if strategy == 1 else result.total_costs_no),
-                        "slippage_usd": 0.0,
-                        "open_cost": float(result.open_cost_yes if strategy == 1 else result.open_cost_no),
-                        "margin_usd": float(result.im_usd),
-                        "net_ev": net_ev,
-                        "note": "",
-                        "timestamp": _iso_utc_now(),
-                    },
-                }
-            )
+            market_id = f"{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}"
 
-            trade_id = (
-                f"auto-{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}-s{int(strategy)}-"
-                f"{int(datetime.now(timezone.utc).timestamp())}"
-            )
-            save_position_to_csv(
-                {
-                    "trade_id": trade_id,
-                    "market_id": f"{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}",
-                    "direction": "yes" if strategy == 1 else "no",
-                    "contracts": float(result.contracts),
-                    "entry_price_pm": pm_price,
-                    "im_usd": float(result.im_usd),
-                    "entry_timestamp": _iso_utc_now(),
-                    "status": "OPEN",
-                }
-            )
+            try:
+                trade_result, status, tx_id, message = await execute_trade(
+                    csv_path=output_csv,
+                    market_id=market_id,
+                    investment_usd=inv_base_usd,
+                    dry_run=dry_trade_mode,
+                )
+                console.print(
+                    f"✅ 自动交易{ ' (dry-run)' if dry_trade_mode else ''} 成功: status={status}, tx_id={tx_id}, "
+                    f"direction={trade_result.direction}, contracts={trade_result.contracts:.4f}, net_ev=${trade_result.net_profit_usd:.2f}"
+                )
+            except TradeApiError as exc:
+                health.error("交易执行", exc.message)
+                console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}")
+            except Exception as exc:
+                health.error("交易执行", str(exc))
+                console.print(f"❌ 交易执行异常 ({market_id}, 投资={inv_base_usd}): {exc}")
 
         except Exception as exc:
             health.error("投资引擎", f"{_fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)} | {exc}")
