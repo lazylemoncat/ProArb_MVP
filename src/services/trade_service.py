@@ -305,6 +305,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                 "action": "开仓",
                 "strategy": int(strategy),
                 "market_title": market_title,
+                "simulate": bool(dry_run),
                 "pm_side": "买入",
                 "pm_token": "YES" if strategy == 1 else "NO",
                 "pm_price": float(limit_price),          # 注意：这里用 limit_price 近似成交均价

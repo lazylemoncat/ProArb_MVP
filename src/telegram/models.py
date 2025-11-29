@@ -23,6 +23,7 @@ class TradeData(BaseModel):
     action: Literal["开仓", "平仓"]
     strategy: Literal[1, 2]
     market_title: str
+    simulate: bool = False
     pm_side: Literal["买入", "卖出"]
     pm_token: Literal["YES", "NO"]
     pm_price: float
