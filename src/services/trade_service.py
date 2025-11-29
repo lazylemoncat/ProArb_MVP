@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..telegram.singleton import get_worker
-from ..utils.save_result import ensure_csv_file
+from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
 # trading executors (async)
 from ..trading.deribit_trade import DeribitUserCfg, execute_vertical_spread
@@ -58,7 +58,7 @@ def _compute_api_market_id(row: Dict[str, Any]) -> str:
 
 
 def _read_csv_rows(csv_path: str) -> list[Dict[str, Any]]:
-    ensure_csv_file(csv_path)
+    ensure_csv_file(csv_path, header=RESULTS_CSV_HEADER)
 
     path = Path(csv_path)
     with path.open("r", newline="", encoding="utf-8") as f:
@@ -272,8 +272,8 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         "contracts": contracts,
         "entry_price_pm": limit_price,
         "im_usd": result.im_usd,
-        "entry_timestamp": datetime.now().isoformat(),
-        "status": "OPEN"  # 初始状态为 "OPEN"
+        "entry_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "OPEN",
     }
 
     save_position_to_csv(position_data)

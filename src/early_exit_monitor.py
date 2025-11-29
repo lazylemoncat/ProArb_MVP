@@ -11,7 +11,7 @@ from fetch_data.polymarket_client import (
     get_polymarket_slippage,
     PolymarketClient,
 )
-from utils.save_result import ensure_csv_file
+from utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file
 
 
 # ==================== 配置：路径 & 策略参数 ====================
@@ -161,7 +161,7 @@ def load_positions_from_csv(path: str) -> List[CsvPosition]:
     """
     positions: List[CsvPosition] = []
 
-    ensure_csv_file(path)
+    ensure_csv_file(path, header=RESULTS_CSV_HEADER)
 
     if os.path.getsize(path) == 0:
         print(f"[early_exit_monitor] 输入 CSV 不存在或为空: {path}")

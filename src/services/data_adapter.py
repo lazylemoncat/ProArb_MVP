@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..utils.save_result import ensure_csv_file
+from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file
 from .api_models import (
     DataFreshness,
     DBSnapshotResponse,
@@ -81,7 +81,7 @@ def _safe_int(v: Any) -> Optional[int]:
 # ==========================
 
 def _read_csv_rows(csv_path: str) -> List[Dict[str, Any]]:
-    ensure_csv_file(csv_path)
+    ensure_csv_file(csv_path, header=RESULTS_CSV_HEADER)
 
     path = Path(csv_path)
 

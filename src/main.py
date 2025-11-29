@@ -22,7 +22,7 @@ from .utils.market_context import (
     build_polymarket_state,
     make_summary_table,
 )
-from .utils.save_result import ensure_csv_file, save_result_csv
+from .utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_result_csv
 
 app = FastAPI()
 
@@ -305,7 +305,7 @@ async def loop_event(
     start_ts = datetime.now(timezone.utc)
 
     # 确保数据目录/CSV 文件存在
-    ensure_csv_file(output_csv)
+    ensure_csv_file(output_csv, header=RESULTS_CSV_HEADER)
 
     # --- Deribit --- 
     try:
