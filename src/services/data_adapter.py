@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..utils.save_result import ensure_csv_file
 from .api_models import (
     DataFreshness,
     DBSnapshotResponse,
@@ -80,9 +81,9 @@ def _safe_int(v: Any) -> Optional[int]:
 # ==========================
 
 def _read_csv_rows(csv_path: str) -> List[Dict[str, Any]]:
+    ensure_csv_file(csv_path)
+
     path = Path(csv_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Results CSV not found: {csv_path}")
 
     with path.open("r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)

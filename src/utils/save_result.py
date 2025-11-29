@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List
 
 
 def _read_existing_header(path: Path) -> List[str]:
@@ -10,6 +10,29 @@ def _read_existing_header(path: Path) -> List[str]:
         reader = csv.reader(f)
         header = next(reader, [])
     return [h for h in header if h]
+
+
+def ensure_csv_file(csv_path: str, header: Iterable[str] | None = None) -> None:
+    """
+    Ensure the parent directory exists and the csv file is present.
+
+    If ``header`` is provided and the file did not exist, write that header.
+    Otherwise, just touch the file so downstream readers don't fail on missing
+    paths.
+    """
+
+    path = Path(csv_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists():
+        return
+
+    if header:
+        with path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(header))
+            writer.writeheader()
+    else:
+        path.touch()
 
 
 def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> None:
