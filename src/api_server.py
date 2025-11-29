@@ -6,7 +6,7 @@ import os
 import time
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from .utils.dataloader import load_all_configs
@@ -25,7 +25,7 @@ from .services.data_adapter import CACHE, load_db_snapshot, load_pm_snapshot, re
 from .services.trade_service import TradeApiError, execute_trade, simulate_trade
 
 app = FastAPI(title="arb-engine")
-
+router = APIRouter()
 # 环境变量允许在服务器上灵活配置
 CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
 REFRESH_SECONDS = float(os.getenv("EV_REFRESH_SECONDS", "10"))
@@ -156,7 +156,24 @@ async def api_trade_sim(payload: TradeSimRequest) -> TradeSimResponse:
     )
 
 
-@app.post("/api/trade/execute", response_model=TradeExecuteResponse)
+router = APIRouter()
+
+def save_position_to_csv(data: dict, file_path: str = 'positions.csv'):
+    """保存头寸信息到 CSV 文件"""
+    file_exists = os.path.isfile(file_path)
+    
+    # 打开文件并写入头寸数据
+    with open(file_path, mode='a', newline='', encoding='utf-8') as file:
+        fieldnames = ["trade_id", "market_id", "direction", "contracts", "entry_price_pm", "im_usd", "entry_timestamp", "status"]
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+
+        # 如果是文件首次写入，则写入表头
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow(data)
+
+@router.post("/api/trade/execute")
 async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteResponse:
     csv_path = _get_csv_path()
     result, status, tx_id, message = await execute_trade(
@@ -165,6 +182,21 @@ async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteRespons
         investment_usd=payload.investment_usd,
         dry_run=payload.dry_run,
     )
+
+    # 保存头寸信息到 CSV
+    position_data = {
+        "trade_id": tx_id,
+        "market_id": payload.market_id,
+        "direction": result["direction"],
+        "contracts": result["contracts"],
+        "entry_price_pm": result["entry_price_pm"],
+        "im_usd": result["im_usd"],
+        "entry_timestamp": datetime.now().isoformat(),
+        "status": "OPEN"  # 初始状态为 "OPEN"
+    }
+
+    save_position_to_csv(position_data)
+
     return TradeExecuteResponse(
         timestamp=int(time.time()),
         market_id=payload.market_id,
@@ -174,3 +206,48 @@ async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteRespons
         tx_id=tx_id,
         message=message,
     )
+
+@app.get("/api/trade/positions")
+async def get_positions():
+    positions_file = 'positions.csv'
+
+    if not os.path.exists(positions_file):
+        return {"positions": [], "summary": {"open_positions": 0, "total_margin_usd": 0, "unrealized_pnl_usd": 0}}
+
+    positions = []
+    total_margin = 0
+    total_unrealized_pnl = 0
+    open_positions_count = 0
+
+    # 读取 CSV 文件中的数据
+    with open(positions_file, mode='r', encoding='utf-8') as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            # 假设 CSV 中的每一行包含必要的数据
+            position = {
+                "trade_id": row["trade_id"],
+                "market_id": row["market_id"],
+                "direction": row["direction"],
+                "contracts": float(row["contracts"]),
+                "entry_price_pm": float(row["entry_price_pm"]),
+                "entry_timestamp": row["entry_timestamp"],
+                "im_usd": float(row["im_usd"]),
+                "status": row["status"],
+                "current_price_pm": 0.497,  # 假设当前价格（可以根据需求从外部 API 获取）
+                "unrealized_pnl_usd": float(row["im_usd"]) * 0.497 - float(row["entry_price_pm"]) * float(row["contracts"]),  # 简单计算未实现盈亏
+                "current_ev_usd": float(row["im_usd"]) * 0.497,  # 假设 EV 基于当前价格
+            }
+
+            positions.append(position)
+            if row["status"] == "OPEN":
+                open_positions_count += 1
+                total_margin += position["im_usd"]
+                total_unrealized_pnl += position["unrealized_pnl_usd"]
+
+    summary = {
+        "open_positions": open_positions_count,
+        "total_margin_usd": total_margin,
+        "unrealized_pnl_usd": total_unrealized_pnl
+    }
+
+    return {"timestamp": int(time.time()), "positions": positions, "summary": summary}

@@ -267,6 +267,21 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     tx_id = f"pm:{pm_order_id or 'unknown'};db:{(db_order_ids[0] if db_order_ids else 'unknown')},{(db_order_ids[1] if len(db_order_ids)>1 else 'unknown')}"
 
     msg = f"Executed strategy={strategy} direction={result.direction} pm_limit={limit_price:.6f} contracts={contracts:.6f}"
+
+    # 保存头寸信息到 CSV
+    position_data = {
+        "trade_id": tx_id,
+        "market_id": market_id,
+        "direction": result.direction,
+        "contracts": contracts,
+        "entry_price_pm": limit_price,
+        "im_usd": result.im_usd,
+        "entry_timestamp": datetime.now().isoformat(),
+        "status": "OPEN"  # 初始状态为 "OPEN"
+    }
+
+    save_position_to_csv(position_data)
+
     # --- Telegram: trade log (Bot2) ---
     try:
         tg = get_worker()
@@ -309,4 +324,5 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     except Exception:
         # 发送失败不影响交易流程
         pass
+
     return result, "EXECUTED", tx_id, msg
