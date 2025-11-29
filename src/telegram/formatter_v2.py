@@ -67,7 +67,7 @@ def format_message(msg: TelegramMessage) -> str:
             f"手续费: ${_fmt_money(d.fees_total)} | 滑点: ${_fmt_money(d.slippage_usd)}\n"
             f"开仓成本: ${_fmt_money(d.open_cost)} | 保证金: ${_fmt_money(d.margin_usd)}\n"
             f"预期净收益: ${_fmt_money(d.net_ev)}\n"
-            + (f"备注: {d.note}\n" if d.note else "")
+            f"备注: {d.note}\n" if d.note else ""
             f"⏰ {_fmt_ts_iso_to_utc(d.timestamp)}"
         )
 
