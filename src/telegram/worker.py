@@ -13,7 +13,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .config import TelegramSettings
 from .formatter_v2 import format_message
-from .models import TelegramMessage
+from .models import OpportunityMessage, TradeMessage, TelegramMessage
 from .notifier import TelegramBotClient
 from .rate_limiter import AsyncRateLimiter
 
@@ -150,8 +150,12 @@ class TelegramWorker:
         if not self.settings.enabled or self._loop is None or self._queue is None:
             return
 
-        # 只在正 EV 时发送 Alert Bot 消息
-        if not self._should_send_opportunity_alert(message):
+        msg_type = message.get("type")
+
+        if msg_type == "opportunity":
+            if not self._should_send_opportunity_alert(message):
+                return
+        elif msg_type != "trade":
             return
 
         try:
@@ -206,10 +210,6 @@ class TelegramWorker:
                 self._deadletter(raw, f"json_parse_error:{exc}")
                 continue
 
-            # 判断是否需要丢弃消息（只有正 EV 的消息会被发送）
-            if not self._should_send_opportunity_alert(obj):
-                continue
-
             try:
                 msg = _TELEGRAM_MESSAGE_ADAPTER.validate_python(obj)
             except ValidationError as exc:
@@ -217,7 +217,14 @@ class TelegramWorker:
                 continue
 
             text = format_message(msg)
-            bot = self._bots.alert
+            bot = None
+            if isinstance(msg, OpportunityMessage):
+                if not self._should_send_opportunity_alert(obj):
+                    continue
+                bot = self._bots.alert
+            elif isinstance(msg, TradeMessage):
+                bot = self._bots.trading
+
             if bot:
                 await self._send_with_retry(bot, text)
-                logger.info("telegram sent opportunity message")
+                logger.info("telegram sent %s message", obj.get("type"))
