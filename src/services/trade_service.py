@@ -193,18 +193,6 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     row = _pick_row_for_market_and_investment(rows, market_id, investment_usd)
     result = build_trade_result_from_row(row)
 
-    if dry_run:
-        return result, "DRY_RUN", f"dryrun-{int(time.time())}", "Trade executed in dry-run mode"
-
-    # 安全阀：默认禁止真实交易
-    if os.getenv("ENABLE_LIVE_TRADING", "false").lower() not in ("1", "true", "yes", "on"):
-        raise TradeApiError(
-            error_code="EXECUTION_DISABLED",
-            message="Real execution is disabled. Set ENABLE_LIVE_TRADING=true to enable.",
-            details={"market_id": market_id, "investment_usd": investment_usd, "dry_run": dry_run},
-            status_code=501,
-        )
-
     strategy = _choose_strategy(row)
 
     # 需要 CSV 中包含用于下单的 token/instrument 字段
@@ -221,16 +209,6 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     slippage = float(result.slippage_pct)
     limit_price = _clamp(best_ask * (1.0 + slippage), 0.001, 0.999)
 
-    try:
-        pm_resp, pm_order_id = place_buy_by_investment(token_id=token_id, investment_usd=investment_usd, limit_price=limit_price)
-    except Exception as exc:
-        raise TradeApiError(
-            error_code="EXECUTION_FAILED",
-            message=f"Polymarket order failed: {exc}",
-            details={"stage": "polymarket", "market_id": market_id, "investment_usd": investment_usd, "token_id": token_id},
-            status_code=502,
-        )
-
     # ----- Deribit spread -----
     inst_k1 = str(row["inst_k1"])
     inst_k2 = str(row["inst_k2"])
@@ -243,28 +221,54 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             status_code=503,
         )
 
-    try:
-        deribit_cfg = DeribitUserCfg.from_env(prefix=os.getenv("DERIBIT_ENV_PREFIX", ""))
-        db_resps, db_order_ids = await execute_vertical_spread(
-            deribit_cfg,
-            contracts=contracts,
-            inst_k1=inst_k1,
-            inst_k2=inst_k2,
-            strategy=strategy,
-        )
-    except Exception as exc:
-        raise TradeApiError(
-            error_code="EXECUTION_FAILED",
-            message=f"Deribit execution failed: {exc}",
-            details={"stage": "deribit", "market_id": market_id, "investment_usd": investment_usd, "inst_k1": inst_k1, "inst_k2": inst_k2},
-            status_code=502,
-        )
+    if dry_run:
+        status = "DRY_RUN"
+        tx_id = f"dryrun-{int(time.time())}"
+        msg = "Trade executed in dry-run mode"
+    else:
+        # 安全阀：默认禁止真实交易
+        if os.getenv("ENABLE_LIVE_TRADING", "false").lower() not in ("1", "true", "yes", "on"):
+            raise TradeApiError(
+                error_code="EXECUTION_DISABLED",
+                message="Real execution is disabled. Set ENABLE_LIVE_TRADING=true to enable.",
+                details={"market_id": market_id, "investment_usd": investment_usd, "dry_run": dry_run},
+                status_code=501,
+            )
 
-    tx_id = f"pm:{pm_order_id or 'unknown'};db:{(db_order_ids[0] if db_order_ids else 'unknown')},{(db_order_ids[1] if len(db_order_ids)>1 else 'unknown')}"
+        try:
+            pm_resp, pm_order_id = place_buy_by_investment(token_id=token_id, investment_usd=investment_usd, limit_price=limit_price)
+        except Exception as exc:
+            raise TradeApiError(
+                error_code="EXECUTION_FAILED",
+                message=f"Polymarket order failed: {exc}",
+                details={"stage": "polymarket", "market_id": market_id, "investment_usd": investment_usd, "token_id": token_id},
+                status_code=502,
+            )
 
-    msg = f"Executed strategy={strategy} direction={result.direction} pm_limit={limit_price:.6f} contracts={contracts:.6f}"
+        try:
+            deribit_cfg = DeribitUserCfg.from_env(prefix=os.getenv("DERIBIT_ENV_PREFIX", ""))
+            db_resps, db_order_ids = await execute_vertical_spread(
+                deribit_cfg,
+                contracts=contracts,
+                inst_k1=inst_k1,
+                inst_k2=inst_k2,
+                strategy=strategy,
+            )
+        except Exception as exc:
+            raise TradeApiError(
+                error_code="EXECUTION_FAILED",
+                message=f"Deribit execution failed: {exc}",
+                details={"stage": "deribit", "market_id": market_id, "investment_usd": investment_usd, "inst_k1": inst_k1, "inst_k2": inst_k2},
+                status_code=502,
+            )
+
+        tx_id = f"pm:{pm_order_id or 'unknown'};db:{(db_order_ids[0] if db_order_ids else 'unknown')},{(db_order_ids[1] if len(db_order_ids)>1 else 'unknown')}"
+
+        msg = f"Executed strategy={strategy} direction={result.direction} pm_limit={limit_price:.6f} contracts={contracts:.6f}"
+        status = "EXECUTED"
 
     # 保存头寸信息到 CSV
+    position_status = "DRY_RUN" if dry_run else "OPEN"
     position_data = {
         "trade_id": tx_id,
         "market_id": market_id,
@@ -273,7 +277,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         "entry_price_pm": limit_price,
         "im_usd": result.im_usd,
         "entry_timestamp": datetime.now(timezone.utc).isoformat(),
-        "status": "OPEN",
+        "status": position_status,
     }
 
     save_position_to_csv(position_data)
@@ -322,4 +326,4 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         # 发送失败不影响交易流程
         pass
 
-    return result, "EXECUTED", tx_id, msg
+    return result, status, tx_id, msg
