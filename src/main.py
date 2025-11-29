@@ -22,7 +22,12 @@ from .utils.market_context import (
     build_polymarket_state,
     make_summary_table,
 )
-from .utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_result_csv
+from .utils.save_result import (
+    RESULTS_CSV_HEADER,
+    ensure_csv_file,
+    save_position_to_csv,
+    save_result_csv,
+)
 
 app = FastAPI()
 
@@ -456,6 +461,23 @@ async def loop_event(
                         "note": "",
                         "timestamp": _iso_utc_now(),
                     },
+                }
+            )
+
+            trade_id = (
+                f"auto-{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}-s{int(strategy)}-"
+                f"{int(datetime.now(timezone.utc).timestamp())}"
+            )
+            save_position_to_csv(
+                {
+                    "trade_id": trade_id,
+                    "market_id": f"{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}",
+                    "direction": "yes" if strategy == 1 else "no",
+                    "contracts": float(result.contracts),
+                    "entry_price_pm": pm_price,
+                    "im_usd": float(result.im_usd),
+                    "entry_timestamp": _iso_utc_now(),
+                    "status": "OPEN",
                 }
             )
 
