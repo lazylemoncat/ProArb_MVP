@@ -503,20 +503,19 @@ async def loop_event(
                 )
                 continue
 
-            if not should_record_signal:
-                console.print(
-                    "⏸️ [dim]信号未满足记录条件（时间/EV变化/状态/市场阈值），跳过记录与推送。[/dim]"
+            if should_record_signal:
+                signal_state[signal_key] = SignalSnapshot(
+                    recorded_at=datetime.now(timezone.utc),
+                    net_ev=net_ev,
+                    roi_pct=roi_pct,
+                    pm_price=pm_price,
+                    deribit_price=deribit_price,
+                    strategy=int(strategy),
                 )
-                continue
-
-            signal_state[signal_key] = SignalSnapshot(
-                recorded_at=datetime.now(timezone.utc),
-                net_ev=net_ev,
-                roi_pct=roi_pct,
-                pm_price=pm_price,
-                deribit_price=deribit_price,
-                strategy=int(strategy),
-            )
+            else:
+                console.print(
+                    "⏸️ [dim]信号未满足记录条件（时间/EV变化/状态/市场阈值），本次仅跳过信号记录。[/dim]"
+                )
 
             # 控制台输出
             console.print(
