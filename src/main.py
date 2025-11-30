@@ -1,7 +1,7 @@
 import asyncio
 import os
 import re
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List
 
@@ -46,6 +46,16 @@ def _fmt_market_title(asset: str, k_poly: float) -> str:
         return f"{asset.upper()} > {k_poly}"
 
 
+@dataclass
+class SignalSnapshot:
+    recorded_at: datetime
+    net_ev: float
+    roi_pct: float
+    pm_price: float
+    deribit_price: float
+    strategy: int
+
+
 class _ComponentHealth:
     """只在 down->up/up->down 变化时发 error/recovery，避免刷屏。"""
     def __init__(self, tg_worker):
@@ -80,6 +90,59 @@ class _ComponentHealth:
                 "timestamp": _iso_utc_now(),
             }
         })
+
+
+def _should_record_signal(
+    previous: SignalSnapshot | None,
+    *,
+    net_ev: float,
+    roi_pct: float,
+    pm_price: float,
+    deribit_price: float,
+    strategy: int,
+    investment: float,
+    expiration_timestamp_ms: float,
+) -> bool:
+    """根据多维度条件判断是否需要记录/推送信号。"""
+
+    now = datetime.now(timezone.utc)
+    seconds_to_expiry = expiration_timestamp_ms / 1000.0 - now.timestamp()
+
+    # 时间窗口：默认 3 分钟，距离到期 < 24 小时则缩短为 1 分钟
+    time_window_seconds = 60 if seconds_to_expiry < 24 * 3600 else 180
+
+    if previous is None:
+        return True
+
+    time_condition = (now - previous.recorded_at).total_seconds() >= time_window_seconds
+
+    ev_change_condition = (
+        abs(roi_pct - previous.roi_pct) >= 3.0
+        and abs(net_ev - previous.net_ev) >= investment * 0.015
+    )
+
+    sign_change_condition = (
+        (previous.net_ev < 0 <= net_ev)
+        or (previous.net_ev > 0 >= net_ev)
+        or (strategy != previous.strategy)
+    )
+
+    pm_base = previous.pm_price if previous.pm_price != 0 else 1e-8
+    deribit_base = previous.deribit_price if previous.deribit_price != 0 else 1e-8
+
+    market_change_condition = (
+        abs(pm_price - previous.pm_price) / pm_base >= 0.02
+        or abs(deribit_price - previous.deribit_price) / deribit_base >= 0.03
+    )
+
+    return any(
+        [
+            time_condition,
+            ev_change_condition,
+            sign_change_condition,
+            market_change_condition,
+        ]
+    )
 
 
 def rotate_event_title_date(template_title: str, target_date: date) -> str:
@@ -295,6 +358,7 @@ async def loop_event(
     health: _ComponentHealth,
     thresholds: dict,
     opp_state: dict,
+    signal_state: dict[str, SignalSnapshot],
 ) -> None:
     # 机会提醒阈值：用你 config.yaml 的 ev_spread_min 作为“概率优势”最小值（例如 0.05 = 5%）
     prob_edge_min = float(thresholds.get("ev_spread_min", 0.0))
@@ -356,6 +420,19 @@ async def loop_event(
             denom = inv_base_usd + float(result.im_usd or 0.0)
             roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
             roi_str = f"{roi_pct:.2f}%"
+
+            signal_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
+            previous_snapshot = signal_state.get(signal_key)
+            should_record_signal = _should_record_signal(
+                previous_snapshot,
+                net_ev=net_ev,
+                roi_pct=roi_pct,
+                pm_price=pm_price,
+                deribit_price=deribit_price,
+                strategy=int(strategy),
+                investment=inv_base_usd,
+                expiration_timestamp_ms=deribit_ctx.k1_expiration_timestamp,
+            )
 
             prob_edge_pct = abs(prob_diff) / 100.0
             meets_opportunity_gate = prob_edge_pct >= prob_edge_min and net_ev >= net_ev_min
@@ -426,6 +503,21 @@ async def loop_event(
                 )
                 continue
 
+            if not should_record_signal:
+                console.print(
+                    "⏸️ [dim]信号未满足记录条件（时间/EV变化/状态/市场阈值），跳过记录与推送。[/dim]"
+                )
+                continue
+
+            signal_state[signal_key] = SignalSnapshot(
+                recorded_at=datetime.now(timezone.utc),
+                net_ev=net_ev,
+                roi_pct=roi_pct,
+                pm_price=pm_price,
+                deribit_price=deribit_price,
+                strategy=int(strategy),
+            )
+
             # 控制台输出
             console.print(
                 f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
@@ -482,6 +574,7 @@ async def run_monitor(config: dict) -> None:
     tg_worker = get_worker()
     health = _ComponentHealth(tg_worker)
     opp_state: dict = {}
+    signal_state: dict[str, SignalSnapshot] = {}
 
     current_target_date: date | None = None
     events: List[dict] = []
@@ -533,6 +626,7 @@ async def run_monitor(config: dict) -> None:
                         health=health,
                         thresholds=thresholds,
                         opp_state=opp_state,
+                        signal_state=signal_state,
                     )
                 except Exception as e:
                     title = data.get("polymarket", {}).get("market_title", "UNKNOWN")
