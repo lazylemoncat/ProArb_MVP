@@ -265,3 +265,6 @@ async def get_positions():
     }
 
     return {"timestamp": int(time.time()), "positions": positions, "summary": summary}
+
+# 注册交易相关的路由，否则 /api/trade/execute 等端点不会暴露
+app.include_router(router)

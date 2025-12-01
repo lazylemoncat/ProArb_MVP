@@ -1,0 +1,240 @@
+"""手动测试实盘/接口交易流程的脚本。
+
+输入项与填写位置
+------------------
+运行 `python src/test_live_trading.py` 后会依次提示：
+1. **CLOB id**：对应要买入的 Polymarket 订单簿 id（通常是 `yes_token_id`）。
+   - 在 Polymarket 网页或 API 的订单簿/市场详情中可以复制到该 id。
+   - 程序会自动用这个 id 生成 `market_id`、`yes_token_id`，`no_token_id` 会使用 `no-{CLOB id}` 占位。
+2. **投入的 USD 金额**：本次下单的美元金额，支持小数（例如 `100` 或 `50.5`）。
+   - 该金额会写入生成的 CSV，并作为 `investment_usd` 传入 `execute_trade` 以及 `/api/trade/execute` 请求体。
+
+脚本行为
+--------
+1. 按以上输入生成一行临时 CSV，调用 `execute_trade`（是否实盘取决于环境变量）。
+2. 使用 FastAPI `TestClient` 对 `/api/trade/execute` 发送 POST 请求并打印响应（若 FastAPI 可用）。
+
+安全与开关
+----------
+- 默认会走 dry-run 模式；只有当 `ENABLE_LIVE_TRADING` 环境变量显式设为 true/1/on/yes 时才尝试真实下单。
+- 真实下单前请在运行环境准备好交易所 API 凭据和网络权限。
+- 可通过设置 `CONFIG_PATH` 和 `TRADING_CONFIG_PATH` 指向自定义配置；若不设置，会使用临时文件并强制 dry-run。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import csv
+import importlib
+import os
+import sys
+import tempfile
+from pathlib import Path
+from typing import Dict, Tuple
+
+import yaml
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    import pydantic  # type: ignore  # noqa: F401
+except ModuleNotFoundError:
+    print("缺少 pydantic 依赖，请先运行 `pip install pydantic` 后再试。")
+    sys.exit(1)
+
+from src.services.trade_service import RESULTS_CSV_HEADER, execute_trade
+
+try:
+    from fastapi.testclient import TestClient
+except Exception:  # pragma: no cover - FastAPI 可能未安装
+    TestClient = None
+
+SAMPLE_ROW_BASE: Dict[str, str] = {
+    # 市场元数据（来源于 Polymarket 提供的 "Bitcoin above ___ on December 2?" 事件）
+    "timestamp": "2025-12-01T11:52:46.916614Z",
+    "market_title": "Will the price of Bitcoin be above $80,000 on December 2?",
+    "asset": "BTC",
+    "investment": "0",
+    "selected_strategy": "1",
+    "market_id": "bitcoin-above-80k-on-december-2",
+    "pm_event_title": "Bitcoin above ___ on December 2?",
+    "pm_market_title": "Will the price of Bitcoin be above $80,000 on December 2?",
+    "pm_event_id": "bitcoin-above-on-december-2",
+    "pm_market_id": "703579",
+    "yes_token_id": "73598490064107318565005114994104398195344624125668078818829746637727926056405",
+    "no_token_id": "7358660214941626459611817418274446092961130932038916619638865540777274288008",
+    # 交易参数
+    "inst_k1": "BTC-80k-YES",
+    "inst_k2": "BTC-80k-NO",
+    "spot": "80000",
+    "poly_yes_price": "0.9725",
+    "poly_no_price": "0.0275",
+    "deribit_prob": "0.0",
+    "K1": "80000",
+    "K2": "80000",
+    "K_poly": "80000",
+    "T": "0.01",
+    "days_to_expiry": "1",
+    "sigma": "0.5",
+    "r": "0.01",
+    "k1_bid_btc": "0",
+    "k1_ask_btc": "0",
+    "k2_bid_btc": "0",
+    "k2_ask_btc": "0",
+    "k1_iv": "0",
+    "k2_iv": "0",
+    # 策略 1 (YES) / 策略 2 (NO) 的预期值与成本
+    "net_ev_strategy1": "0",
+    "gross_ev_strategy1": "0",
+    "total_cost_strategy1": "0",
+    "open_cost_strategy1": "0",
+    "holding_cost_strategy1": "0",
+    "close_cost_strategy1": "0",
+    "contracts_strategy1": "0",
+    "im_usd_strategy1": "0",
+    "im_btc_strategy1": "0",
+    "net_ev_strategy2": "0",
+    "gross_ev_strategy2": "0",
+    "total_cost_strategy2": "0",
+    "open_cost_strategy2": "0",
+    "holding_cost_strategy2": "0",
+    "close_cost_strategy2": "0",
+    "contracts_strategy2": "0",
+    "im_usd_strategy2": "0",
+    "im_btc_strategy2": "0",
+    # 实际成交占位
+    "avg_price_open_strategy1": "0",
+    "avg_price_close_strategy1": "0",
+    "shares_strategy1": "0",
+    "avg_price_open_strategy2": "0",
+    "avg_price_close_strategy2": "0",
+    "shares_strategy2": "0",
+    "slippage_open_strategy1": "0",
+    "slippage_open_strategy2": "0",
+}
+
+
+def _write_csv(csv_path: Path, row: Dict[str, str]) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    header_fields = set(RESULTS_CSV_HEADER.as_list())
+    normalized_row = {k: v for k, v in row.items() if k in header_fields}
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=RESULTS_CSV_HEADER.as_list())
+        writer.writeheader()
+        writer.writerow(normalized_row)
+
+
+def _prepare_row(clob_id: str, investment_usd: float) -> Tuple[str, Dict[str, str]]:
+    market_id = f"manual-{clob_id}"
+    row = {**SAMPLE_ROW_BASE}
+    row.update(
+        {
+            "market_id": market_id,
+            "yes_token_id": clob_id,
+            "no_token_id": f"no-{clob_id}",
+            "investment": str(investment_usd),
+            "net_ev_strategy1": str(investment_usd * 0.05),
+            "gross_ev_strategy1": str(investment_usd * 0.06),
+            "total_cost_strategy1": str(investment_usd),
+            "contracts_strategy1": "1.0",
+        }
+    )
+    return market_id, row
+
+
+def _is_live_enabled() -> bool:
+    return os.getenv("ENABLE_LIVE_TRADING", "false").lower() in ("1", "true", "yes", "on")
+
+
+def run_execute_trade(csv_path: Path, market_id: str, investment_usd: float, *, dry_run: bool) -> None:
+    result, status, tx_id, message = asyncio.get_event_loop().run_until_complete(
+        execute_trade(csv_path=str(csv_path), market_id=market_id, investment_usd=investment_usd, dry_run=dry_run)
+    )
+    print(
+        "\n[execute_trade]",
+        f"status={status}",
+        f"tx_id={tx_id}",
+        f"message={message}",
+        f"direction={result.direction}",
+        f"ev_usd={result.ev_usd}",
+        f"contracts={result.contracts}",
+        sep=" | ",
+    )
+
+
+def run_api_post(csv_path: Path, market_id: str, investment_usd: float, *, dry_run: bool) -> None:
+    if TestClient is None:
+        print("\n[api/trade/execute] FastAPI 未安装，跳过接口调用")
+        return
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config_path = Path(tmpdir) / "config.yaml"
+        trading_config_path = Path(tmpdir) / "trading_config.yaml"
+        config_path.write_text(
+            yaml.safe_dump(
+                {
+                    "thresholds": {
+                        "OUTPUT_CSV": str(csv_path),
+                        "dry_trade": bool(dry_run),
+                    }
+                },
+                allow_unicode=True,
+            ),
+            encoding="utf-8",
+        )
+        trading_config_path.write_text("{}\n", encoding="utf-8")
+
+        os.environ["CONFIG_PATH"] = str(config_path)
+        os.environ["TRADING_CONFIG_PATH"] = str(trading_config_path)
+
+        from src import api_server
+
+        importlib.reload(api_server)
+        client = TestClient(api_server.app)
+        response = client.post(
+            "/api/trade/execute",
+            json={"market_id": market_id, "investment_usd": investment_usd, "dry_run": dry_run},
+        )
+
+    print("\n[POST /api/trade/execute] status=", response.status_code)
+    try:
+        print("response=", response.json())
+    except Exception:
+        print("response text=", response.text)
+
+
+def main() -> None:
+    print("\n==== 使用说明 ====")
+    print("1) 在终端复制运行：python src/test_live_trading.py")
+    print("2) 按提示输入 Polymarket 的 CLOB id (yes_token_id) 与本次投入的 USD 金额。")
+    print("3) 如需实盘，请先导出交易所密钥，并将 ENABLE_LIVE_TRADING 设为 true/1/on/yes。")
+    print("4) 程序将先调用 execute_trade，再调用 /api/trade/execute 并打印结果。\n")
+
+    clob_id = input("请输入要买的 CLOB id: ").strip()
+    amount_raw = input("请输入投入的 USD 金额: ").strip()
+
+    try:
+        investment_usd = float(amount_raw)
+    except ValueError:
+        print("金额格式不正确，需为数字，例如 100 或 50.5")
+        return
+
+    market_id, row = _prepare_row(clob_id, investment_usd)
+    dry_run = not _is_live_enabled()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        csv_path = Path(tmpdir) / "results.csv"
+        _write_csv(csv_path, row)
+
+        print("\n==== 开始交易测试 ====")
+        print("当前模式：", "实盘" if not dry_run else "干跑 (dry-run)")
+        run_execute_trade(csv_path, market_id, investment_usd, dry_run=dry_run)
+        run_api_post(csv_path, market_id, investment_usd, dry_run=dry_run)
+        print("\n==== 测试结束 ====")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
+    # 73598490064107318565005114994104398195344624125668078818829746637727926056405

@@ -14,7 +14,11 @@ from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_positi
 
 # trading executors (async)
 from ..trading.deribit_trade import DeribitUserCfg, execute_vertical_spread
-from ..trading.polymarket_trade import place_buy_by_investment, place_sell_by_size
+from ..trading.polymarket_trade import (
+    PolymarketRequestBlocked,
+    place_buy_by_investment,
+    place_sell_by_size,
+)
 from .api_models import TradeResult
 
 # ---------- errors ----------
@@ -243,6 +247,19 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         try:
             pm_resp, pm_order_id = place_buy_by_investment(
                 token_id=token_id, investment_usd=investment_usd, limit_price=limit_price
+            )
+        except PolymarketRequestBlocked as exc:
+            raise TradeApiError(
+                error_code="POLYMARKET_BLOCKED",
+                message=str(exc),
+                details={
+                    "stage": "polymarket",
+                    "market_id": market_id,
+                    "investment_usd": investment_usd,
+                    "token_id": token_id,
+                    "status_code": getattr(exc, "status_code", None),
+                },
+                status_code=502,
             )
         except Exception as exc:
             raise TradeApiError(

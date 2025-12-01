@@ -1,10 +1,11 @@
 import os
-from typing import Literal, Optional, Any, Dict
+from dataclasses import dataclass
+from typing import Any, Dict, Literal, Optional
 
 from dotenv import load_dotenv
 from py_clob_client.client import ClobClient, PolyException
-from py_clob_client.clob_types import OrderArgs, OrderType
-from dataclasses import dataclass
+from py_clob_client.clob_types import OrderArgs
+from py_clob_client.exceptions import PolyApiException
 
 
 @dataclass
@@ -14,6 +15,13 @@ class PolymarketClientCfg:
     chain_id: int
     proxy_address: str
 
+
+class PolymarketRequestBlocked(RuntimeError):
+    """Raised when Polymarket rejects the request (e.g., Cloudflare 403)."""
+
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 # 允许 docker --env-file 读取；本地开发也可用 .env
 load_dotenv()
@@ -84,7 +92,7 @@ def create_order(
     )
     signed_order = client.create_order(order_args)
     try:
-        resp = client.post_order(signed_order, OrderType(OrderType.GTC))
+        resp = client.post_order(signed_order)
     except PolyException:
         raise
     return resp

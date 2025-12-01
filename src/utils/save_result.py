@@ -1,17 +1,16 @@
-from __future__ import annotations
-
 import csv
-import fcntl
 import os
+import threading  # 导入线程锁
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
+# 使用锁来确保文件写入时互斥
+file_lock = threading.Lock()
 
 @dataclass(frozen=True)
 class ResultsCsvHeader:
     """Canonical results.csv columns kept as a dataclass for easy edits and comments."""
-
     timestamp: str = "timestamp"
     market_title: str = "market_title"
     asset: str = "asset"
@@ -61,7 +60,6 @@ class ResultsCsvHeader:
     contracts_strategy2: str = "contracts_strategy2"
     im_usd_strategy2: str = "im_usd_strategy2"
     im_btc_strategy2: str = "im_btc_strategy2"
-    # PM实际成交数据（用于P&L分析和复盘）
     avg_price_open_strategy1: str = "avg_price_open_strategy1"
     avg_price_close_strategy1: str = "avg_price_close_strategy1"
     shares_strategy1: str = "shares_strategy1"
@@ -194,20 +192,17 @@ def ensure_csv_file(
 
 
 def save_position_to_csv(row: Dict[str, Any], csv_path: str = "data/positions.csv") -> None:
-    """Append a single position row to ``positions.csv`` with a stable header.
-
-    The header order is defined by ``POSITIONS_CSV_HEADER`` to keep the file
-    consistent for downstream readers.
-    """
-
+    """Append a single position row to ``positions.csv`` with a stable header."""
     ensure_csv_file(csv_path, header=POSITIONS_CSV_HEADER)
 
     # Restrict to the known header fields to avoid accidental schema drift.
     filtered_row = {key: row.get(key) for key in POSITIONS_CSV_HEADER}
 
     with Path(csv_path).open("a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(POSITIONS_CSV_HEADER))
-        writer.writerow(filtered_row)
+        # 使用线程锁来确保文件写入时不会并发
+        with file_lock:
+            writer = csv.DictWriter(f, fieldnames=list(POSITIONS_CSV_HEADER))
+            writer.writerow(filtered_row)
 
 
 def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> None:
@@ -215,10 +210,6 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
     保存结果到 CSV 文件。
     - 如果文件不存在：写入表头 + 首行
     - 如果文件已存在：确保表头包含本次 row 的全部列；如发现新列则自动升级表头并重写文件
-
-    Args:
-        row: 待保存的单行数据（key 为列名）
-        csv_path: 输出的 csv 文件路径
     """
     path = Path(csv_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -226,40 +217,41 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
     if not path.exists():
         header = list(row.keys())
         with path.open("w+", newline="", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            writer = csv.DictWriter(f, fieldnames=header)
-            writer.writeheader()
-            writer.writerow(row)
+            # 使用线程锁来确保文件写入时不会并发
+            with file_lock:
+                writer = csv.DictWriter(f, fieldnames=header)
+                writer.writeheader()
+                writer.writerow(row)
         return
 
     with path.open("r+", newline="", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        # 使用线程锁来确保文件写入时不会并发
+        with file_lock:
+            reader = csv.reader(f)
+            existing_header = [h for h in next(reader, []) if h]
+            if not existing_header:
+                existing_header = list(row.keys())
 
-        reader = csv.reader(f)
-        existing_header = [h for h in next(reader, []) if h]
-        if not existing_header:
-            existing_header = list(row.keys())
+            new_header = list(existing_header)
+            for k in row.keys():
+                if k not in new_header:
+                    new_header.append(k)
 
-        new_header = list(existing_header)
-        for k in row.keys():
-            if k not in new_header:
-                new_header.append(k)
+            if new_header != existing_header:
+                f.seek(0)
+                existing_rows = list(csv.DictReader(f))
 
-        if new_header != existing_header:
-            f.seek(0)
-            existing_rows = list(csv.DictReader(f))
+                tmp_path = path.with_suffix(".tmp")
+                with tmp_path.open("w", newline="", encoding="utf-8") as tmp_f:
+                    writer = csv.DictWriter(tmp_f, fieldnames=new_header)
+                    writer.writeheader()
+                    for r in existing_rows:
+                        writer.writerow(r)
+                    writer.writerow(row)
 
-            tmp_path = path.with_suffix(".tmp")
-            with tmp_path.open("w", newline="", encoding="utf-8") as tmp_f:
-                writer = csv.DictWriter(tmp_f, fieldnames=new_header)
-                writer.writeheader()
-                for r in existing_rows:
-                    writer.writerow(r)
-                writer.writerow(row)
+                tmp_path.replace(path)
+                return
 
-            tmp_path.replace(path)
-            return
-
-        f.seek(0, os.SEEK_END)
-        writer = csv.DictWriter(f, fieldnames=existing_header)
-        writer.writerow(row)
+            f.seek(0, os.SEEK_END)
+            writer = csv.DictWriter(f, fieldnames=existing_header)
+            writer.writerow(row)
