@@ -1,11 +1,11 @@
-import os
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional
 
-from dotenv import load_dotenv
 from py_clob_client.client import ClobClient, PolyException
 from py_clob_client.clob_types import OrderArgs
 from py_clob_client.exceptions import PolyApiException
+
+from ..utils.dataloader import load_all_configs
 
 
 @dataclass
@@ -23,18 +23,11 @@ class PolymarketRequestBlocked(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
 
-# 允许 docker --env-file 读取；本地开发也可用 .env
-load_dotenv()
-
 _CLIENT: Optional[ClobClient] = None
 
 
-def _get_env(*names: str) -> Optional[str]:
-    for n in names:
-        v = os.getenv(n)
-        if v not in (None, ""):
-            return v
-    return None
+def _get_config() -> Dict[str, Any]:
+    return load_all_configs()
 
 
 def get_client() -> ClobClient:
@@ -48,11 +41,12 @@ def get_client() -> ClobClient:
     if _CLIENT is not None:
         return _CLIENT
 
-    private_key = _get_env("polymarket_secret")
+    cfg = _get_config()
+    private_key = cfg.get("polymarket_secret")
     if not private_key:
         raise RuntimeError("Missing env: polymarket_secret (or polymarket_secret)")
 
-    proxy_address = _get_env("POLYMARKET_PROXY_ADDRESS") or "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"
+    proxy_address = cfg.get("POLYMARKET_PROXY_ADDRESS") or "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"
 
     cfg = PolymarketClientCfg(
         private_key=str(private_key),

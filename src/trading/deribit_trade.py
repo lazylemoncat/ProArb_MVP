@@ -37,6 +37,20 @@ class DeribitUserCfg:
             )
         return DeribitUserCfg(user_id=str(user_id), client_id=str(client_id), client_secret=str(secret))
 
+    @staticmethod
+    def from_config(cfg: Dict[str, Any]) -> "DeribitUserCfg":
+        config = cfg or {}
+        try:
+            return DeribitUserCfg(
+                user_id=str(config["deribit_user_id"]),
+                client_id=str(config["deribit_client_id"]),
+                client_secret=str(config["deribit_client_secret"]),
+            )
+        except KeyError as exc:
+            raise RuntimeError(
+                "Missing deribit credentials in configuration (deribit_user_id/deribit_client_id/deribit_client_secret)"
+            ) from exc
+
 
 def _extract_order_id(obj: Any) -> Optional[str]:
     if obj is None:

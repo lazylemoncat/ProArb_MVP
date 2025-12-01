@@ -7,18 +7,20 @@ TelegramNotifier: 用于通过 Telegram Bot API 发送消息.
 需要传参 token 和 chat_id, 或者通过环境变量 TELEGRAM_TOKEN 和 TELEGRAM_CHAT_ID 提供.
 """
 import logging
-import os
 from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
+
+from .config import TelegramSettings
 
 
 class TelegramNotifier:
     logger = logging.getLogger(__name__)
 
     def __init__(self, token: Optional[str] = None, chat_id: Optional[str] = None):
-        self.token = token or os.getenv("TELEGRAM_TOKEN")
-        self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+        settings = TelegramSettings()
+        self.token = token or settings.bot_token_alert or settings.bot_token_trading
+        self.chat_id = chat_id or settings.chat_id
         # 验证必要参数否则抛出异常
         if not self.token or not self.chat_id:
             raise ValueError("TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID 未配置")
