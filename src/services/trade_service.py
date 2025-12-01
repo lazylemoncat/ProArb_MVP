@@ -4,12 +4,12 @@ import asyncio
 import csv
 import logging
 from datetime import datetime, timezone
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..telegram.singleton import get_worker
+from ..utils.dataloader import load_all_configs
 from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
 # trading executors (async)
@@ -33,6 +33,16 @@ class TradeApiError(Exception):
 
 
 logger = logging.getLogger(__name__)
+
+
+_CONFIG_CACHE: Dict[str, Any] | None = None
+
+
+def _get_config() -> Dict[str, Any]:
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is None:
+        _CONFIG_CACHE = load_all_configs()
+    return _CONFIG_CACHE
 
 
 # ---------- helpers ----------
@@ -229,13 +239,15 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             status_code=503,
         )
 
+    config = _get_config()
+
     if dry_run:
         status = "DRY_RUN"
         tx_id = f"dryrun-{int(time.time())}"
         msg = "Trade executed in dry-run mode"
     else:
         # 安全阀：默认禁止真实交易
-        if os.getenv("ENABLE_LIVE_TRADING", "false").lower() not in ("1", "true", "yes", "on"):
+        if not bool(config.get("ENABLE_LIVE_TRADING", False)):
             raise TradeApiError(
                 error_code="EXECUTION_DISABLED",
                 message="Real execution is disabled. Set ENABLE_LIVE_TRADING=true to enable.",
@@ -275,7 +287,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             )
 
         try:
-            deribit_cfg = DeribitUserCfg.from_env(prefix=os.getenv("DERIBIT_ENV_PREFIX", ""))
+            deribit_cfg = DeribitUserCfg.from_config(config)
             db_resps, db_order_ids, executed_contracts = await execute_vertical_spread(
                 deribit_cfg,
                 contracts=contracts,

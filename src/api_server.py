@@ -4,7 +4,6 @@ import asyncio
 import csv
 import json
 import logging
-import os
 import time
 from typing import Any, Dict, Optional
 
@@ -12,7 +11,6 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from .utils.dataloader import load_all_configs
 from .services.api_models import (
     DBSnapshotResponse,
     EVResponse,
@@ -26,6 +24,7 @@ from .services.api_models import (
 )
 from .services.data_adapter import CACHE, load_db_snapshot, load_pm_snapshot, refresh_cache
 from .services.trade_service import TradeApiError, execute_trade, simulate_trade
+from .utils.dataloader import load_all_configs
 
 
 def _round_floats(value: Any, precision: int = 6) -> Any:
@@ -52,15 +51,6 @@ class SixDecimalJSONResponse(JSONResponse):
 
 app = FastAPI(title="arb-engine", default_response_class=SixDecimalJSONResponse)
 router = APIRouter()
-# 环境变量允许在服务器上灵活配置
-CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
-REFRESH_SECONDS = float(os.getenv("EV_REFRESH_SECONDS", "10"))
-
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
 
 _CONFIG_CACHE: Dict[str, Any] | None = None
 
@@ -70,6 +60,16 @@ def _get_config() -> Dict[str, Any]:
     if _CONFIG_CACHE is None:
         _CONFIG_CACHE = load_all_configs()
     return _CONFIG_CACHE
+
+
+_CONFIG = _get_config()
+REFRESH_SECONDS = float(_CONFIG.get("EV_REFRESH_SECONDS", 10))
+
+logging.basicConfig(
+    level=_CONFIG.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def _get_csv_path() -> str:
