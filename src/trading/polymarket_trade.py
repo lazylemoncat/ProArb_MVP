@@ -10,10 +10,10 @@ from py_clob_client.exceptions import PolyApiException
 
 @dataclass
 class PolymarketClientCfg:
-    host: str
-    key: str
-    chain_id: int
     proxy_address: str
+    private_key: str
+    host: str="https://clob.polymarket.com"
+    chain_id: int=137
 
 
 class PolymarketRequestBlocked(RuntimeError):
@@ -48,24 +48,20 @@ def get_client() -> ClobClient:
     if _CLIENT is not None:
         return _CLIENT
 
-    key = _get_env("polymarket_secret")
-    if not key:
+    private_key = _get_env("polymarket_secret")
+    if not private_key:
         raise RuntimeError("Missing env: polymarket_secret (or polymarket_secret)")
 
-    host = _get_env("POLYMARKET_CLOB_HOST") or "https://clob.polymarket.com"
-    chain_id = int(_get_env("POLYMARKET_CHAIN_ID") or "137")
     proxy_address = _get_env("POLYMARKET_PROXY_ADDRESS") or "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"
 
     cfg = PolymarketClientCfg(
-        host=host,
-        key=str(key),
-        chain_id=chain_id,
+        private_key=str(private_key),
         proxy_address=proxy_address,
     )
 
     client = ClobClient(
         cfg.host,
-        key=cfg.key,
+        key=cfg.private_key,
         chain_id=cfg.chain_id,
         signature_type=1,
         funder=cfg.proxy_address,
@@ -93,8 +89,8 @@ def create_order(
     signed_order = client.create_order(order_args)
     try:
         resp = client.post_order(signed_order)
-    except PolyException:
-        raise
+    except PolyException as e:
+        raise Exception(f"{e}")
     return resp
 
 

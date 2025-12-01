@@ -31,6 +31,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, Tuple
+import pprint
 
 import yaml
 
@@ -44,7 +45,7 @@ except ModuleNotFoundError:
     print("缺少 pydantic 依赖，请先运行 `pip install pydantic` 后再试。")
     sys.exit(1)
 
-from src.services.trade_service import RESULTS_CSV_HEADER, execute_trade
+from src.services.trade_service import RESULTS_CSV_HEADER, TradeApiError, execute_trade
 
 try:
     from fastapi.testclient import TestClient
@@ -148,8 +149,8 @@ def _is_live_enabled() -> bool:
     return os.getenv("ENABLE_LIVE_TRADING", "false").lower() in ("1", "true", "yes", "on")
 
 
-def run_execute_trade(csv_path: Path, market_id: str, investment_usd: float, *, dry_run: bool) -> None:
-    result, status, tx_id, message = asyncio.get_event_loop().run_until_complete(
+def _run_execute_once(csv_path: Path, market_id: str, investment_usd: float, *, dry_run: bool) -> None:
+    result, status, tx_id, message = asyncio.run(
         execute_trade(csv_path=str(csv_path), market_id=market_id, investment_usd=investment_usd, dry_run=dry_run)
     )
     print(
@@ -162,6 +163,28 @@ def run_execute_trade(csv_path: Path, market_id: str, investment_usd: float, *, 
         f"contracts={result.contracts}",
         sep=" | ",
     )
+
+
+def run_execute_trade(csv_path: Path, market_id: str, investment_usd: float, *, dry_run: bool) -> bool:
+    """Run execute_trade once and optionally fall back to dry-run if live is blocked.
+
+    Returns the *effective* dry_run value used for subsequent API tests.
+    """
+
+    try:
+        _run_execute_once(csv_path, market_id, investment_usd, dry_run=dry_run)
+        return dry_run
+    except TradeApiError as exc:  # pragma: no cover - integration-facing message
+        print("\n[execute_trade] 调用失败：", exc)
+        if getattr(exc, "error_code", "") == "POLYMARKET_BLOCKED" and not dry_run:
+            print(
+                "Polymarket 拒绝请求（可能被 Cloudflare 拦截）。\n"
+                "提示：检查 IP/VPN、Cookies、防爬限制，或在未解决前先用 dry-run 验证流程。\n"
+                "将自动切换为 dry-run 再试一次……"
+            )
+            _run_execute_once(csv_path, market_id, investment_usd, dry_run=True)
+            return True
+        return dry_run
 
 
 def run_api_post(csv_path: Path, market_id: str, investment_usd: float, *, dry_run: bool) -> None:
@@ -200,7 +223,7 @@ def run_api_post(csv_path: Path, market_id: str, investment_usd: float, *, dry_r
 
     print("\n[POST /api/trade/execute] status=", response.status_code)
     try:
-        print("response=", response.json())
+        pprint.pprint(response.json())
     except Exception:
         print("response text=", response.text)
 
@@ -230,11 +253,12 @@ def main() -> None:
 
         print("\n==== 开始交易测试 ====")
         print("当前模式：", "实盘" if not dry_run else "干跑 (dry-run)")
-        run_execute_trade(csv_path, market_id, investment_usd, dry_run=dry_run)
-        run_api_post(csv_path, market_id, investment_usd, dry_run=dry_run)
+        effective_dry_run = run_execute_trade(csv_path, market_id, investment_usd, dry_run=dry_run)
+        if effective_dry_run != dry_run:
+            print("[execute_trade] 已切换为 dry-run 以继续接口测试")
+        run_api_post(csv_path, market_id, investment_usd, dry_run=effective_dry_run)
         print("\n==== 测试结束 ====")
 
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-    # 73598490064107318565005114994104398195344624125668078818829746637727926056405
