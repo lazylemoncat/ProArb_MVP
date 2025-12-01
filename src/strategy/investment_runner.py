@@ -153,6 +153,8 @@ class InvestmentResult:
             "k1_ask_btc": deribit_ctx.k1_ask_btc,
             "k2_bid_btc": deribit_ctx.k2_bid_btc,
             "k2_ask_btc": deribit_ctx.k2_ask_btc,
+            "k1_iv": deribit_ctx.k1_iv,
+            "k2_iv": deribit_ctx.k2_iv,
             # === 策略1完整数据 ===
             "net_ev_strategy1": self.net_ev_strategy1,
             "gross_ev_strategy1": self.gross_ev_strategy1,

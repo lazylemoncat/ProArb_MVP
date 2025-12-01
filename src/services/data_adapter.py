@@ -20,6 +20,7 @@ from .api_models import (
     OptionsData,
     PMOrderBook,
     PMOrderBookSide,
+    StrikeQuote,
     PMSnapshotResponse,
     SpotPrice,
     VerticalSpread,
@@ -353,6 +354,14 @@ def load_ev_snapshot(csv_path: str) -> EVResponse:
         dr_prob = float(_safe_float(r.get("deribit_prob")) or 0.0)
         divergence = float(pm_yes - dr_prob)
 
+        k1_bid = _safe_float(r.get("k1_bid_btc"))
+        k1_ask = _safe_float(r.get("k1_ask_btc"))
+        k2_bid = _safe_float(r.get("k2_bid_btc"))
+        k2_ask = _safe_float(r.get("k2_ask_btc"))
+
+        k1_iv = _safe_float(r.get("k1_iv"))
+        k2_iv = _safe_float(r.get("k2_iv"))
+
         # Filter later; rank later
         opps.append(
             Opportunity(
@@ -368,6 +377,8 @@ def load_ev_snapshot(csv_path: str) -> EVResponse:
                     pm_no_price=pm_no,
                     dr_probability=dr_prob,
                     divergence=divergence,
+                    k1=StrikeQuote(bid=k1_bid, ask=k1_ask, iv=k1_iv),
+                    k2=StrikeQuote(bid=k2_bid, ask=k2_ask, iv=k2_iv),
                 ),
             )
         )
