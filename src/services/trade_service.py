@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import logging
 from datetime import datetime, timezone
 import os
 import time
@@ -13,7 +14,7 @@ from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_positi
 
 # trading executors (async)
 from ..trading.deribit_trade import DeribitUserCfg, execute_vertical_spread
-from ..trading.polymarket_trade import place_buy_by_investment
+from ..trading.polymarket_trade import place_buy_by_investment, place_sell_by_size
 from .api_models import TradeResult
 
 # ---------- errors ----------
@@ -25,6 +26,9 @@ class TradeApiError(Exception):
         self.message = message
         self.details = details
         self.status_code = status_code
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------- helpers ----------
@@ -235,19 +239,27 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                 status_code=501,
             )
 
+        pm_size = investment_usd / limit_price
         try:
-            pm_resp, pm_order_id = place_buy_by_investment(token_id=token_id, investment_usd=investment_usd, limit_price=limit_price)
+            pm_resp, pm_order_id = place_buy_by_investment(
+                token_id=token_id, investment_usd=investment_usd, limit_price=limit_price
+            )
         except Exception as exc:
             raise TradeApiError(
                 error_code="EXECUTION_FAILED",
                 message=f"Polymarket order failed: {exc}",
-                details={"stage": "polymarket", "market_id": market_id, "investment_usd": investment_usd, "token_id": token_id},
+                details={
+                    "stage": "polymarket",
+                    "market_id": market_id,
+                    "investment_usd": investment_usd,
+                    "token_id": token_id,
+                },
                 status_code=502,
             )
 
         try:
             deribit_cfg = DeribitUserCfg.from_env(prefix=os.getenv("DERIBIT_ENV_PREFIX", ""))
-            db_resps, db_order_ids = await execute_vertical_spread(
+            db_resps, db_order_ids, executed_contracts = await execute_vertical_spread(
                 deribit_cfg,
                 contracts=contracts,
                 inst_k1=inst_k1,
@@ -255,12 +267,44 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                 strategy=strategy,
             )
         except Exception as exc:
+            rollback_error = None
+            try:
+                rollback_resp, rollback_order_id = place_sell_by_size(
+                    token_id=token_id, size=pm_size, limit_price=0.999
+                )
+                logger.warning(
+                    "Deribit leg failed after Polymarket execution; attempted rollback: order_id=%s resp=%s",
+                    rollback_order_id,
+                    rollback_resp,
+                )
+            except Exception as rb_exc:
+                rollback_error = rb_exc
+                logger.exception("Failed to rollback Polymarket position after Deribit failure")
+
+            details = {
+                "stage": "deribit",
+                "market_id": market_id,
+                "investment_usd": investment_usd,
+                "inst_k1": inst_k1,
+                "inst_k2": inst_k2,
+            }
+            if rollback_error:
+                details["rollback_error"] = str(rollback_error)
             raise TradeApiError(
                 error_code="EXECUTION_FAILED",
                 message=f"Deribit execution failed: {exc}",
-                details={"stage": "deribit", "market_id": market_id, "investment_usd": investment_usd, "inst_k1": inst_k1, "inst_k2": inst_k2},
+                details=details,
                 status_code=502,
             )
+
+        # 对实际成交数量进行对齐（处理Deribit部分成交）
+        if executed_contracts is not None and executed_contracts < contracts:
+            logger.warning(
+                "Deribit partial fill detected: requested=%s, executed=%s", contracts, executed_contracts
+            )
+            result.contracts = float(executed_contracts)
+
+        contracts = float(result.contracts)
 
         tx_id = f"pm:{pm_order_id or 'unknown'};db:{(db_order_ids[0] if db_order_ids else 'unknown')},{(db_order_ids[1] if len(db_order_ids)>1 else 'unknown')}"
 
@@ -322,8 +366,8 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                 "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             }
         })
-    except Exception:
-        # 发送失败不影响交易流程
-        pass
+    except Exception as exc:
+        # 发送失败不影响交易流程，但需要记录日志便于排查
+        logger.warning("Failed to publish Telegram trade notification: %s", exc, exc_info=True)
 
     return result, status, tx_id, msg

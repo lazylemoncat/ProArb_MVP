@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import fcntl
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
@@ -219,41 +221,41 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
 
     if not path.exists():
         header = list(row.keys())
-        with path.open("w", newline="", encoding="utf-8") as f:
+        with path.open("w+", newline="", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             writer = csv.DictWriter(f, fieldnames=header)
             writer.writeheader()
             writer.writerow(row)
         return
 
-    existing_header = _read_existing_header(path)
-    # 兼容旧文件：如果文件存在但没有 header（异常情况）
-    if not existing_header:
-        existing_header = list(row.keys())
+    with path.open("r+", newline="", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
 
-    # 合并 header（保持旧顺序，新增字段追加到末尾）
-    new_header = list(existing_header)
-    for k in row.keys():
-        if k not in new_header:
-            new_header.append(k)
+        reader = csv.reader(f)
+        existing_header = [h for h in next(reader, []) if h]
+        if not existing_header:
+            existing_header = list(row.keys())
 
-    if new_header != existing_header:
-        # 需要升级 header：读出旧数据，重写一个包含新 header 的文件
-        with path.open("r", newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            existing_rows = list(reader)
+        new_header = list(existing_header)
+        for k in row.keys():
+            if k not in new_header:
+                new_header.append(k)
 
-        tmp_path = path.with_suffix(".tmp")
-        with tmp_path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=new_header)
-            writer.writeheader()
-            for r in existing_rows:
-                writer.writerow(r)
-            writer.writerow(row)
+        if new_header != existing_header:
+            f.seek(0)
+            existing_rows = list(csv.DictReader(f))
 
-        tmp_path.replace(path)
-        return
+            tmp_path = path.with_suffix(".tmp")
+            with tmp_path.open("w", newline="", encoding="utf-8") as tmp_f:
+                writer = csv.DictWriter(tmp_f, fieldnames=new_header)
+                writer.writeheader()
+                for r in existing_rows:
+                    writer.writerow(r)
+                writer.writerow(row)
 
-    # header 不变：直接追加
-    with path.open("a", newline="", encoding="utf-8") as f:
+            tmp_path.replace(path)
+            return
+
+        f.seek(0, os.SEEK_END)
         writer = csv.DictWriter(f, fieldnames=existing_header)
         writer.writerow(row)
