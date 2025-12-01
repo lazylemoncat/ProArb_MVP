@@ -1,5 +1,31 @@
+"""
+ProArb_MVP Main Entry Point
+
+⚠️ IMPORTANT: This file must be run as a module, not as a script!
+
+Correct:   python3 -m src.main
+Wrong:     python3 src/main.py  (will cause ImportError)
+
+This is required due to relative imports used throughout the codebase.
+"""
+
+# Check if being run incorrectly (as a script instead of as a module)
+if __name__ == "__main__" and __package__ is None:
+    import sys
+    print("\n" + "="*80)
+    print("❌ ERROR: This file must be run as a module, not as a script!")
+    print("="*80)
+    print("\n✅ CORRECT usage:")
+    print("   python3 -m src.main")
+    print("\n❌ WRONG usage (this is what you just tried):")
+    print("   python3 src/main.py")
+    print("\n💡 Why? This codebase uses relative imports (e.g., 'from .fetch_data import...')")
+    print("   which only work when running as a module with the -m flag.")
+    print("\n📖 See CLAUDE.md for more information.")
+    print("="*80 + "\n")
+    sys.exit(1)
+
 import asyncio
-import logging
 import os
 import re
 from dataclasses import asdict, dataclass
@@ -33,7 +59,6 @@ from .utils.save_result import (
 app = FastAPI()
 
 console = Console()
-logger = logging.getLogger(__name__)
 load_dotenv()
 
 def _iso_utc_now() -> str:
@@ -377,6 +402,22 @@ async def loop_event(
 
     # 确保数据目录/CSV 文件存在
     ensure_csv_file(output_csv, header=RESULTS_CSV_HEADER)
+
+    # 验证CSV表头是否正确（应该是55列）
+    try:
+        from pathlib import Path
+        import csv
+        csv_path = Path(output_csv)
+        if csv_path.exists():
+            with csv_path.open('r', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                header = next(reader, [])
+                if len(header) != 55:
+                    console.print(f"[yellow]⚠️  检测到旧的CSV格式 ({len(header)}列)，重建为新格式 (55列)...[/yellow]")
+                    csv_path.unlink()
+                    ensure_csv_file(output_csv, header=RESULTS_CSV_HEADER)
+    except Exception:
+        pass
 
     # --- Deribit --- 
     try:
