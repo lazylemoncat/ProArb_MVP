@@ -4,12 +4,12 @@ import asyncio
 import csv
 import logging
 from datetime import datetime, timezone
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..telegram.singleton import get_worker
+from ..utils.dataloader import load_all_configs
 from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
 # trading executors (async)
@@ -33,6 +33,16 @@ class TradeApiError(Exception):
 
 
 logger = logging.getLogger(__name__)
+
+
+_CONFIG_CACHE: Dict[str, Any] | None = None
+
+
+def _get_config() -> Dict[str, Any]:
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is None:
+        _CONFIG_CACHE = load_all_configs()
+    return _CONFIG_CACHE
 
 
 # ---------- helpers ----------
@@ -73,13 +83,99 @@ def _read_csv_rows(csv_path: str) -> list[Dict[str, Any]]:
         reader = csv.DictReader(f)
         rows = list(reader)
     if not rows:
-        raise TradeApiError(
-            error_code="MISSING_DATA",
-            message="Results CSV is empty",
-            details={"csv_path": csv_path},
-            status_code=503,
-        )
+        logger.warning("results csv has no rows: csv=%s", csv_path)
     return rows
+
+
+def _build_manual_row(market_id: str, investment_usd: float) -> list[Dict[str, Any]] | None:
+    """Allow trading when CSV is empty by using manual config overrides.
+
+    Expected config keys under ``manual_trade``:
+    - yes_token_id (required)
+    - inst_k1 (required)
+    - inst_k2 (required)
+    - contracts (required; shared by both strategies)
+    - no_token_id (optional; defaults to ``no-{yes_token_id}``)
+    - poly_yes_price / poly_no_price / slippage_pct (optional)
+    """
+
+    cfg = _get_config()
+    manual = cfg.get("manual_trade") or {}
+    yes_token_id = manual.get("yes_token_id")
+    inst_k1 = manual.get("inst_k1")
+    inst_k2 = manual.get("inst_k2")
+    contracts = _safe_float(manual.get("contracts") or manual.get("contracts_strategy1"), default=0.0)
+
+    if not (yes_token_id and inst_k1 and inst_k2 and contracts and contracts > 0):
+        logger.error("manual_trade config missing required fields; cannot build fallback row")
+        return None
+
+    no_token_id = manual.get("no_token_id") or f"no-{yes_token_id}"
+    slippage = _safe_float(
+        manual.get("slippage_rate_used")
+        or manual.get("slippage_pct")
+        or manual.get("slippage")
+        or manual.get("slippage_rate"),
+        default=0.0,
+    )
+    yes_price = _safe_float(
+        manual.get("best_ask_strategy1")
+        or manual.get("poly_yes_price")
+        or manual.get("pm_yes_price")
+        or manual.get("yes_price"),
+        default=0.0,
+    )
+    no_price = _safe_float(
+        manual.get("best_ask_strategy2")
+        or manual.get("poly_no_price")
+        or manual.get("pm_no_price")
+        or manual.get("no_price"),
+        default=0.0,
+    )
+
+    ts = datetime.now(timezone.utc).isoformat()
+    row: Dict[str, Any] = {
+        "timestamp": ts,
+        "market_id": str(manual.get("market_id") or market_id or ""),
+        "asset": str(manual.get("asset") or ""),
+        "investment": str(investment_usd),
+        "selected_strategy": str(manual.get("selected_strategy") or 1),
+        "yes_token_id": str(yes_token_id),
+        "no_token_id": str(no_token_id),
+        "inst_k1": str(inst_k1),
+        "inst_k2": str(inst_k2),
+        "contracts_strategy1": str(contracts),
+        "contracts_strategy2": str(manual.get("contracts_strategy2") or contracts),
+        "im_usd_strategy1": str(manual.get("im_usd_strategy1") or 0.0),
+        "im_usd_strategy2": str(manual.get("im_usd_strategy2") or 0.0),
+        "im_btc_strategy1": str(manual.get("im_btc_strategy1") or 0.0),
+        "im_btc_strategy2": str(manual.get("im_btc_strategy2") or 0.0),
+        "best_ask_strategy1": str(yes_price),
+        "best_ask_strategy2": str(no_price),
+        "poly_yes_price": str(manual.get("poly_yes_price") or yes_price or 0.0),
+        "poly_no_price": str(manual.get("poly_no_price") or no_price or 0.0),
+        "slippage_rate_used": str(slippage),
+    }
+
+    logger.info("using manual_trade fallback row for market=%s", row["market_id"])
+    return [row]
+
+
+def _load_trade_rows(csv_path: str, market_id: str, investment_usd: float) -> list[Dict[str, Any]]:
+    rows = _read_csv_rows(csv_path)
+    if rows:
+        return rows
+
+    manual_rows = _build_manual_row(market_id, investment_usd)
+    if manual_rows:
+        return manual_rows
+
+    raise TradeApiError(
+        error_code="MISSING_DATA",
+        message="Results CSV is empty and no manual trade fallback is configured",
+        details={"csv_path": csv_path},
+        status_code=503,
+    )
 
 
 def _pick_row_for_market_and_investment(rows: list[Dict[str, Any]], market_id: str, investment_usd: float) -> Dict[str, Any]:
@@ -167,7 +263,7 @@ def simulate_trade(*, csv_path: str, market_id: str, investment_usd: float) -> T
             details={"market_id": market_id, "investment_usd": investment_usd},
             status_code=400,
         )
-    rows = _read_csv_rows(csv_path)
+    rows = _load_trade_rows(csv_path, market_id, investment_usd)
     row = _pick_row_for_market_and_investment(rows, market_id, investment_usd)
     return build_trade_result_from_row(row)
 
@@ -197,7 +293,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             status_code=400,
         )
 
-    rows = _read_csv_rows(csv_path)
+    rows = _load_trade_rows(csv_path, market_id, investment_usd)
     row = _pick_row_for_market_and_investment(rows, market_id, investment_usd)
     result = build_trade_result_from_row(row)
 
@@ -229,13 +325,15 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             status_code=503,
         )
 
+    config = _get_config()
+
     if dry_run:
         status = "DRY_RUN"
         tx_id = f"dryrun-{int(time.time())}"
         msg = "Trade executed in dry-run mode"
     else:
         # 安全阀：默认禁止真实交易
-        if os.getenv("ENABLE_LIVE_TRADING", "false").lower() not in ("1", "true", "yes", "on"):
+        if not bool(config.get("ENABLE_LIVE_TRADING", False)):
             raise TradeApiError(
                 error_code="EXECUTION_DISABLED",
                 message="Real execution is disabled. Set ENABLE_LIVE_TRADING=true to enable.",
@@ -275,7 +373,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             )
 
         try:
-            deribit_cfg = DeribitUserCfg.from_env(prefix=os.getenv("DERIBIT_ENV_PREFIX", ""))
+            deribit_cfg = DeribitUserCfg.from_config(config)
             db_resps, db_order_ids, executed_contracts = await execute_vertical_spread(
                 deribit_cfg,
                 contracts=contracts,

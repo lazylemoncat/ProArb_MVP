@@ -90,7 +90,7 @@ def _read_csv_rows(csv_path: str) -> List[Dict[str, Any]]:
         reader = csv.DictReader(f)
         rows = list(reader)
     if not rows:
-        raise ValueError("Results CSV is empty")
+        raise ValueError(f"Results CSV is empty: {csv_path}. Run data pipeline before serving snapshots.")
     return rows
 
 
