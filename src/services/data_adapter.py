@@ -159,18 +159,20 @@ def load_pm_snapshot(csv_path: str, market_id: Optional[str] = None) -> PMSnapsh
     no_price = float(_safe_float(row.get("poly_no_price")) or 0.0)
 
     # In your engine: strategy1 orderbook metrics correspond to YES token, strategy2 correspond to NO token.
+    # Note: 新版CSV使用avg_price_open/close和shares，不再有best_bid/ask/mid_price
+    # 为了向后兼容，我们尝试读取旧字段，如果不存在则使用avg_price或yes_price
     yes_side = PMOrderBookSide(
-        bid=_safe_float(row.get("best_bid_strategy1")),
-        ask=_safe_float(row.get("best_ask_strategy1")),
-        mid=_safe_float(row.get("mid_price_strategy1")) or yes_price,
-        spread=_safe_float(row.get("spread_strategy1")),
+        bid=_safe_float(row.get("best_bid_strategy1")) or _safe_float(row.get("avg_price_close_strategy1")) or yes_price,
+        ask=_safe_float(row.get("best_ask_strategy1")) or _safe_float(row.get("avg_price_open_strategy1")) or yes_price,
+        mid=_safe_float(row.get("mid_price_strategy1")) or _safe_float(row.get("avg_price_open_strategy1")) or yes_price,
+        spread=_safe_float(row.get("spread_strategy1")) or 0.0,
         liquidity_usd=0.0,
     )
     no_side = PMOrderBookSide(
-        bid=_safe_float(row.get("best_bid_strategy2")),
-        ask=_safe_float(row.get("best_ask_strategy2")),
-        mid=_safe_float(row.get("mid_price_strategy2")) or no_price,
-        spread=_safe_float(row.get("spread_strategy2")),
+        bid=_safe_float(row.get("best_bid_strategy2")) or _safe_float(row.get("avg_price_close_strategy2")) or no_price,
+        ask=_safe_float(row.get("best_ask_strategy2")) or _safe_float(row.get("avg_price_open_strategy2")) or no_price,
+        mid=_safe_float(row.get("mid_price_strategy2")) or _safe_float(row.get("avg_price_open_strategy2")) or no_price,
+        spread=_safe_float(row.get("spread_strategy2")) or 0.0,
         liquidity_usd=0.0,
     )
 

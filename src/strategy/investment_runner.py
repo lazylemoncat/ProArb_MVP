@@ -66,7 +66,6 @@ class InvestmentResult:
 
     pm_yes_slippage: float
     pm_no_slippage: float
-    slippage_rate_used: float
 
     open_cost_yes: float
     open_cost_no: float
@@ -95,15 +94,18 @@ class InvestmentResult:
     close_cost_strategy1: float = 0.0
     close_cost_strategy2: float = 0.0
 
-    # === 新增：PM市场价格详情（用于套利分析）===
-    best_ask_strategy1: float = 0.0
-    best_bid_strategy1: float = 0.0
-    mid_price_strategy1: float = 0.0
-    spread_strategy1: float = 0.0
-    best_ask_strategy2: float = 0.0
-    best_bid_strategy2: float = 0.0
-    mid_price_strategy2: float = 0.0
-    spread_strategy2: float = 0.0
+    # === 新增：PM实际成交数据（用于P&L分析和复盘）===
+    avg_price_open_strategy1: float = 0.0     # 策略1开仓实际平均成交价（已包含滑点）
+    avg_price_close_strategy1: float = 0.0    # 策略1平仓实际平均成交价（已包含滑点）
+    shares_strategy1: float = 0.0             # 策略1购买的份额数
+
+    avg_price_open_strategy2: float = 0.0     # 策略2开仓实际平均成交价
+    avg_price_close_strategy2: float = 0.0    # 策略2平仓实际平均成交价
+    shares_strategy2: float = 0.0             # 策略2购买的份额数
+
+    # === 新增：两个策略的滑点数据 ===
+    slippage_open_strategy1: float = 0.0      # 策略1开仓滑点率
+    slippage_open_strategy2: float = 0.0      # 策略2开仓滑点率
 
     def to_csv_row(
         self,
@@ -171,22 +173,119 @@ class InvestmentResult:
             "contracts_strategy2": self.contracts_strategy2,
             "im_usd_strategy2": self.im_usd_strategy2,
             "im_btc_strategy2": (self.im_usd_strategy2 / deribit_ctx.spot) if deribit_ctx.spot else 0.0,
-            # === PM市场价格详情（用于套利分析）===
-            "best_ask_strategy1": self.best_ask_strategy1,
-            "best_bid_strategy1": self.best_bid_strategy1,
-            "mid_price_strategy1": self.mid_price_strategy1,
-            "spread_strategy1": self.spread_strategy1,
-            "best_ask_strategy2": self.best_ask_strategy2,
-            "best_bid_strategy2": self.best_bid_strategy2,
-            "mid_price_strategy2": self.mid_price_strategy2,
-            "spread_strategy2": self.spread_strategy2,
-            # === 执行参数 ===
-            "slippage_rate_used": self.slippage_rate_used,
+            # === PM实际成交数据（用于P&L分析和复盘）===
+            "avg_price_open_strategy1": self.avg_price_open_strategy1,
+            "avg_price_close_strategy1": self.avg_price_close_strategy1,
+            "shares_strategy1": self.shares_strategy1,
+            "avg_price_open_strategy2": self.avg_price_open_strategy2,
+            "avg_price_close_strategy2": self.avg_price_close_strategy2,
+            "shares_strategy2": self.shares_strategy2,
+            # === 滑点数据 ===
+            "slippage_open_strategy1": self.slippage_open_strategy1,
+            "slippage_open_strategy2": self.slippage_open_strategy2,
         }
 
         # DEBUG: Print the keys to see what we're returning
-        # print(f"🔍 [DEBUG CSV] Keys: {list(result.keys())}")
+        print(f"🔍 [DEBUG CSV] Total keys: {len(result.keys())}")
+        print(f"🔍 [DEBUG CSV] Last 10 keys: {list(result.keys())[-10:]}")
         return result
+
+
+# === 合约数量验证常量 ===
+# Deribit BTC 期权交易规格（交易所要求）
+MIN_CONTRACT_SIZE = 0.1  # Deribit最小交易单位（BTC）
+NORMAL_CONTRACT_SIZE = 10.0  # 正常交易规模上限（BTC）- 超过此值需要关注流动性
+HIGH_RISK_THRESHOLD = 20.0  # 高风险警告阈值（BTC）- 超过此值可能遇到市场冲击
+
+# 调整幅度阈值（风险管理）
+# - 3%: 警告级别 - 轻微四舍五入，可接受的对冲偏差
+# - 10%: 拒绝级别 - 显著偏差，可能是输入错误或配置问题，会严重破坏对冲效果
+WARNING_THRESHOLD = 0.03  # 调整幅度警告阈值（3%）
+ERROR_THRESHOLD = 0.10  # 调整幅度错误阈值（10%）
+
+
+def adjust_and_validate_contracts(
+    contracts_raw: float,
+    strategy_name: str,
+    inv_base_usd: float,
+) -> tuple[float, str]:
+    """
+    调整和验证合约数量以符合 Deribit 交易规格
+
+    规则：
+    1. 四舍五入到 0.1 BTC 增量
+    2. 检查最小合约数（0.1 BTC）
+    3. 检查调整幅度：
+       - 3% < 调整幅度 ≤ 10%：警告
+       - 调整幅度 > 10%：拒绝交易
+    4. 风险评级：
+       - < 10 BTC：正常
+       - 10-20 BTC：中等风险
+       - > 20 BTC：高风险
+
+    Args:
+        contracts_raw: 原始计算的合约数
+        strategy_name: 策略名称（用于错误信息）
+        inv_base_usd: 投资金额（USD，用于建议）
+
+    Returns:
+        (调整后的合约数, 风险等级)
+        风险等级: "normal", "medium", "high"
+
+    Raises:
+        ValueError: 如果合约数不符合交易要求
+    """
+    # 1. 四舍五入到 0.1 BTC 增量
+    contracts_adjusted = round(contracts_raw / MIN_CONTRACT_SIZE) * MIN_CONTRACT_SIZE
+
+    # 2. 检查是否低于最小值
+    if contracts_adjusted < MIN_CONTRACT_SIZE:
+        suggested_investment = inv_base_usd * (MIN_CONTRACT_SIZE / contracts_raw)
+        raise ValueError(
+            f"{strategy_name}: 合约数量 {contracts_raw:.6f} BTC 低于 Deribit 最小交易单位 {MIN_CONTRACT_SIZE} BTC。\n"
+            f"建议：\n"
+            f"  - 增加投资金额至 ${suggested_investment:.2f}\n"
+            f"  - 或选择价差更窄的期权（降低 spread_width）"
+        )
+
+    # 3. 检查调整幅度
+    adjustment_pct = abs(contracts_adjusted - contracts_raw) / contracts_raw if contracts_raw > 0 else 0
+
+    # 3a. 调整幅度过大：拒绝交易
+    if adjustment_pct > ERROR_THRESHOLD:
+        raise ValueError(
+            f"{strategy_name}: 合约数量调整幅度 {adjustment_pct*100:.1f}% 超过最大允许值 {ERROR_THRESHOLD*100:.0f}%。\n"
+            f"原始: {contracts_raw:.6f} BTC → 调整后: {contracts_adjusted:.1f} BTC\n"
+            f"对冲效果将被严重破坏，拒绝执行此交易。\n"
+            f"建议：增加投资金额至 ${inv_base_usd * 1.5:.2f} 或选择不同的期权组合。"
+        )
+
+    # 3b. 调整幅度较大：警告
+    if adjustment_pct > WARNING_THRESHOLD:
+        print(f"⚠️  {strategy_name}: 合约数量调整可能影响对冲效果")
+        print(f"   原始: {contracts_raw:.6f} BTC")
+        print(f"   调整: {contracts_adjusted:.1f} BTC")
+        print(f"   变化: {adjustment_pct*100:.1f}%")
+
+    # 4. 评估风险等级（不再拒绝，只提示）
+    risk_level = "normal"
+    if contracts_adjusted > HIGH_RISK_THRESHOLD:
+        risk_level = "high"
+        print(f"🔴 {strategy_name}: 合约规模过大 ({contracts_adjusted:.1f} BTC > {HIGH_RISK_THRESHOLD} BTC)")
+        print(f"   ⚠️  高风险警告：")
+        print(f"      - 可能遇到流动性不足")
+        print(f"      - 市场冲击成本可能很大")
+        print(f"      - 建议分批执行或降低投资金额")
+        print(f"      - 建议金额: ${inv_base_usd * NORMAL_CONTRACT_SIZE / contracts_adjusted:.0f}")
+    elif contracts_adjusted > NORMAL_CONTRACT_SIZE:
+        risk_level = "medium"
+        print(f"🟡 {strategy_name}: 合约规模较大 ({contracts_adjusted:.1f} BTC > {NORMAL_CONTRACT_SIZE} BTC)")
+        print(f"   ⚠️  中等风险：")
+        print(f"      - 超过常规交易规模")
+        print(f"      - 注意流动性和滑点")
+        print(f"      - 可考虑分批执行")
+
+    return contracts_adjusted, risk_level
 
 
 def calculate_strategy_costs(
@@ -223,19 +322,15 @@ def calculate_strategy_costs(
     Returns:
         StrategyCosts: 包含所有成本明细的对象
     """
-    # 1. PM 开仓成本（滑点成本）
-    # 使用 best_ask 作为参考：这是实际买入时能获得的最优价格
-    # 滑点成本 = 份额数 * (实际平均成交价 - 最优卖价)
-    pm_open_cost = pm_shares * (pm_avg_open - best_ask)
-    if pm_open_cost < 0:
-        pm_open_cost = 0.0  # 开仓成本不应为负（理论上不会出现）
+    # 1. PM 开仓成本 = 0（因为 avg_price 已包含滑点）
+    # ProArb_MVP 逻辑：pm_avg_open 本身就是实际成交价，已经反映了滑点成本
+    # 不需要重复计算差额，避免成本重复计入
+    # 参考: models.py:37-38 定义了 pm_yes_avg_open 和 pm_no_avg_open 字段
+    pm_open_cost = 0.0
 
-    # 2. PM 平仓成本（滑点成本）
-    # 使用 best_bid 作为参考：这是实际卖出时能获得的最优价格
-    # 滑点成本 = 份额数 * (最优买价 - 实际平均成交价)
-    pm_close_cost = pm_shares * (best_bid - pm_avg_close)
-    if pm_close_cost < 0:
-        pm_close_cost = 0.0  # 平仓成本不应为负（理论上不会出现）
+    # 2. PM 平仓成本 = 0（因为 avg_price 已包含滑点）
+    # ProArb_MVP 逻辑：pm_avg_close 本身就是实际成交价，已经反映了滑点成本
+    pm_close_cost = 0.0
 
     # 3. Deribit 开仓和平仓费用
     deribit_open_fee = deribit_costs["deribit_open_fee"]
@@ -388,10 +483,41 @@ async def evaluate_investment(
         raise ValueError(f"Invalid spread width: {spread_width}. K2 ({deribit_ctx.k2_strike}) must be > K1 ({deribit_ctx.k1_strike})")
 
     # 策略1：基于YES份数计算合约数（买YES，卖牛差）
-    contracts_strategy1 = pm_yes_shares_open / spread_width
+    contracts_strategy1_raw = pm_yes_shares_open / spread_width
 
     # 策略2：基于NO份数计算合约数（买NO，买牛差）
-    contracts_strategy2 = pm_no_shares_open / spread_width
+    contracts_strategy2_raw = pm_no_shares_open / spread_width
+
+    # === 2.1 尝试验证策略1的合约数 ===
+    strategy1_valid = False
+    strategy1_risk = "normal"
+    try:
+        contracts_strategy1, strategy1_risk = adjust_and_validate_contracts(
+            contracts_strategy1_raw, "策略1", inv_base_usd
+        )
+        strategy1_valid = True
+    except ValueError as e:
+        print(f"⚠️  策略1合约数量验证失败: {e}")
+        contracts_strategy1 = 0.0
+
+    # === 2.2 尝试验证策略2的合约数 ===
+    strategy2_valid = False
+    strategy2_risk = "normal"
+    try:
+        contracts_strategy2, strategy2_risk = adjust_and_validate_contracts(
+            contracts_strategy2_raw, "策略2", inv_base_usd
+        )
+        strategy2_valid = True
+    except ValueError as e:
+        print(f"⚠️  策略2合约数量验证失败: {e}")
+        contracts_strategy2 = 0.0
+
+    # === 2.3 如果两个策略都无效，抛出错误 ===
+    if not strategy1_valid and not strategy2_valid:
+        raise ValueError(
+            "两个策略的合约数量都不符合 Deribit 交易要求。\n"
+            "建议增加投资金额或选择不同的期权组合。"
+        )
 
     # === 3. 分别计算两个策略的EV ===
     # 策略1：买YES + 卖牛差（使用contracts_strategy1）
@@ -410,6 +536,8 @@ async def evaluate_investment(
         Price_No_entry=poly_ctx.no_price,
         Call_K1_Ask=deribit_ctx.k1_ask_usd,
         Call_K2_Bid=deribit_ctx.k2_bid_usd,
+        pm_yes_avg_open=pm_yes_avg_open,  # 添加PM实际成交价
+        pm_no_avg_open=pm_no_avg_open,    # 添加PM实际成交价
         Price_Option1=deribit_ctx.k1_ask_usd,   # 卖K1 Call，用Ask价
         Price_Option2=deribit_ctx.k2_bid_usd,   # 买K2 Call，用Bid价
         BTC_Price=deribit_ctx.spot,
@@ -446,6 +574,8 @@ async def evaluate_investment(
         Price_No_entry=poly_ctx.no_price,
         Call_K1_Ask=deribit_ctx.k1_ask_usd,
         Call_K2_Bid=deribit_ctx.k2_bid_usd,
+        pm_yes_avg_open=pm_yes_avg_open,  # 添加PM实际成交价
+        pm_no_avg_open=pm_no_avg_open,    # 添加PM实际成交价
         Price_Option1=deribit_ctx.k1_ask_usd,  # 买K1 Call，用Ask价
         Price_Option2=deribit_ctx.k2_bid_usd,   # 卖K2 Call，用Bid价
         BTC_Price=deribit_ctx.spot,
@@ -567,7 +697,6 @@ async def evaluate_investment(
         holding_cost_no = 0.0
         close_cost_yes = optimal_costs.close_cost
         close_cost_no = 0.0
-        slippage_rate_used = pm_slip_open
     else:
         ev_display_yes = 0.0
         ev_display_no = optimal_net_ev
@@ -579,7 +708,6 @@ async def evaluate_investment(
         holding_cost_no = optimal_costs.holding_cost
         close_cost_yes = 0.0
         close_cost_no = optimal_costs.close_cost
-        slippage_rate_used = pm_slip_open
 
     # 使用最优策略的 calc_input
     calc_input_for_result = calc_input_strategy1 if optimal_strategy == 1 else calc_input_strategy2
@@ -605,7 +733,6 @@ async def evaluate_investment(
         contracts=float(optimal_contracts),
         pm_yes_slippage=pm_yes_slip_open,
         pm_no_slippage=pm_no_slip_open,
-        slippage_rate_used=slippage_rate_used,
         calc_input=calc_input_for_result,
         # === 保存两个策略的完整数据 ===
         net_ev_strategy1=net_ev_strategy1,
@@ -623,15 +750,16 @@ async def evaluate_investment(
         holding_cost_strategy2=costs_strategy2.holding_cost,
         close_cost_strategy1=costs_strategy1.close_cost,
         close_cost_strategy2=costs_strategy2.close_cost,
-        # === PM市场价格详情（用于套利分析）===
-        best_ask_strategy1=float(pm_yes_open.best_ask or pm_yes_open.avg_price),
-        best_bid_strategy1=float(pm_yes_close.best_bid or pm_yes_close.avg_price),
-        mid_price_strategy1=float(pm_yes_open.mid_price or pm_yes_open.avg_price),
-        spread_strategy1=float(pm_yes_open.spread or 0.0),
-        best_ask_strategy2=float(pm_no_open.best_ask or pm_no_open.avg_price),
-        best_bid_strategy2=float(pm_no_close.best_bid or pm_no_close.avg_price),
-        mid_price_strategy2=float(pm_no_open.mid_price or pm_no_open.avg_price),
-        spread_strategy2=float(pm_no_open.spread or 0.0),
+        # === PM实际成交数据（用于P&L分析和复盘）===
+        avg_price_open_strategy1=pm_yes_avg_open,
+        avg_price_close_strategy1=pm_yes_avg_close,
+        shares_strategy1=pm_yes_shares_open,
+        avg_price_open_strategy2=pm_no_avg_open,
+        avg_price_close_strategy2=pm_no_avg_close,
+        shares_strategy2=pm_no_shares_open,
+        # === 滑点数据 ===
+        slippage_open_strategy1=pm_yes_slip_open,
+        slippage_open_strategy2=pm_no_slip_open,
     )
 
     return result, optimal_strategy

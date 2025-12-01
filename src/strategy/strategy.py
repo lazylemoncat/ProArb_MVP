@@ -23,9 +23,15 @@ from .probability_engine import bs_probability_gt
 # 移除全局状态以避免异步竞争条件
 # PM_YES_PRICE_FOR_EV: float | None = None  # 已移除：会导致竞争条件
 
-def _build_ev_price_grid(K1: float, K2: float, K_poly: float):
+def _build_ev_price_grid(K1: float, K2: float, K_poly: float,
+                         S: float, sigma: float, T: float):
     """
-    构造4区间离散模型价格网格
+    构造4区间离散模型价格网格（自适应3-sigma方法）
+
+    Breaking Change (v2.0):
+        新增必填参数: S (现货价), sigma (波动率), T (到期时间)
+        之前: _build_ev_price_grid(K1, K2, K_poly)  # 固定 ±$5000
+        现在: _build_ev_price_grid(K1, K2, K_poly, S, sigma, T)  # 自适应3-sigma
 
     5个关键价格点：
     - K1以下区域
@@ -33,11 +39,48 @@ def _build_ev_price_grid(K1: float, K2: float, K_poly: float):
     - K_poly (Polymarket阈值)
     - K2 (高端行权价)
     - K2以上区域
+
+    范围计算策略（综合方案）：
+    1. 优先使用3-sigma范围（统计意义：覆盖99.7%概率）
+       - sigma_period = sigma * sqrt(T)  # 期间波动率
+       - price_move_vol = S * sigma_period * 3  # 3-sigma价格变动
+    2. 但至少使用spot的10%（避免范围过小的兜底保障）
+    3. 取两者的较大值: max(3-sigma, 10%)
+
+    Args:
+        K1: 低端行权价
+        K2: 高端行权价
+        K_poly: Polymarket阈值
+        S: 当前现货价格 (例如: 100000 for $100k BTC)
+        sigma: 年化波动率 (例如: 0.80 for 80%)
+        T: 到期时间（年）(例如: 1/365 for 1天)
+
+    Returns:
+        包含5个价格点的列表 [K1以下, K1, K_poly, K2, K2以上]
+
+    Example:
+        >>> # BTC $100k, 80% vol, 1 day to expiry
+        >>> grid = _build_ev_price_grid(98000, 102000, 100000, 100000, 0.80, 1/365)
+        >>> # Returns: [~85351, 98000, 100000, 102000, ~114649]
     """
     import numpy as np
 
-    low = max(1.0, K1 - 5000.0)  # K1以下
-    high = K2 + 5000.0  # K2以上
+    # 方法1：基于波动率的3-sigma范围
+    if T > 0 and sigma > 0:
+        sigma_period = sigma * math.sqrt(T)  # 期间波动率
+        price_move_vol = S * sigma_period * 3  # 3-sigma价格变动
+    else:
+        price_move_vol = 0
+
+    # 方法2：基于现货价格的固定百分比（兜底保障）
+    price_move_pct = S * 0.10  # 10%
+
+    # 取较大值，确保足够覆盖尾部概率
+    price_move = max(price_move_vol, price_move_pct)
+
+    # 构造价格边界
+    low = max(1.0, K1 - price_move)  # K1以下，但不低于1
+    high = K2 + price_move  # K2以上
 
     # 5个关键点：K1以下, K1, K_poly, K2, K2以上
     grid = np.array([low, K1, K_poly, K2, high])
@@ -71,19 +114,18 @@ def _portfolio_payoff_at_price_strategy1(S_T: float, input_data, strategy_out):
     contracts = strategy_out.Contracts
 
     # --- PM 端：买 YES ---
-    # 使用传入的YES价格，避免全局变量
-    yes_price = getattr(input_data, 'pm_yes_price', None) or 0.6  # 默认值
-    if yes_price > 0:
-        shares_yes = Inv / yes_price
-        if S_T > Kpoly:
-            # 事件发生：每个YES代币价值$1
-            pnl_pm = shares_yes - Inv
-        else:
-            # 事件未发生：损失全部投资
-            pnl_pm = -Inv
+    # 使用开仓平均成交价（已包含滑点），与实际执行保持一致
+    yes_price = input_data.pm_yes_avg_open
+    if yes_price <= 0:
+        raise ValueError("pm_yes_avg_open 必须大于 0，请确保传入有效的平均成交价")
+
+    shares_yes = Inv / yes_price
+    if S_T > Kpoly:
+        # 事件发生：每个YES代币价值$1
+        pnl_pm = shares_yes - Inv
     else:
-        # 防御性写法，万一没传 pm_yes_price
-        pnl_pm = 0.0
+        # 事件未发生：损失全部投资
+        pnl_pm = -Inv
 
     # --- DR 端：卖牛市价差（卖 K1 看涨期权 + 买 K2 看涨期权）---
     # 卖牛市价差收到的净权利金
@@ -131,17 +173,18 @@ def _portfolio_payoff_at_price_strategy2(S_T: float, input_data, strategy_out):
     contracts = strategy_out.Contracts
 
     # --- PM 端：买 NO ---
-    no_price = input_data.Price_No_entry
-    if no_price > 0:
-        shares_no = Inv / no_price
-        if S_T <= Kpoly:
-            # 事件不发生：NO = 1，我们收到$1每股
-            pnl_pm = shares_no - Inv  # 或者写为 shares_no * (1 - no_price)，结果相同
-        else:
-            # 事件发生：NO = 0，损失全部投资
-            pnl_pm = -Inv
+    # 使用开仓平均成交价（已包含滑点），与实际执行保持一致
+    no_price = input_data.pm_no_avg_open
+    if no_price <= 0:
+        raise ValueError("pm_no_avg_open 必须大于 0，请确保传入有效的平均成交价")
+
+    shares_no = Inv / no_price
+    if S_T <= Kpoly:
+        # 事件不发生：NO = 1，我们收到$1每股
+        pnl_pm = shares_no - Inv
     else:
-        pnl_pm = 0.0
+        # 事件发生：NO = 0，损失全部投资
+        pnl_pm = -Inv
 
     # --- DR 端：买牛市价差（买 K1 看涨期权 + 卖 K2 看涨期权）---
     # 买牛市价差支付的净权利金
@@ -194,8 +237,8 @@ def _integrate_ev_over_grid(
     if T <= 0 or sigma <= 0:
         return 0.0, 0.0, 0.0
 
-    # 使用4区间离散价格网格
-    grid = _build_ev_price_grid(K1, K2, K_poly)
+    # 使用4区间离散价格网格（自适应3-sigma范围）
+    grid = _build_ev_price_grid(K1, K2, K_poly, S, sigma, T)
 
     # 预先算好每个 price 的 P(S_T > price)
     probs_gt = [bs_probability_gt(S=S, K=price, T=T, sigma=sigma, r=r) for price in grid]

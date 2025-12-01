@@ -57,15 +57,15 @@ class ResultsCsvHeader:
     contracts_strategy2: str = "contracts_strategy2"
     im_usd_strategy2: str = "im_usd_strategy2"
     im_btc_strategy2: str = "im_btc_strategy2"
-    best_ask_strategy1: str = "best_ask_strategy1"
-    best_bid_strategy1: str = "best_bid_strategy1"
-    mid_price_strategy1: str = "mid_price_strategy1"
-    spread_strategy1: str = "spread_strategy1"
-    best_ask_strategy2: str = "best_ask_strategy2"
-    best_bid_strategy2: str = "best_bid_strategy2"
-    mid_price_strategy2: str = "mid_price_strategy2"
-    spread_strategy2: str = "spread_strategy2"
-    slippage_rate_used: str = "slippage_rate_used"
+    # PM实际成交数据（用于P&L分析和复盘）
+    avg_price_open_strategy1: str = "avg_price_open_strategy1"
+    avg_price_close_strategy1: str = "avg_price_close_strategy1"
+    shares_strategy1: str = "shares_strategy1"
+    avg_price_open_strategy2: str = "avg_price_open_strategy2"
+    avg_price_close_strategy2: str = "avg_price_close_strategy2"
+    shares_strategy2: str = "shares_strategy2"
+    slippage_open_strategy1: str = "slippage_open_strategy1"
+    slippage_open_strategy2: str = "slippage_open_strategy2"
 
     def as_list(self) -> List[str]:
         return [
@@ -116,15 +116,14 @@ class ResultsCsvHeader:
             self.contracts_strategy2,
             self.im_usd_strategy2,
             self.im_btc_strategy2,
-            self.best_ask_strategy1,
-            self.best_bid_strategy1,
-            self.mid_price_strategy1,
-            self.spread_strategy1,
-            self.best_ask_strategy2,
-            self.best_bid_strategy2,
-            self.mid_price_strategy2,
-            self.spread_strategy2,
-            self.slippage_rate_used,
+            self.avg_price_open_strategy1,
+            self.avg_price_close_strategy1,
+            self.shares_strategy1,
+            self.avg_price_open_strategy2,
+            self.avg_price_close_strategy2,
+            self.shares_strategy2,
+            self.slippage_open_strategy1,
+            self.slippage_open_strategy2,
         ]
 
 

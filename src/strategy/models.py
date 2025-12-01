@@ -15,7 +15,17 @@ class PMEParams:
 
 @dataclass
 class CalculationInput:
-    """总输入参数"""
+    """
+    总输入参数
+
+    Breaking Changes (v2.0):
+        - pm_yes_avg_open: 现在是必填项（之前有 0.0 默认值）
+        - pm_no_avg_open: 现在是必填项（之前有 0.0 默认值）
+
+    Migration 迁移示例:
+        旧版: CalculationInput(..., pm_yes_price=0.6)
+        新版: CalculationInput(..., pm_yes_avg_open=0.58, pm_no_avg_open=0.42)
+    """
     S: float          # 比特币现货价格(USD)
     K: float          # 行权价(USD)
     T: float          # 剩余时间(年)
@@ -30,9 +40,12 @@ class CalculationInput:
     Call_K1_Bid: float        # K1看涨期权买价
     Call_K2_Ask: float        # K2看涨期权卖价
 
-    Price_No_entry: float     # 无入场价格
+    Price_No_entry: float     # NO入场价格（已弃用，使用pm_no_avg_open）
     Call_K1_Ask: float        # K1看涨期权卖价
     Call_K2_Bid: float        # K2看涨期权买价
+
+    pm_yes_avg_open: float    # YES开仓平均成交价（包含滑点，必填）
+    pm_no_avg_open: float     # NO开仓平均成交价（包含滑点，必填）
 
     Price_Option1: float      # 期权1价格
     Price_Option2: float      # 期权2价格
