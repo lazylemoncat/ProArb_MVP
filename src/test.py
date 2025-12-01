@@ -5,8 +5,8 @@ from py_clob_client.exceptions import PolyApiException
 
 HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137
-PRIVATE_KEY = "0xd81aed6faf67fd0677cf0102b122fed873e0095e02caa28d750e334f1ebc5da4"
-PROXY_FUNDER = "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"  # Address that holds your funds
+PRIVATE_KEY = "0xa3fd2f7dcdeff45fe9bc9ef97b28a23ccc357f818f35fa91ac637f9e4e49f76c"
+PROXY_FUNDER = "0xD5ADA6ec52b09778c83022549b2121AdC2Cf9981"  # Address that holds your funds
 
 client = ClobClient(
     HOST,  # The CLOB API endpoint
