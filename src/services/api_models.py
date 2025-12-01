@@ -135,6 +135,14 @@ class EVMetrics(BaseModel):
     ev_percentage: float
 
 
+class StrikeQuote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    iv: Optional[float] = None
+
+
 class EVMarketData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -142,6 +150,8 @@ class EVMarketData(BaseModel):
     pm_no_price: float
     dr_probability: float
     divergence: float
+    k1: StrikeQuote
+    k2: StrikeQuote
 
 
 class Opportunity(BaseModel):

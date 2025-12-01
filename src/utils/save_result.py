@@ -41,6 +41,8 @@ class ResultsCsvHeader:
     k1_ask_btc: str = "k1_ask_btc"
     k2_bid_btc: str = "k2_bid_btc"
     k2_ask_btc: str = "k2_ask_btc"
+    k1_iv: str = "k1_iv"
+    k2_iv: str = "k2_iv"
     net_ev_strategy1: str = "net_ev_strategy1"
     gross_ev_strategy1: str = "gross_ev_strategy1"
     total_cost_strategy1: str = "total_cost_strategy1"
@@ -100,6 +102,8 @@ class ResultsCsvHeader:
             self.k1_ask_btc,
             self.k2_bid_btc,
             self.k2_ask_btc,
+            self.k1_iv,
+            self.k2_iv,
             self.net_ev_strategy1,
             self.gross_ev_strategy1,
             self.total_cost_strategy1,

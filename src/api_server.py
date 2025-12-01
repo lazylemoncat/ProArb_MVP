@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 import logging
 import os
 import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from .utils.dataloader import load_all_configs
@@ -25,7 +27,30 @@ from .services.api_models import (
 from .services.data_adapter import CACHE, load_db_snapshot, load_pm_snapshot, refresh_cache
 from .services.trade_service import TradeApiError, execute_trade, simulate_trade
 
-app = FastAPI(title="arb-engine")
+
+def _round_floats(value: Any, precision: int = 6) -> Any:
+    """Recursively round float values to the desired precision for JSON output."""
+    if isinstance(value, float):
+        return round(value, precision)
+    if isinstance(value, dict):
+        return {k: _round_floats(v, precision) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_round_floats(v, precision) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_round_floats(v, precision) for v in value)
+    return value
+
+
+class SixDecimalJSONResponse(JSONResponse):
+    """JSON response that rounds all float values to 6 decimal places."""
+
+    def render(self, content: Any) -> bytes:
+        encoded = jsonable_encoder(content)
+        rounded = _round_floats(encoded, precision=6)
+        return json.dumps(rounded, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+
+
+app = FastAPI(title="arb-engine", default_response_class=SixDecimalJSONResponse)
 router = APIRouter()
 # 环境变量允许在服务器上灵活配置
 CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
@@ -91,7 +116,7 @@ async def _trade_api_error_handler(request, exc: TradeApiError):
         timestamp=int(time.time()),
         details=exc.details,
     )
-    return JSONResponse(status_code=exc.status_code, content=payload.model_dump())
+    return SixDecimalJSONResponse(status_code=exc.status_code, content=payload.model_dump())
 
 
 @app.get("/api/health", response_model=HealthResponse)
