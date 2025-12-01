@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from websockets import ClientConnection
 import websockets
 
 WS_URL = "wss://www.deribit.com/ws/api/v2"
+RPC_TIMEOUT_SEC = 10
 
 
 @dataclass
@@ -57,8 +59,8 @@ def _extract_order_id(obj: Any) -> Optional[str]:
 
 
 async def _send_rpc(websocket: ClientConnection, msg: Dict[str, Any]) -> Dict[str, Any]:
-    await websocket.send(json.dumps(msg))
-    raw = await websocket.recv()
+    await asyncio.wait_for(websocket.send(json.dumps(msg)), timeout=RPC_TIMEOUT_SEC)
+    raw = await asyncio.wait_for(websocket.recv(), timeout=RPC_TIMEOUT_SEC)
     try:
         return json.loads(raw)
     except Exception:
@@ -139,13 +141,13 @@ async def execute_vertical_spread(
     inst_k1: str,
     inst_k2: str,
     strategy: int,
-) -> Tuple[List[Dict[str, Any]], List[Optional[str]]]:
+) -> Tuple[List[Dict[str, Any]], List[Optional[str]], float]:
     """
     执行两腿牛市价差：
       - strategy=1: 卖牛差（short K1, long K2） => sell k1, buy k2
       - strategy=2: 买牛差（long K1, short K2） => buy k1, sell k2
 
-    返回 (responses, order_ids)
+    返回 (responses, order_ids, executed_amount)
     """
     amount = float(contracts)
 
@@ -154,6 +156,21 @@ async def execute_vertical_spread(
 
         resps: List[Dict[str, Any]] = []
         ids: List[Optional[str]] = []
+        executed_amount = amount
+
+        def _filled_amount(resp: Dict[str, Any], *, default: float) -> float:
+            order = resp.get("result", {}).get("order", {}) if isinstance(resp, dict) else {}
+            for key in ("filled_amount", "filledAmount", "amount_filled", "filled"):
+                val = order.get(key)
+                if val is not None:
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        continue
+            try:
+                return float(order.get("amount", default))
+            except (TypeError, ValueError):
+                return default
 
         if strategy == 1:
             r1 = await close_position(websocket, deribitUserCfg, amount=amount, instrument_name=inst_k1)
@@ -167,4 +184,36 @@ async def execute_vertical_spread(
         resps.extend([r1, r2])
         ids.extend([_extract_order_id(r1), _extract_order_id(r2)])
 
-        return resps, ids
+        filled1 = _filled_amount(r1, default=amount)
+        filled2 = _filled_amount(r2, default=amount)
+        matched_amount = min(filled1, filled2)
+        executed_amount = matched_amount
+
+        imbalance = filled1 - filled2
+        if abs(imbalance) > 1e-8:
+            if strategy == 1:
+                # leg1=sell(k1), leg2=buy(k2)
+                if imbalance > 0:
+                    r_rebalance = await open_position(
+                        websocket, deribitUserCfg, amount=imbalance, instrument_name=inst_k1
+                    )
+                else:
+                    r_rebalance = await close_position(
+                        websocket, deribitUserCfg, amount=abs(imbalance), instrument_name=inst_k2
+                    )
+            else:
+                # strategy 2: leg1=buy(k1), leg2=sell(k2)
+                if imbalance > 0:
+                    r_rebalance = await close_position(
+                        websocket, deribitUserCfg, amount=imbalance, instrument_name=inst_k1
+                    )
+                else:
+                    r_rebalance = await open_position(
+                        websocket, deribitUserCfg, amount=abs(imbalance), instrument_name=inst_k2
+                    )
+
+            resps.append(r_rebalance)
+            ids.append(_extract_order_id(r_rebalance))
+            executed_amount = matched_amount
+
+        return resps, ids, executed_amount

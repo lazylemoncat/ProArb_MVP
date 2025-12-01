@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 from dataclasses import asdict, dataclass
@@ -32,6 +33,7 @@ from .utils.save_result import (
 app = FastAPI()
 
 console = Console()
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 def _iso_utc_now() -> str:
@@ -514,14 +516,21 @@ async def loop_event(
             except TradeApiError as exc:
                 health.error("交易执行", exc.message)
                 console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}")
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 health.error("交易执行", str(exc))
+                logger.exception("交易执行异常: %s", exc)
                 console.print(f"❌ 交易执行异常 ({market_id}, 投资={inv_base_usd}): {exc}")
+                raise
 
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             health.error("投资引擎", f"{_fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)} | {exc}")
+            logger.exception("投资引擎异常: %s", exc)
             console.print(f"❌ 处理 {inv_base_usd:.0f} USD 投资时出错: {exc}")
-            continue
+            raise
 
 
 async def run_monitor(config: dict) -> None:

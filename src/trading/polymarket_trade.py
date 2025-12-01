@@ -127,3 +127,19 @@ def place_buy_by_investment(token_id: str, investment_usd: float, limit_price: f
     size = float(investment_usd) / float(limit_price)
     resp = create_order(client, price=float(limit_price), size=size, side="BUY", token_id=token_id)
     return resp, _extract_order_id(resp)
+
+
+def place_sell_by_size(token_id: str, size: float, limit_price: float) -> tuple[Dict[str, Any], Optional[str]]:
+    """
+    按给定 size 下 sell 单，用于回滚/平仓。
+
+    返回 (raw_response, order_id)
+    """
+    if size <= 0:
+        raise ValueError("size must be > 0")
+    if limit_price <= 0 or limit_price >= 1:
+        raise ValueError("limit_price must be in (0,1)")
+
+    client = get_client()
+    resp = create_order(client, price=float(limit_price), size=float(size), side="SELL", token_id=token_id)
+    return resp, _extract_order_id(resp)
