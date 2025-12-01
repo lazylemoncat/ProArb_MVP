@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import os
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Dict, Any, Optional, Literal
@@ -11,17 +10,24 @@ from fetch_data.polymarket_client import (
     get_polymarket_slippage,
     PolymarketClient,
 )
+from utils.dataloader import load_all_configs
 from utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file
 
 
 # ==================== 配置：路径 & 策略参数 ====================
 
-# 输入：要分析的 CSV，默认还是 data/results.csv，
-# 如需改成别的文件，可以设置环境变量 EARLY_EXIT_INPUT_CSV。
-INPUT_CSV_PATH = os.getenv("EARLY_EXIT_INPUT_CSV", "data/results.csv")
+_CONFIG = load_all_configs()
+# 输入：要分析的 CSV，默认使用 thresholds 配置的 OUTPUT_CSV，
+# 如需改成别的文件，可以通过环境变量或配置覆盖 EARLY_EXIT_INPUT_CSV。
+INPUT_CSV_PATH = str(
+    _CONFIG.get(
+        "EARLY_EXIT_INPUT_CSV",
+        (_CONFIG.get("thresholds") or {}).get("OUTPUT_CSV", "data/results.csv"),
+    )
+)
 
 # 输出：提前平仓监控结果 CSV
-OUTPUT_CSV_PATH = os.getenv("EARLY_EXIT_OUTPUT_CSV", "data/early_exit_results.csv")
+OUTPUT_CSV_PATH = str(_CONFIG.get("EARLY_EXIT_OUTPUT_CSV", "data/early_exit_results.csv"))
 
 # 事件标题模板（硬编码，只在月份和日期上轮换）
 EVENT_TITLE_TEMPLATES: Dict[str, str] = {
