@@ -72,22 +72,33 @@ def _compute_pm_exit_actual(
     position: Position,
     exit_price: float,
     exit_fee_rate: float = 0.0,
+    slippage_cost: float = 0.0,
+    gas_fee: float = 0.0,
 ) -> PMExitActual:
     """
     PM 实际提前平仓收益：
         exit_amount = pm_tokens * exit_price
         exit_fee   = exit_amount * exit_fee_rate
-        net_pnl    = exit_amount - pm_entry_cost - exit_fee
-    对应 PRD “PM 实际平仓收益”公式。:contentReference[oaicite:9]{index=9}
+        slippage_cost = 滑点成本（基于流动性消耗）
+        gas_fee    = Polygon 网络 Gas 费（固定 $0.1）
+        total_cost = exit_fee + slippage_cost + gas_fee
+        net_pnl    = exit_amount - pm_entry_cost - total_cost
+
+    对应 PRD "PM 实际平仓收益"公式。
+
+    注意：与 investment_runner.py 中的成本计算保持一致：
+        - 滑点成本 = 投资金额 × 滑点百分比
+        - Gas 费 = $0.1（固定值）
     """
     exit_amount = position.pm_tokens * exit_price
     exit_fee = exit_amount * exit_fee_rate
-    net_pnl = exit_amount - position.pm_entry_cost - exit_fee
+    total_cost = exit_fee + slippage_cost + gas_fee
+    net_pnl = exit_amount - position.pm_entry_cost - total_cost
 
     return PMExitActual(
         exit_price=exit_price,
         tokens=position.pm_tokens,
-        exit_fee=exit_fee,
+        exit_fee=total_cost,  # 包含手续费、滑点和 Gas 费
         net_pnl=net_pnl,
     )
 
@@ -116,6 +127,8 @@ def analyze_early_exit(
     settlement_price: float,
     pm_exit_price: float,
     exit_fee_rate: float = 0.0,
+    slippage_cost: float = 0.0,
+    gas_fee: float = 0.1,
     event_occurred: bool | None = None,
 ) -> EarlyExitPnL:
     """
@@ -123,10 +136,14 @@ def analyze_early_exit(
       - 真实持仓 position
       - DR 到期结算价 settlement_price
       - 当前位置 PM 提前平仓价格 pm_exit_price
+      - 滑点成本 slippage_cost（基于开仓滑点估算）
+      - Gas 费 gas_fee（默认 $0.1）
     计算 PRD 所需的：
       - 实际总收益
       - 理论总收益
-      - 机会成本等。:contentReference[oaicite:11]{index=11}
+      - 机会成本等。
+
+    注意：与 investment_runner.py 保持一致，包含滑点成本和 Gas 费
     """
     # 1. Deribit 到期结算
     dr = _compute_dr_settlement(
@@ -144,6 +161,8 @@ def analyze_early_exit(
         position=position,
         exit_price=pm_exit_price,
         exit_fee_rate=exit_fee_rate,
+        slippage_cost=slippage_cost,
+        gas_fee=gas_fee,
     )
     pm_theoretical = _compute_pm_exit_theoretical(
         position=position,
@@ -209,13 +228,45 @@ def make_exit_decision(
     pm_exit_price: float,
     available_liquidity_tokens: float,
     early_exit_cfg: Dict[str, Any],
+    pm_best_ask: float | None = None,
 ) -> ExitDecision:
     """
-    对应 PRD 的“决策引擎”模块（简化版本）：
+    对应 PRD 的"决策引擎"模块（简化版本）：
     - 复用现有 payoff & 成本算法
-    - 加一个非常轻量的决策规则，尽量不破坏原有代码结构。:contentReference[oaicite:13]{index=13}
+    - 加一个非常轻量的决策规则，尽量不破坏原有代码结构。
+
+    Args:
+        position: 真实持仓信息
+        calc_input: 计算输入参数
+        settlement_price: Deribit 结算价格
+        pm_exit_price: Polymarket 提前平仓价格
+        available_liquidity_tokens: 可用流动性（token 数量）
+        early_exit_cfg: 提前平仓配置
+        pm_best_ask: PM 开仓时的 best_ask 价格（用于计算滑点成本）
+            如果不提供，则假设无滑点成本
+
+    Returns:
+        ExitDecision: 决策结果
+
+    注意：与 investment_runner.py 保持一致，包含滑点成本和 Gas 费
     """
-    # 1. 先做收益分析
+    # 1. 计算滑点成本（基于开仓滑点）
+    slippage_cost = 0.0
+    if pm_best_ask is not None and pm_best_ask > 0:
+        # 推算开仓平均价格
+        pm_avg_open = position.pm_entry_cost / position.pm_tokens if position.pm_tokens > 0 else 0.0
+
+        # 计算开仓滑点百分比
+        open_slippage_pct = abs(pm_avg_open - pm_best_ask) / pm_best_ask
+
+        # 平仓滑点成本 = 投资金额 × 滑点百分比
+        # 与 investment_runner.py:337 保持一致
+        slippage_cost = position.pm_entry_cost * open_slippage_pct
+
+    # 2. Gas 费（固定 $0.1）
+    gas_fee = 0.1
+
+    # 3. 先做收益分析
     exit_fee_rate = float(early_exit_cfg.get("exit_fee_rate", 0.0))
     pnl = analyze_early_exit(
         position=position,
@@ -223,9 +274,11 @@ def make_exit_decision(
         settlement_price=settlement_price,
         pm_exit_price=pm_exit_price,
         exit_fee_rate=exit_fee_rate,
+        slippage_cost=slippage_cost,
+        gas_fee=gas_fee,
     )
 
-    # 2. 风控检查（目前只做流动性检查，可以以后扩展）
+    # 4. 风控检查（目前只做流动性检查，可以以后扩展）
     min_liq_mult = float(early_exit_cfg.get("min_liquidity_multiplier", 2.0))
     liq_check = _check_liquidity(
         position=position,
@@ -234,7 +287,7 @@ def make_exit_decision(
     )
     risk_checks = [liq_check]
 
-    # 3. 如果功能被全局关闭，直接给出“不平仓”决策，但仍返回分析结果供观察
+    # 5. 如果功能被全局关闭，直接给出"不平仓"决策，但仍返回分析结果供观察
     if not early_exit_cfg.get("enabled", True):
         return ExitDecision(
             should_exit=False,
@@ -245,7 +298,7 @@ def make_exit_decision(
             decision_reason="early_exit.disabled",
         )
 
-    # 如果风控不通过，则不建议提前平仓
+    # 6. 流动性检查：如果风控不通过，则不建议提前平仓
     if not all(rc.passed for rc in risk_checks):
         reason = "; ".join(f"{rc.name}={rc.passed} ({rc.detail})" for rc in risk_checks)
         return ExitDecision(
@@ -257,34 +310,29 @@ def make_exit_decision(
             decision_reason=f"risk_check_failed: {reason}",
         )
 
-    # 4. 简单决策规则（后续可以迭代成更复杂的策略）：
-    #    - 如果 actual_total_pnl 已经为正，且机会成本占理论收益的比例不超过阈值，则建议平仓
-    max_opp_cost_pct = float(early_exit_cfg.get("max_opportunity_cost_pct", 0.05))
-    should_exit = (
-        pnl.actual_total_pnl >= 0.0
-        and pnl.opportunity_cost_pct <= max_opp_cost_pct
+    # 7. 核心逻辑：DR 结算后必须立即平仓 PM，无需检查盈利状态
+    #
+    # 背景：DR 结算时间（08:00 UTC）比 PM 结算时间（16:00 UTC）早 8 小时
+    # 风险：DR 结算后，DR 端盈亏已锁定，但 PM 端仍暴露在市场风险中
+    # 策略：DR 结算完成 → 立即平仓 PM，避免 8 小时时间窗口的市场风险
+    #
+    # 因此：只要流动性充足，就应该立即平仓，无需检查：
+    #   - 实际收益是否为正
+    #   - 机会成本是否可控
+    #
+    should_exit = True
+    confidence = 0.9
+    reason = (
+        f"DR已结算，必须立即平仓PM以锁定风险。"
+        f"actual_pnl={pnl.actual_total_pnl:.2f}, "
+        f"opportunity_cost={pnl.opportunity_cost:.2f}"
     )
-
-    if should_exit:
-        confidence = 0.8
-        reason = (
-            f"actual_total_pnl={pnl.actual_total_pnl:.4f} >= 0, "
-            f"opportunity_cost_pct={pnl.opportunity_cost_pct:.2%} "
-            f"<= threshold={max_opp_cost_pct:.2%}"
-        )
-    else:
-        confidence = 0.5
-        reason = (
-            f"hold: actual_total_pnl={pnl.actual_total_pnl:.4f}, "
-            f"opportunity_cost_pct={pnl.opportunity_cost_pct:.2%}, "
-            f"threshold={max_opp_cost_pct:.2%}"
-        )
 
     return ExitDecision(
         should_exit=should_exit,
         confidence=confidence,
         risk_checks=risk_checks,
         pnl_analysis=pnl,
-        execution_result=None,  # 目前只做“决策 + 模拟”，不做真实执行
+        execution_result=None,  # 目前只做"决策 + 模拟"，不做真实执行
         decision_reason=reason,
     )

@@ -23,21 +23,19 @@ INPUT_CSV_PATH = os.getenv("EARLY_EXIT_INPUT_CSV", "data/results.csv")
 # 输出：提前平仓监控结果 CSV
 OUTPUT_CSV_PATH = os.getenv("EARLY_EXIT_OUTPUT_CSV", "data/early_exit_results.csv")
 
-# 事件标题模板（硬编码，只在月份和日期上轮换）
+# 事件标题模板（动态日期，使用占位符）
 EVENT_TITLE_TEMPLATES: Dict[str, str] = {
-    "BTC": "Bitcoin above ___ on November 17?",
-    "ETH": "Ethereum above ___ on November 17?",
+    "BTC": "Bitcoin above ___ on {month} {day}?",
+    "ETH": "Ethereum above ___ on {month} {day}?",
 }
 
 EARLY_EXIT_CFG = {
-    # 全局开关：关掉之后只做分析，不给“应不应该平仓”的建议
+    # 全局开关：关掉之后只做分析，不给"应不应该平仓"的建议
     "enabled": True,
     # PM 提前平仓手续费（按成交名义金额的比例）
     "exit_fee_rate": 0.0,
     # 流动性检查：要求可用流动性 >= 持仓数量 × min_liquidity_multiplier
     "min_liquidity_multiplier": 1.0,
-    # 机会成本容忍度（期望值视角）
-    "max_opportunity_cost_pct": 0.05,
 }
 
 
@@ -46,12 +44,24 @@ EARLY_EXIT_CFG = {
 
 def rotate_event_title_date(template_title: str, target_date: date) -> str:
     """
-    将模板标题（如 "Bitcoin above ___ on November 17?"）中的日期替换为 target_date 的月/日。
-    只动 "on <Month> <Day>" 这部分，其余保持。
+    将模板标题中的 {month} 和 {day} 占位符替换为 target_date 的月/日。
+
+    例如:
+        "Bitcoin above ___ on {month} {day}?" + date(2024, 12, 25)
+        → "Bitcoin above ___ on December 25?"
+
+    如果模板不包含占位符，则尝试旧的 "on <Month> <Day>" 替换逻辑（向后兼容）。
     """
     if not template_title:
         return template_title
 
+    # 方法1: 如果模板包含 {month} 和 {day} 占位符，直接格式化
+    if "{month}" in template_title or "{day}" in template_title:
+        month_name = target_date.strftime("%B")  # 完整月份名（如 "December"）
+        day_str = str(target_date.day)
+        return template_title.format(month=month_name, day=day_str)
+
+    # 方法2: 向后兼容 - 查找 "on <Month> <Day>" 并替换（旧逻辑）
     on_idx = template_title.rfind(" on ")
     if on_idx == -1:
         return template_title
@@ -291,13 +301,31 @@ async def evaluate_position(csv_pos: CsvPosition) -> Optional[EarlyExitResult]:
         )
         return None
 
-    # 提前平仓的真实 PnL
+    # 提前平仓的真实 PnL（包含滑点成本和 Gas 费）
+    # 1. 手续费
     exit_fee_rate = float(EARLY_EXIT_CFG.get("exit_fee_rate", 0.0))
     exit_amount = csv_pos.pm_tokens * pm_exit_price
     exit_fee = exit_amount * exit_fee_rate
-    pm_exit_pnl = exit_amount - csv_pos.pm_entry_cost - exit_fee
 
-    # 持有到结算的“理论期望” PnL：使用 deribit_prob 作为事件发生的概率
+    # 2. 滑点成本（基于开仓滑点估算，与 investment_runner.py 保持一致）
+    # 从 slip 结果中获取 best_ask（如果可用）
+    best_ask = float(slip.get("best_ask", csv_pos.pm_entry_price))
+    if best_ask > 0:
+        open_slippage_pct = abs(csv_pos.pm_entry_price - best_ask) / best_ask
+    else:
+        open_slippage_pct = 0.0
+    slippage_cost = csv_pos.pm_entry_cost * open_slippage_pct
+
+    # 3. Gas 费（固定 $0.1）
+    gas_fee = 0.1
+
+    # 总成本 = 手续费 + 滑点成本 + Gas 费
+    total_cost = exit_fee + slippage_cost + gas_fee
+
+    # 净收益 = 退出金额 - 入场成本 - 总成本
+    pm_exit_pnl = exit_amount - csv_pos.pm_entry_cost - total_cost
+
+    # 持有到结算的"理论期望" PnL：使用 deribit_prob 作为事件发生的概率
     p = csv_pos.deribit_prob
     if csv_pos.pm_direction == "buy_yes":
         expected_payout = csv_pos.pm_tokens * p
@@ -311,23 +339,23 @@ async def evaluate_position(csv_pos: CsvPosition) -> Optional[EarlyExitResult]:
     base = abs(hold_theoretical_pnl) if abs(hold_theoretical_pnl) > 1e-8 else 0.0
     opportunity_cost_pct = opportunity_cost / base if base else 0.0
 
-    # 决策：实际平仓盈利且机会成本相对可控，则建议提前平仓
+    # 决策逻辑：DR 结算后必须立即平仓，无需检查盈利状态
+    #
+    # 背景：DR 结算时间（08:00 UTC）比 PM 结算时间（16:00 UTC）早 8 小时
+    # 风险：DR 结算后，DR 端盈亏已锁定，但 PM 端仍暴露在市场风险中
+    # 策略：只要流动性充足（已在上面检查），就应该立即平仓
+    #
     should_exit = False
     reason = "early_exit.disabled"
     if EARLY_EXIT_CFG.get("enabled", True):
-        max_opp_pct = float(EARLY_EXIT_CFG.get("max_opportunity_cost_pct", 0.05))
-        if pm_exit_pnl >= 0.0 and opportunity_cost_pct <= max_opp_pct:
-            should_exit = True
-            reason = (
-                f"exit_pnl={pm_exit_pnl:.4f} >= 0 且 "
-                f"opp_cost_pct={opportunity_cost_pct:.2%} <= {max_opp_pct:.2%}"
-            )
-        else:
-            reason = (
-                f"hold: exit_pnl={pm_exit_pnl:.4f}, "
-                f"hold_ev={hold_theoretical_pnl:.4f}, "
-                f"opp_cost_pct={opportunity_cost_pct:.2%}"
-            )
+        # 只要功能开启且流动性充足，就建议平仓
+        should_exit = True
+        reason = (
+            f"DR已结算，建议立即平仓PM。"
+            f"exit_pnl={pm_exit_pnl:.2f}, "
+            f"hold_ev={hold_theoretical_pnl:.2f}, "
+            f"opp_cost={opportunity_cost:.2f}"
+        )
 
     return EarlyExitResult(
         csv_position=csv_pos,
