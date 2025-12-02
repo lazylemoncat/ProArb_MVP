@@ -585,7 +585,7 @@ async def run_monitor(config: dict) -> None:
 
     行为：
     - 永久运行；每次检测到 UTC 日期变化时，重新：
-        1. 根据 config['events'] 模板 + T+1 日期 生成 event_title（只改月份和日期）
+        1. 根据 config['events'] 模板 + day_off 日期 生成 event_title（只改月份和日期）
         2. 调 Polymarket API 自动发现该事件下的所有 strike（市场标题）
         3. 为每个 strike 生成具体事件（含 K_poly/k1/k2 到期时间等）
         4. 调 init_markets 构建 Deribit instruments_map
@@ -594,6 +594,7 @@ async def run_monitor(config: dict) -> None:
     investments = thresholds["INVESTMENTS"]
     output_csv = thresholds["OUTPUT_CSV"]
     check_interval = thresholds["check_interval_sec"]
+    day_off = int(thresholds.get("day_off", 1))
 
     tg_worker = get_worker()
     health = _ComponentHealth(tg_worker)
@@ -606,7 +607,7 @@ async def run_monitor(config: dict) -> None:
 
     while True:
         now_utc = datetime.now(timezone.utc)
-        target_date = now_utc.date() + timedelta(days=1)
+        target_date = now_utc.date() + timedelta(days=day_off)
 
         if current_target_date is None or target_date != current_target_date:
             current_target_date = target_date
@@ -614,7 +615,7 @@ async def run_monitor(config: dict) -> None:
             console.print(
                 Panel.fit(
                     "[bold cyan]Deribit x Polymarket Arbitrage Monitor[/bold cyan]\n"
-                    f"[green]Target date (T+1): {target_date.isoformat()}[/green]",
+                    f"[green]Target date (T+{day_off}): {target_date.isoformat()}[/green]",
                     border_style="bright_cyan",
                 )
             )
@@ -630,7 +631,18 @@ async def run_monitor(config: dict) -> None:
             else:
                 cfg_for_markets = dict(config)
                 cfg_for_markets["events"] = events
-                instruments_map = init_markets(cfg_for_markets, day_offset=0)
+                instruments_map, skipped_titles = init_markets(
+                    cfg_for_markets, day_offset=day_off, target_date=target_date
+                )
+                if skipped_titles:
+                    skipped_set = set(skipped_titles)
+                    events = [
+                        e for e in events if e["polymarket"]["market_title"] not in skipped_set
+                    ]
+                    for title in skipped_titles:
+                        console.print(
+                            f"[yellow]⚠️ Deribit 合约到期日不匹配目标日期，已跳过: {title}[/yellow]"
+                        )
 
             console.print("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")
 
