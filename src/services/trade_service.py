@@ -449,10 +449,17 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         k_poly = _safe_float(row.get("K_poly"), default=0.0)
         market_title = f"{asset.upper()} > ${int(round(k_poly)):,}" if asset and k_poly else str(row.get("market_title") or market_id)
 
+        # 从CSV读取正确的开仓成本（不包含投资本金）
+        open_cost_fee_bucket = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0)
+
+        # 注意：open_cost_fee_bucket 已经包含所有开仓费用：
+        # - PM开仓成本: $0（滑点已包含在平均价中）
+        # - Deribit开仓费: 手续费 + 滑点
+        # - Gas费: 如果启用
+
+        # 为了向后兼容，保留 fees_total 计算（但不再使用）
         slippage_rate = float(result.slippage_pct or 0.0)
         slippage_usd = float(investment_usd * slippage_rate)
-
-        open_cost_fee_bucket = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0)
         fees_total = max(0.0, float(open_cost_fee_bucket - slippage_usd))
 
         k1 = _safe_float(row.get("K1"), default=0.0)
@@ -475,7 +482,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                 "deribit_contracts": float(contracts),
                 "fees_total": float(fees_total),
                 "slippage_usd": float(slippage_usd),
-                "open_cost": float(investment_usd + fees_total + slippage_usd),
+                "open_cost": float(open_cost_fee_bucket),  # ✅ 修复：直接使用正确的开仓成本，不包含投资额
                 "margin_usd": float(result.im_usd),
                 "net_ev": float(result.net_profit_usd),
                 "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),

@@ -445,6 +445,90 @@ def calculate_pme_margin(
 
 # ==================== 精确费用计算（从 fees.py 整合）====================
 
+def calculate_polymarket_gas_fee(
+    deposit_gas_usd: float = 0.50,
+    withdraw_gas_usd: float = 0.30,
+    trade_gas_usd: float = 0.00,
+    settlement_gas_usd: float = 0.20,
+    amortize: bool = True,
+    trades_per_cycle: int = 10,
+    include_settlement: bool = False
+) -> float:
+    """
+    计算 Polymarket Gas 费用（Polygon 网络）
+
+    Gas 费场景：
+    1. USDC Deposit (存款): approve + deposit 合约调用
+    2. USDC Withdrawal (提款): withdraw 合约调用
+    3. Trading (交易): CLOB 链下交易，无 Gas 费
+    4. Settlement (结算): 事件结算（可选）
+
+    Args:
+        deposit_gas_usd: 存款 Gas 费（默认 $0.50）
+        withdraw_gas_usd: 提款 Gas 费（默认 $0.30）
+        trade_gas_usd: 交易 Gas 费（默认 $0，CLOB 链下）
+        settlement_gas_usd: 结算 Gas 费（默认 $0.20）
+        amortize: 是否分摊存款/提款 Gas 费（默认 True）
+        trades_per_cycle: 每个存款周期的交易次数（默认 10）
+        include_settlement: 是否包含结算费（默认 False）
+
+    Returns:
+        每次交易的 Gas 费用
+
+    Examples:
+        >>> # 不分摊：每次交易都算完整的存款+提款+交易费
+        >>> calculate_polymarket_gas_fee(amortize=False)
+        0.80  # 0.50 + 0.30 + 0.00
+
+        >>> # 分摊：存款一次，交易10次，最后提款
+        >>> calculate_polymarket_gas_fee(amortize=True, trades_per_cycle=10)
+        0.08  # (0.50 + 0.30) / 10 + 0.00
+
+        >>> # 包含结算费
+        >>> calculate_polymarket_gas_fee(amortize=True, include_settlement=True)
+        0.10  # (0.50 + 0.30) / 10 + 0.00 + 0.20 / 10
+    """
+    if amortize:
+        # 分摊模式：假设存款一次，交易N次，然后提款
+        amortized_deposit_withdraw = (deposit_gas_usd + withdraw_gas_usd) / trades_per_cycle
+        per_trade_gas = amortized_deposit_withdraw + trade_gas_usd
+
+        if include_settlement:
+            per_trade_gas += settlement_gas_usd / trades_per_cycle
+
+        return per_trade_gas
+    else:
+        # 不分摊：每次交易都算完整费用
+        total_gas = deposit_gas_usd + withdraw_gas_usd + trade_gas_usd
+
+        if include_settlement:
+            total_gas += settlement_gas_usd
+
+        return total_gas
+
+
+def calculate_total_gas_fees(
+    pm_gas_fee: float = 0.0,
+    dr_gas_fee: float = 0.0
+) -> float:
+    """
+    计算总 Gas 费用（PM + DR）
+
+    Note: Deribit 不需要 Gas 费（中心化交易所），
+          但保留此参数以备将来支持链上 DEX。
+
+    Args:
+        pm_gas_fee: Polymarket Gas 费
+        dr_gas_fee: Deribit Gas 费（默认 0）
+
+    Returns:
+        总 Gas 费用
+    """
+    return pm_gas_fee + dr_gas_fee
+
+
+# ==================== Deribit 费用计算 ====================
+
 def calculate_deribit_taker_fee(option_price: float, index_price: float, contracts: float) -> float:
     """
     计算 Deribit Taker Fee
@@ -476,15 +560,34 @@ def calculate_deribit_bull_spread_entry_cost(
     """
     计算 Deribit Bull Spread 组合的入场总成本
 
-    应用组合折扣：取两腿中的较大费用
+    ⚠️ 重要变更：不再使用 Deribit 组合折扣规则
+
+    新逻辑：
+    - 开仓费用 = 买入腿费用 + 卖出腿费用
+    - 两条腿的费用都计入，不做折扣
+
+    理由：
+    1. 更保守的成本估算
+    2. 简化计算逻辑
+    3. 避免依赖交易所折扣政策变化
+
+    对于牛市价差（1买1卖）：
+    - 买入腿费用 = 滑点 + taker fee
+    - 卖出腿费用 = 滑点 + taker fee
+    - 总费用 = 买入腿费用 + 卖出腿费用
     """
-    fee_k = calculate_deribit_entry_cost_single_leg(
+    # 计算买入腿的总费用（滑点 + taker fee）
+    buy_leg_total_fee = calculate_deribit_entry_cost_single_leg(
         buy_leg_price, index_price, contracts, slippage_per_contract
     )
-    fee_k1 = calculate_deribit_entry_cost_single_leg(
+
+    # 计算卖出腿的总费用（滑点 + taker fee）
+    sell_leg_total_fee = calculate_deribit_entry_cost_single_leg(
         sell_leg_price, index_price, contracts, slippage_per_contract
     )
-    return max(fee_k, fee_k1)
+
+    # 新逻辑：直接相加，不使用组合折扣
+    return buy_leg_total_fee + sell_leg_total_fee
 
 def calculate_deribit_settlement_fee(
     expected_settlement_price: float,
@@ -492,13 +595,52 @@ def calculate_deribit_settlement_fee(
     contracts: float
 ) -> float:
     """
-    计算 Deribit Settlement Fee（HTE 模式）
+    计算单腿 Deribit Settlement Fee（HTE 模式）
 
     公式：MIN(0.00015 × settlement_amount, 0.125 × option_value) × contracts
     """
     base_fee = 0.00015 * expected_settlement_price * contracts
     cap_fee = 0.125 * expected_option_value * contracts
     return min(base_fee, cap_fee)
+
+def calculate_deribit_bull_spread_settlement_cost(
+    option1_value: float,
+    option2_value: float,
+    settlement_price: float,
+    contracts: float,
+    strategy: int
+) -> float:
+    """
+    计算 Deribit Bull Spread 组合的平仓总成本
+
+    ⚠️ 重要变更：不再使用 Deribit 组合折扣规则
+
+    新逻辑：
+    - 平仓费用 = K1结算费 + K2结算费
+    - 两条腿的费用都计入，不做折扣
+
+    Args:
+        option1_value: K1期权价值
+        option2_value: K2期权价值
+        settlement_price: 结算价格
+        contracts: 合约数量
+        strategy: 策略类型
+            - 1: 卖牛差（开仓：卖K1+买K2，平仓：买K1+卖K2）
+            - 2: 买牛差（开仓：买K1+卖K2，平仓：卖K1+买K2）
+
+    Returns:
+        平仓总费用（简单相加）
+    """
+    # 分别计算K1和K2的结算费
+    settlement_fee_k1 = calculate_deribit_settlement_fee(
+        settlement_price, option1_value, contracts
+    )
+    settlement_fee_k2 = calculate_deribit_settlement_fee(
+        settlement_price, option2_value, contracts
+    )
+
+    # 新逻辑：直接相加，不使用组合折扣
+    return settlement_fee_k1 + settlement_fee_k2
 
 # ==================== Black-Scholes Pricer（从 bs_pricer.py 整合）====================
 
@@ -854,18 +996,29 @@ def calculate_strategy2(input_data: CalculationInput) -> StrategyOutput:
 def calculate_deribit_costs(
     input_data: CalculationInput,
     bull_spread: Literal["short", "long"] = "short",
+    gas_config: dict = None,
 ) -> dict:
     """
-    只计算 Deribit 相关的费用（不包含 PM 成本）
+    计算 Deribit 相关的费用 + Polymarket Gas 费
 
     Args:
         input_data: 输入参数
         bull_spread: 牛市价差方向：
             - "short": 卖出牛市价差（短 K1，多 K2）→ 适用于策略一
             - "long" : 买入牛市价差（多 K1，短 K2）→ 适用于策略二
+        gas_config: Gas 费配置（来自 trading_config.yaml），例如：
+            {
+                "enabled": True,
+                "pm_deposit_gas_usd": 0.50,
+                "pm_withdraw_gas_usd": 0.30,
+                "pm_trade_gas_usd": 0.00,
+                "pm_settlement_gas_usd": 0.20,
+                "amortize_deposit_withdrawal": True,
+                "trades_per_deposit_cycle": 10
+            }
 
     Returns:
-        包含 Deribit 费用和保证金的字典
+        包含 Deribit 费用、Gas 费和保证金的字典
     """
     # ====================================================================
     # Deribit 开仓费用
@@ -889,19 +1042,34 @@ def calculate_deribit_costs(
     # ====================================================================
     # Deribit 平仓费用（结算费）
     # ====================================================================
-    # Deribit Settlement Fee（日度 / 周度期权免结算费）
-    if input_data.days_to_expiry <= 7.0:
-        deribit_settlement_fee = 0.0
-    else:
-        deribit_settlement_fee = calculate_deribit_settlement_fee(
-            expected_settlement_price=input_data.BTC_Price,
-            expected_option_value=(input_data.Price_Option1 + input_data.Price_Option2) / 2,
-            contracts=input_data.contracts
+    # 平仓时没有手续费（期权到期自动结算，无需额外费用）
+    deribit_settlement_fee = 0.0
+
+    # ====================================================================
+    # Polymarket Gas 费
+    # ====================================================================
+    pm_gas_fee = 0.0
+    if gas_config and gas_config.get("enabled", False):
+        pm_gas_fee = calculate_polymarket_gas_fee(
+            deposit_gas_usd=gas_config.get("pm_deposit_gas_usd", 0.50),
+            withdraw_gas_usd=gas_config.get("pm_withdraw_gas_usd", 0.30),
+            trade_gas_usd=gas_config.get("pm_trade_gas_usd", 0.00),
+            settlement_gas_usd=gas_config.get("pm_settlement_gas_usd", 0.20),
+            amortize=gas_config.get("amortize_deposit_withdrawal", True),
+            trades_per_cycle=gas_config.get("trades_per_deposit_cycle", 10),
+            include_settlement=False  # 结算费通常由 PM 自动处理
         )
+
+    # ====================================================================
+    # 总 Gas 费（PM + DR，DR 目前为 0）
+    # ====================================================================
+    total_gas_fee = calculate_total_gas_fees(pm_gas_fee=pm_gas_fee, dr_gas_fee=0.0)
 
     return {
         "deribit_open_fee": deribit_open_fee,
         "deribit_settlement_fee": deribit_settlement_fee,
+        "pm_gas_fee": pm_gas_fee,
+        "total_gas_fee": total_gas_fee,
     }
 
 def calculate_expected_pnl_strategy1(input_data, probs, strategy_out):

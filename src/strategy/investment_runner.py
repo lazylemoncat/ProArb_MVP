@@ -27,9 +27,8 @@ class StrategyCosts:
     deribit_open_fee: float
     deribit_settlement_fee: float
 
-    # 区块链费用
-    blockchain_open: float
-    blockchain_close: float
+    # Gas 费用（来自 calculate_polymarket_gas_fee）
+    gas_fee: float
 
     # 保证金和持仓成本
     im_usd: float
@@ -301,8 +300,6 @@ def calculate_strategy_costs(
     best_bid: float,
     deribit_costs: dict,
     deribit_ctx: DeribitMarketContext,
-    blockchain_open_fee: float = 0.025,
-    blockchain_close_fee: float = 0.025,
 ) -> StrategyCosts:
     """
     计算单个策略的完整成本
@@ -316,10 +313,8 @@ def calculate_strategy_costs(
         pm_avg_close: PM平仓平均价格
         best_ask: PM市场最优卖价（买入时的参考价）
         best_bid: PM市场最优买价（卖出时的参考价）
-        deribit_costs: Deribit成本字典
+        deribit_costs: Deribit成本字典（包含 total_gas_fee）
         deribit_ctx: Deribit市场上下文
-        blockchain_open_fee: 区块链开仓费用（默认0.025 USD）
-        blockchain_close_fee: 区块链平仓费用（默认0.025 USD）
 
     Returns:
         StrategyCosts: 包含所有成本明细的对象
@@ -330,19 +325,34 @@ def calculate_strategy_costs(
     # 参考: models.py:37-38 定义了 pm_yes_avg_open 和 pm_no_avg_open 字段
     pm_open_cost = 0.0
 
-    # 2. PM 平仓成本 = 0（因为 avg_price 已包含滑点）
-    # ProArb_MVP 逻辑：pm_avg_close 本身就是实际成交价，已经反映了滑点成本
-    pm_close_cost = 0.0
+    # 2. PM 平仓成本 = 投资金额 × 开仓滑点百分比
+    # 计算流程：
+    #   1. 开仓时模拟订单簿执行，得到 pm_avg_open（包含滑点的平均成交价）
+    #   2. 计算开仓滑点百分比 = (pm_avg_open - best_ask) / best_ask
+    #   3. 假设：平仓流动性 ≈ 开仓流动性
+    #   4. 平仓成本 = 投资金额 × 滑点百分比
+    if best_ask > 0:
+        open_slippage_pct = abs(pm_avg_open - best_ask) / best_ask
+    else:
+        open_slippage_pct = 0.0
+
+    pm_close_cost = inv_base_usd * open_slippage_pct
 
     # 3. Deribit 开仓和平仓费用
     deribit_open_fee = deribit_costs["deribit_open_fee"]
     deribit_settlement_fee = deribit_costs["deribit_settlement_fee"]
 
-    # 4. 开仓和平仓总成本
-    open_cost = pm_open_cost + deribit_open_fee + blockchain_open_fee
-    close_cost = pm_close_cost + deribit_settlement_fee + blockchain_close_fee
+    # 4. Gas 费（固定值）
+    # 开仓阶段 Gas: $0.1
+    # 平仓阶段 Gas: $0.1
+    open_gas_fee = 0.1
+    close_gas_fee = 0.1
 
-    # 5. 计算保证金
+    # 5. 开仓和平仓总成本
+    open_cost = pm_open_cost + deribit_open_fee + open_gas_fee
+    close_cost = pm_close_cost + deribit_settlement_fee + close_gas_fee
+
+    # 6. 计算保证金
     # 根据策略构建期权头寸
     if strategy == 1:
         # 策略1：卖牛市价差（short K1, long K2）
@@ -395,14 +405,14 @@ def calculate_strategy_costs(
     im_value_usd = float(pme_margin_result["c_dr_usd"])
     im_value_btc = im_value_usd / deribit_ctx.spot if deribit_ctx.spot > 0 else 0.0
 
-    # 6. 持仓成本
+    # 7. 持仓成本
     holding_days = deribit_ctx.T * 365.0
     r = deribit_ctx.r
     margin_cost = im_value_usd * r * (holding_days / 365.0)
     opportunity_cost = inv_base_usd * r * (holding_days / 365.0)
     holding_cost = margin_cost + opportunity_cost
 
-    # 7. 汇总总成本
+    # 8. 汇总总成本
     total_cost = open_cost + holding_cost + close_cost
 
     return StrategyCosts(
@@ -410,8 +420,7 @@ def calculate_strategy_costs(
         pm_close_cost=pm_close_cost,
         deribit_open_fee=deribit_open_fee,
         deribit_settlement_fee=deribit_settlement_fee,
-        blockchain_open=blockchain_open_fee,
-        blockchain_close=blockchain_close_fee,
+        gas_fee=open_gas_fee + close_gas_fee,  # 总 Gas 费 = $0.2
         im_usd=im_value_usd,
         im_btc=im_value_btc,
         margin_cost=margin_cost,

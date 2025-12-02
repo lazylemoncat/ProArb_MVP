@@ -90,6 +90,9 @@ class CostOutput:
     # 新增：PME 保证金详情
     PME_Margin_USD: float = 0.0
     PME_Worst_Scenario: dict = None
+    # 新增：Gas 费详情
+    PM_Gas_Fee: float = 0.0           # Polymarket Gas 费用
+    Total_Gas_Fee: float = 0.0        # 总 Gas 费用
 
 @dataclass
 class ExpectedPnlOutput:
