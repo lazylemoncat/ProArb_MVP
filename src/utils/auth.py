@@ -14,8 +14,6 @@ from typing import Any, Dict
 import requests
 from web3 import Web3
 
-DEFAULT_SIGNER_URL = "http://206.189.13.208:34873/sign_tx"
-
 
 class SigningError(RuntimeError):
     """Raised when remote signing is misconfigured or rejected."""
@@ -25,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_signer_url() -> str:
-    return os.getenv("SIGNER_URL", DEFAULT_SIGNER_URL)
+    return os.getenv("SIGNER_URL", "")
 
 
 def get_signing_token(*, required: bool = True) -> str | None:
