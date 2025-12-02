@@ -1,7 +1,7 @@
 # === 全局参数 ===
 thresholds:
   OUTPUT_CSV: "data/results.csv"
-  ev_spread_min: 0.05
+  ev_spread_min: 0.02
   notify_net_ev_min: 0.05
   check_interval_sec: 10
   INVESTMENTS: [1000]
@@ -11,7 +11,7 @@ thresholds:
   max_pm_price: 0.99              # PM价格 > 0.99 拒绝
   min_net_ev: 0.0                 # 只接受正EV
   min_roi_pct: 0.0                # 只接受正ROI
-  dry_trade: false                 # 自动交易是否走模拟模式
+  dry_trade: true                 # 自动交易是否走模拟模式
 
 events:
   - name: "BTC above ___ template"
