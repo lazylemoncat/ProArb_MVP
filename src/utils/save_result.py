@@ -210,23 +210,26 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
     保存结果到 CSV 文件。
     - 如果文件不存在：写入表头 + 首行
     - 如果文件已存在：确保表头包含本次 row 的全部列；如发现新列则自动升级表头并重写文件
+
+    使用模块级线程锁包裹整个读写流程，避免并发写入导致文件被截断或数据丢失。
     """
     path = Path(csv_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not path.exists():
-        header = list(row.keys())
-        with path.open("w+", newline="", encoding="utf-8") as f:
-            # 使用线程锁来确保文件写入时不会并发
-            with file_lock:
+    # 使用线程锁来确保文件写入时不会并发
+    with file_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        if not path.exists():
+            header = list(row.keys())
+            with path.open("w+", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=header)
                 writer.writeheader()
                 writer.writerow(row)
-        return
+                f.flush()
+                os.fsync(f.fileno())
+            return
 
-    with path.open("r+", newline="", encoding="utf-8") as f:
-        # 使用线程锁来确保文件写入时不会并发
-        with file_lock:
+        with path.open("r+", newline="", encoding="utf-8") as f:
             reader = csv.reader(f)
             existing_header = [h for h in next(reader, []) if h]
             if not existing_header:
@@ -248,6 +251,8 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
                     for r in existing_rows:
                         writer.writerow(r)
                     writer.writerow(row)
+                    tmp_f.flush()
+                    os.fsync(tmp_f.fileno())
 
                 tmp_path.replace(path)
                 return
@@ -255,3 +260,5 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
             f.seek(0, os.SEEK_END)
             writer = csv.DictWriter(f, fieldnames=existing_header)
             writer.writerow(row)
+            f.flush()
+            os.fsync(f.fileno())
