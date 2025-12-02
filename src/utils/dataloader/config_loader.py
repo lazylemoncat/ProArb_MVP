@@ -37,6 +37,7 @@ class ThresholdsConfig:
     min_net_ev: float
     min_roi_pct: float
     dry_trade: bool
+    day_off: int
 
 @dataclass
 class Config:
@@ -63,7 +64,8 @@ def load_config(config_path: str = os.getenv("CONFIG_PATH", "config.yaml")):
         max_pm_price=get_value_from_dict(row_config['thresholds'], 'max_pm_price'),
         min_net_ev=get_value_from_dict(row_config['thresholds'], 'min_net_ev'),
         min_roi_pct=get_value_from_dict(row_config['thresholds'], 'min_roi_pct'),
-        dry_trade=get_value_from_dict(row_config['thresholds'], 'dry_trade')
+        dry_trade=get_value_from_dict(row_config['thresholds'], 'dry_trade'),
+        day_off=get_value_from_dict(row_config['thresholds'], 'day_off')
     )
 
     events_config = [
