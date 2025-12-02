@@ -45,6 +45,7 @@ except ModuleNotFoundError:
     print("缺少 pydantic 依赖，请先运行 `pip install pydantic` 后再试。")
     sys.exit(1)
 
+from src.utils.auth import ensure_signing_ready
 from src.services.trade_service import RESULTS_CSV_HEADER, TradeApiError, execute_trade
 
 try:
@@ -246,6 +247,10 @@ def main() -> None:
 
     market_id, row = _prepare_row(clob_id, investment_usd)
     dry_run = not _is_live_enabled()
+
+    if not dry_run:
+        status = ensure_signing_ready(require_token=True, log=False)
+        print(f"[signer] {status}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         csv_path = Path(tmpdir) / "results.csv"
