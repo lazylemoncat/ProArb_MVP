@@ -15,6 +15,7 @@ from .fetch_data.polymarket_client import PolymarketClient
 from .strategy.investment_runner import InvestmentResult, evaluate_investment
 from .services.trade_service import TradeApiError, execute_trade
 from .telegram.singleton import get_worker
+from .utils.auth import ensure_signing_ready
 from .utils.dataloader import load_all_configs
 from .utils.init_markets import init_markets
 from .utils.market_context import (
@@ -618,6 +619,8 @@ async def run_monitor(config: dict) -> None:
 
 async def main(config_path: str = "config.yaml") -> None:
     config = load_all_configs()
+    if config.get("ENABLE_LIVE_TRADING"):
+        ensure_signing_ready(require_token=True)
     await run_monitor(config)
 
 

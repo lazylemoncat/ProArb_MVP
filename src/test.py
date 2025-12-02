@@ -1,19 +1,35 @@
+import os
+
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import MarketOrderArgs, OrderType, OrderArgs
 from py_clob_client.order_builder.constants import BUY
 from py_clob_client.exceptions import PolyApiException
 
+from src.utils.auth import ensure_signing_ready
+from src.utils.dataloader import load_all_configs
+
+
 HOST = "https://clob.polymarket.com"
 CHAIN_ID = 137
-PRIVATE_KEY = "0xa3fd2f7dcdeff45fe9bc9ef97b28a23ccc357f818f35fa91ac637f9e4e49f76c"
-PROXY_FUNDER = "0xD5ADA6ec52b09778c83022549b2121AdC2Cf9981"  # Address that holds your funds
+cfg = load_all_configs()
+PRIVATE_KEY = os.getenv("POLYMARKET_PRIVATE_KEY") or cfg.get("polymarket_secret")
+if not PRIVATE_KEY:
+    raise RuntimeError("Missing env/config: POLYMARKET_PRIVATE_KEY or polymarket_secret")
+PROXY_FUNDER = (
+    os.getenv("POLYMARKET_PROXY_ADDRESS")
+    or cfg.get("POLYMARKET_PROXY_ADDRESS")
+    or "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"
+)
+
+signer_status = ensure_signing_ready(require_token=False, log=False)
+print(f"[signer] {signer_status}")
 
 client = ClobClient(
     HOST,  # The CLOB API endpoint
     key=PRIVATE_KEY,  # Your wallet's private key
     chain_id=CHAIN_ID,  # Polygon chain ID (137)
     signature_type=1,  # 1 for email/Magic wallet signatures
-    funder=PROXY_FUNDER  # Address that holds your funds
+    funder=PROXY_FUNDER,  # Address that holds your funds
 )
 client.set_api_creds(client.create_or_derive_api_creds())
 
