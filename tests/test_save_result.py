@@ -1,13 +1,13 @@
 import csv
+import sys
 import threading
 from pathlib import Path
-import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.utils.save_result import save_result_csv
+from src.utils.save_result import RESULTS_CSV_HEADER, rewrite_csv_with_header, save_result_csv
 
 
 def test_save_result_csv_appends_rows(tmp_path):
@@ -54,3 +54,28 @@ def test_save_result_csv_thread_safety(tmp_path):
 
     assert len(saved) == 5
     assert {row["market_title"] for row in saved} == {f"m{i}" for i in range(5)}
+
+
+def test_rewrite_preserves_rows(tmp_path):
+    csv_path = tmp_path / "results.csv"
+
+    legacy_header = ["timestamp", "market_title", "asset"]
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=legacy_header)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "timestamp": "2024-01-01 00:00:00",
+                "market_title": "old",
+                "asset": "BTC",
+            }
+        )
+
+    rewrite_csv_with_header(str(csv_path), RESULTS_CSV_HEADER)
+
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) == 1
+    assert rows[0]["market_title"] == "old"

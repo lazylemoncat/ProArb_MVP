@@ -54,6 +54,7 @@ from .utils.market_context import (
 from .utils.save_result import (
     RESULTS_CSV_HEADER,
     ensure_csv_file,
+    rewrite_csv_with_header,
     save_result_csv,
 )
 
@@ -404,22 +405,22 @@ async def loop_event(
     # 确保数据目录/CSV 文件存在
     ensure_csv_file(output_csv, header=RESULTS_CSV_HEADER)
 
-    # 验证CSV表头是否正确（使用当前 ResultsCsvHeader 长度）
+    # 验证CSV表头是否正确（使用当前 ResultsCsvHeader 长度）；如果不匹配则在不丢数据的前提下重写
     try:
         from pathlib import Path
         import csv
+
         csv_path = Path(output_csv)
         expected_columns = len(RESULTS_CSV_HEADER.as_list())
         if csv_path.exists():
-            with csv_path.open('r', encoding='utf-8') as f:
+            with csv_path.open("r", encoding="utf-8") as f:
                 reader = csv.reader(f)
                 header = next(reader, [])
-                if len(header) != expected_columns:
+                if header and len(header) != expected_columns:
                     console.print(
-                        f"[yellow]⚠️  检测到旧的CSV格式 ({len(header)}列)，重建为新格式 ({expected_columns}列)...[/yellow]"
+                        f"[yellow]⚠️  检测到旧的CSV格式 ({len(header)}列)，重建为新格式 ({expected_columns}列) 并保留已有数据...[/yellow]"
                     )
-                    csv_path.unlink()
-                    ensure_csv_file(output_csv, header=RESULTS_CSV_HEADER)
+                    rewrite_csv_with_header(output_csv, RESULTS_CSV_HEADER)
     except Exception:
         pass
 
