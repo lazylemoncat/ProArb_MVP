@@ -95,11 +95,12 @@ async def _background_loop() -> None:
     csv_path = _get_csv_path()
     logger.info("background loop starting refresh_seconds=%s csv=%s", REFRESH_SECONDS, csv_path)
 
-    refresh_cache(csv_path)
-
     while True:
+        try:
+            refresh_cache(csv_path)
+        except Exception as exc:
+            logger.exception("background refresh failed: %s", exc)
         await asyncio.sleep(REFRESH_SECONDS)
-        refresh_cache(csv_path)
 
 
 @app.on_event("startup")
