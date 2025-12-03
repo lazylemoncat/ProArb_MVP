@@ -26,6 +26,7 @@ if __name__ == "__main__" and __package__ is None:
     sys.exit(1)
 
 import asyncio
+import logging
 import os
 import re
 from dataclasses import asdict, dataclass
@@ -64,6 +65,11 @@ app = FastAPI()
 
 console = Console()
 load_dotenv()
+logging.basicConfig(
+    level="INFO",
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 def _iso_utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -429,17 +435,13 @@ async def loop_event(
     # --- Deribit --- 
     try:
         deribit_ctx: DeribitMarketContext = build_deribit_context(data, instruments_map)
-        health.recovery("Deribit API")
     except Exception as exc:
-        health.error("Deribit API", f"{exc}")
         return
 
     # --- Polymarket --- 
     try:
         poly_ctx: PolymarketState = build_polymarket_state(data)
-        health.recovery("Polymarket API")
     except Exception as exc:
-        health.error("Polymarket API", f"{exc}")
         return
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -455,7 +457,6 @@ async def loop_event(
                 deribit_ctx=deribit_ctx,
                 poly_ctx=poly_ctx,
             )
-            health.recovery("投资引擎")
 
             # 选中策略的净EV
             net_ev = float(result.ev_yes if strategy == 1 else result.ev_no)
