@@ -1,12 +1,12 @@
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional
 
+from dotenv import load_dotenv
 from py_clob_client.client import ClobClient, PolyException
 from py_clob_client.clob_types import OrderArgs
-from py_clob_client.exceptions import PolyApiException
 
-from ..utils.dataloader import load_all_configs
-
+load_dotenv()
 
 @dataclass
 class PolymarketClientCfg:
@@ -15,129 +15,72 @@ class PolymarketClientCfg:
     host: str="https://clob.polymarket.com"
     chain_id: int=137
 
+class Polymarket_trade:
+    @staticmethod
+    def get_client() -> ClobClient:
+        private_key = os.getenv("polymarket_secret")
+        proxy_address = os.getenv("POLYMARKET_PROXY_ADDRESS")
 
-class PolymarketRequestBlocked(RuntimeError):
-    """Raised when Polymarket rejects the request (e.g., Cloudflare 403)."""
+        cfg = PolymarketClientCfg(
+            private_key=str(private_key),
+            proxy_address=str(proxy_address),
+        )
 
-    def __init__(self, message: str, *, status_code: int | None = None):
-        super().__init__(message)
-        self.status_code = status_code
+        client = ClobClient(
+            cfg.host,
+            key=cfg.private_key,
+            chain_id=cfg.chain_id,
+            signature_type=2,
+            funder=cfg.proxy_address,
+        )
 
-_CLIENT: Optional[ClobClient] = None
+        # 设置API凭证
+        client.set_api_creds(client.create_or_derive_api_creds())
+        return client
 
+    @staticmethod
+    def create_order(
+        client: ClobClient,
+        price: float,
+        size: float,
+        side: Literal["BUY", "SELL"],
+        token_id: str,
+    ) -> Dict[str, Any]:
+        order_args = OrderArgs(
+            price=price,
+            size=size,
+            side=side,
+            token_id=token_id,
+        )
+        signed_order = client.create_order(order_args)
+        try:
+            resp: dict = client.post_order(signed_order)
+        except PolyException as e:
+            raise Exception(f"{e}")
+        return resp
 
-def _get_config() -> Dict[str, Any]:
-    return load_all_configs()
-
-
-def get_client() -> ClobClient:
-    """
-    Lazy init ClobClient（避免 import 时就初始化，便于服务器环境排错）
-    需要环境变量：
-      - polymarket_secret
-      - POLYMARKET_PROXY_ADDRESS（可选，有默认值）
-    """
-    global _CLIENT
-    if _CLIENT is not None:
-        return _CLIENT
-
-    cfg = _get_config()
-    private_key = cfg.get("polymarket_secret")
-    if not private_key:
-        raise RuntimeError("Missing env: polymarket_secret (or polymarket_secret)")
-
-    proxy_address = cfg.get("POLYMARKET_PROXY_ADDRESS") or "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"
-
-    cfg = PolymarketClientCfg(
-        private_key=str(private_key),
-        proxy_address=proxy_address,
-    )
-
-    client = ClobClient(
-        cfg.host,
-        key=cfg.private_key,
-        chain_id=cfg.chain_id,
-        signature_type=1,
-        funder=cfg.proxy_address,
-    )
-
-    # 设置API凭证
-    client.set_api_creds(client.create_or_derive_api_creds())
-    _CLIENT = client
-    return _CLIENT
-
-
-def create_order(
-    client: ClobClient,
-    price: float,
-    size: float,
-    side: Literal["BUY", "SELL"],
-    token_id: str,
-) -> Dict[str, Any]:
-    order_args = OrderArgs(
-        price=price,
-        size=size,
-        side=side,
-        token_id=token_id,
-    )
-    signed_order = client.create_order(order_args)
-    try:
-        resp = client.post_order(signed_order)
-    except PolyException as e:
-        raise Exception(f"{e}")
-    return resp
-
-
-def _extract_order_id(obj: Any) -> Optional[str]:
-    """
-    py_clob_client 返回结构可能会变化，这里做一个宽松提取。
-    """
-    if obj is None:
+    @staticmethod
+    def extract_order_id(obj: Any) -> Optional[str]:
+        """
+        py_clob_client 返回结构可能会变化，这里做一个宽松提取。
+        """
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            for k in ("order_id", "orderId", "orderID", "id", "tx_id", "txId"):
+                v = obj.get(k)
+                if v:
+                    return str(v)
+            for v in obj.values():
+                found = Polymarket_trade.extract_order_id(v)
+                if found:
+                    return found
+        if isinstance(obj, list):
+            for v in obj:
+                found = Polymarket_trade.extract_order_id(v)
+                if found:
+                    return found
         return None
-    if isinstance(obj, dict):
-        for k in ("order_id", "orderId", "orderID", "id", "tx_id", "txId"):
-            v = obj.get(k)
-            if v:
-                return str(v)
-        for v in obj.values():
-            found = _extract_order_id(v)
-            if found:
-                return found
-    if isinstance(obj, list):
-        for v in obj:
-            found = _extract_order_id(v)
-            if found:
-                return found
-    return None
 
 
-def place_buy_by_investment(token_id: str, investment_usd: float, limit_price: float) -> tuple[Dict[str, Any], Optional[str]]:
-    """
-    按美元金额下 buy 单（size=investment/price）。
-    返回 (raw_response, order_id)
-    """
-    if investment_usd <= 0:
-        raise ValueError("investment_usd must be > 0")
-    if limit_price <= 0 or limit_price >= 1:
-        raise ValueError("limit_price must be in (0,1)")
 
-    client = get_client()
-    size = float(investment_usd) / float(limit_price)
-    resp = create_order(client, price=float(limit_price), size=size, side="BUY", token_id=token_id)
-    return resp, _extract_order_id(resp)
-
-
-def place_sell_by_size(token_id: str, size: float, limit_price: float) -> tuple[Dict[str, Any], Optional[str]]:
-    """
-    按给定 size 下 sell 单，用于回滚/平仓。
-
-    返回 (raw_response, order_id)
-    """
-    if size <= 0:
-        raise ValueError("size must be > 0")
-    if limit_price <= 0 or limit_price >= 1:
-        raise ValueError("limit_price must be in (0,1)")
-
-    client = get_client()
-    resp = create_order(client, price=float(limit_price), size=float(size), side="SELL", token_id=token_id)
-    return resp, _extract_order_id(resp)

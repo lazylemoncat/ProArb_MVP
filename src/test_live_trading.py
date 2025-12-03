@@ -1,26 +1,3 @@
-"""手动测试实盘/接口交易流程的脚本。
-
-输入项与填写位置
-------------------
-运行 `python src/test_live_trading.py` 后会依次提示：
-1. **CLOB id**：对应要买入的 Polymarket 订单簿 id（通常是 `yes_token_id`）。
-   - 在 Polymarket 网页或 API 的订单簿/市场详情中可以复制到该 id。
-   - 程序会自动用这个 id 生成 `market_id`、`yes_token_id`，`no_token_id` 会使用 `no-{CLOB id}` 占位。
-2. **投入的 USD 金额**：本次下单的美元金额，支持小数（例如 `100` 或 `50.5`）。
-   - 该金额会写入生成的 CSV，并作为 `investment_usd` 传入 `execute_trade` 以及 `/api/trade/execute` 请求体。
-
-脚本行为
---------
-1. 按以上输入生成一行临时 CSV，调用 `execute_trade`（是否实盘取决于环境变量）。
-2. 使用 FastAPI `TestClient` 对 `/api/trade/execute` 发送 POST 请求并打印响应（若 FastAPI 可用）。
-
-安全与开关
-----------
-- 默认会走 dry-run 模式；只有当 `ENABLE_LIVE_TRADING` 环境变量显式设为 true/1/on/yes 时才尝试真实下单。
-- 真实下单前请在运行环境准备好交易所 API 凭据和网络权限。
-- 可通过设置 `CONFIG_PATH` 和 `TRADING_CONFIG_PATH` 指向自定义配置；若不设置，会使用临时文件并强制 dry-run。
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -147,7 +124,7 @@ def _prepare_row(clob_id: str, investment_usd: float) -> Tuple[str, Dict[str, st
 
 
 def _is_live_enabled() -> bool:
-    return os.getenv("ENABLE_LIVE_TRADING", "false").lower() in ("1", "true", "yes", "on")
+    return true
 
 
 def _run_execute_once(csv_path: Path, market_id: str, investment_usd: float, *, dry_run: bool) -> None:

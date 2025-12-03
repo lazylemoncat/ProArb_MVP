@@ -7,12 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 host: str = "https://clob.polymarket.com"
-key: str = os.getenv("polymarket_secret")
+key: str = str(os.getenv("polymarket_secret"))
 chain_id: int = 137 #No need to adjust this
 POLYMARKET_PROXY_ADDRESS: str = '0xD5ADA6ec52b09778c83022549b2121AdC2Cf9981'
 
 ### Initialization of a client using a Polymarket Proxy associated with an Email/Magic account. If you login with your email use this example.
-client = ClobClient(host, key=key, chain_id=chain_id, signature_type=1, funder=POLYMARKET_PROXY_ADDRESS)
+client = ClobClient(host, key=key, chain_id=chain_id, signature_type=2, funder=POLYMARKET_PROXY_ADDRESS)
 
 client.set_api_creds(client.create_or_derive_api_creds()) 
 

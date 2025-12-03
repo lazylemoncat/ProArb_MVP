@@ -16,8 +16,6 @@ class Env_config:
 
     DERIBIT_ENV_PREFIX: str
 
-    ENABLE_LIVE_TRADING: bool
-
     polymarket_secret: str
     POLYMARKET_PROXY_ADDRESS: str
 
@@ -63,7 +61,6 @@ def load_env_config():
         deribit_user_id=str(get_value_from_env("deribit_user_id")),
         deribit_client_id=str(get_value_from_env("deribit_client_id")),
         DERIBIT_ENV_PREFIX=str(_get_optional_env("DERIBIT_ENV_PREFIX", "")),
-        ENABLE_LIVE_TRADING=bool(get_value_from_env("ENABLE_LIVE_TRADING")),
         polymarket_secret=str(get_value_from_env("polymarket_secret")),
         POLYMARKET_PROXY_ADDRESS=str(
             _get_optional_env(

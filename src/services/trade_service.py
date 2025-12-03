@@ -13,12 +13,9 @@ from ..utils.dataloader import load_all_configs
 from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
 # trading executors (async)
-from ..trading.deribit_trade import DeribitUserCfg, execute_vertical_spread
-from ..trading.polymarket_trade import (
-    PolymarketRequestBlocked,
-    place_buy_by_investment,
-    place_sell_by_size,
-)
+from ..trading.deribit_trade import DeribitUserCfg
+from ..trading.deribit_trade_client import Deribit_trade_client
+from ..trading.polymarket_trade_client import Polymarket_trade_client
 from .api_models import TradeResult
 
 # ---------- errors ----------
@@ -283,7 +280,6 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     """
     返回 (result, status, tx_id, message)
     - dry_run=True: 仅 simulation，返回 status=DRY_RUN
-    - dry_run=False: 真实执行（需 ENABLE_LIVE_TRADING=true）
     """
     if investment_usd <= 0:
         raise TradeApiError(
@@ -332,32 +328,10 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         tx_id = f"dryrun-{int(time.time())}"
         msg = "Trade executed in dry-run mode"
     else:
-        # 安全阀：默认禁止真实交易
-        if not bool(config.get("ENABLE_LIVE_TRADING", False)):
-            raise TradeApiError(
-                error_code="EXECUTION_DISABLED",
-                message="Real execution is disabled. Set ENABLE_LIVE_TRADING=true to enable.",
-                details={"market_id": market_id, "investment_usd": investment_usd, "dry_run": dry_run},
-                status_code=501,
-            )
-
         pm_size = investment_usd / limit_price
         try:
-            pm_resp, pm_order_id = place_buy_by_investment(
+            pm_resp, pm_order_id = Polymarket_trade_client.place_buy_by_investment(
                 token_id=token_id, investment_usd=investment_usd, limit_price=limit_price
-            )
-        except PolymarketRequestBlocked as exc:
-            raise TradeApiError(
-                error_code="POLYMARKET_BLOCKED",
-                message=str(exc),
-                details={
-                    "stage": "polymarket",
-                    "market_id": market_id,
-                    "investment_usd": investment_usd,
-                    "token_id": token_id,
-                    "status_code": getattr(exc, "status_code", None),
-                },
-                status_code=502,
             )
         except Exception as exc:
             raise TradeApiError(
@@ -373,8 +347,12 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             )
 
         try:
-            deribit_cfg = DeribitUserCfg.from_config(config)
-            db_resps, db_order_ids, executed_contracts = await execute_vertical_spread(
+            deribit_cfg = DeribitUserCfg(
+                user_id=str(config["deribit_user_id"]),
+                client_id=str(config["deribit_client_id"]),
+                client_secret=str(config["deribit_client_secret"]),
+            )
+            sps, db_order_ids, executed_contracts = await Deribit_trade_client.execute_vertical_spread(
                 deribit_cfg,
                 contracts=contracts,
                 inst_k1=inst_k1,
@@ -384,7 +362,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         except Exception as exc:
             rollback_error = None
             try:
-                rollback_resp, rollback_order_id = place_sell_by_size(
+                rollback_resp, rollback_order_id = Polymarket_trade_client.place_sell_by_size(
                     token_id=token_id, size=pm_size, limit_price=0.999
                 )
                 logger.warning(

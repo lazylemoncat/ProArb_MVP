@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 from ..fetch_data.deribit_api import DeribitAPI
 from ..fetch_data.get_polymarket_slippage import get_polymarket_slippage
-from ..trading.polymarket_trade import place_sell_by_size, PolymarketRequestBlocked
+from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..telegram.singleton import get_worker
 from ..utils.save_result import POSITIONS_CSV_HEADER, file_lock
 
@@ -90,7 +90,6 @@ def row_to_position(row: Dict[str, Any]) -> Position:
     pm_direction = "buy_yes" if direction == "yes" else "buy_no"
 
     return Position(
-        trade_id=str(row.get("trade_id", "")),
         pm_direction=pm_direction,
         pm_tokens=_safe_float(row.get("pm_tokens"), 0.0),
         pm_entry_cost=_safe_float(row.get("pm_entry_cost"), 0.0),
@@ -209,19 +208,13 @@ async def execute_pm_early_exit(
         return True, f"dryrun-{int(datetime.now(timezone.utc).timestamp())}", None
 
     try:
-        resp, order_id = place_sell_by_size(
+        resp, order_id = Polymarket_trade_client.place_sell_by_size(
             token_id=pm_token_id,
             size=position.pm_tokens,
             limit_price=exit_price,
         )
         logger.info("PM sell order placed: order_id=%s, resp=%s", order_id, resp)
         return True, order_id, None
-
-    except PolymarketRequestBlocked as exc:
-        error_msg = f"Polymarket blocked: {exc}"
-        logger.error(error_msg)
-        return False, None, error_msg
-
     except Exception as exc:
         error_msg = f"PM sell failed: {exc}"
         logger.exception(error_msg)

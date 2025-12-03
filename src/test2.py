@@ -1,59 +1,24 @@
-"""手动测试 Deribit（db）腿的双向交易脚本。
-
-用途
-----
-当前的 `test_live_trading.py` 会优先尝试 Polymarket 下单；若该步骤失败，后续 Deribit
-腿不会执行。此脚本用于单独验证 Deribit 垂直价差（牛市/熊市价差）下单流程，方便在
-Polymarket 不可用时排查 Deribit 交易链路。
-
-准备工作
---------
-1. 环境变量中需提供 Deribit 认证信息：
-   - ``deribit_user_id``
-   - ``deribit_client_id``
-   - ``deribit_client_secret``
-   若设置了 ``DERIBIT_ENV_PREFIX``，则读取对应前缀的三项变量。
-2. 如需真实下单，需将 ``ENABLE_LIVE_TRADING`` 设为 true/1/on/yes；未开启时将运行
-   干跑（只打印计划，不会触发下单）。
-
-输入项
-------
-运行 ``python src/test_db_trading.py`` 后依次输入：
-1. **inst_k1**：Deribit 第一条腿的合约名称（例如 ``BTC-28JUN24-80000-C``）。
-2. **inst_k2**：Deribit 第二条腿的合约名称。
-3. **合约数量**：下单张数（浮点数）。
-4. **策略方向**：输入 ``1`` 表示卖出价差（sell k1, buy k2），输入 ``2`` 表示买入价差
-   （buy k1, sell k2）。
-
-提示
-----
-- 本脚本不会触发 Polymarket 下单；只会调用 ``execute_vertical_spread`` 直接测试 Deribit
-  双腿交易。
-- 请确保网络和凭据可用后再开启实盘模式。
-"""
-
 from __future__ import annotations
 
 import asyncio
 import os
 import pprint
 import sys
-from typing import List, Optional
 from dataclasses import dataclass
+from typing import List, Optional
+
 from dotenv import load_dotenv
 
-load_dotenv()
 import json
-from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
-from websockets import ClientConnection
 import websockets
+from websockets import ClientConnection
 
+load_dotenv()
 WS_URL = "wss://www.deribit.com/ws/api/v2"
 RPC_TIMEOUT_SEC = 10
 
-os.environ["ENABLE_LIVE_TRADING"] = "true"
 
 @dataclass
 class DeribitUserCfg:
@@ -303,7 +268,7 @@ async def execute_vertical_spread(
 
 
 def _is_live_enabled() -> bool:
-    return os.getenv("ENABLE_LIVE_TRADING", "false").strip().lower() in {"1", "true", "yes", "on"}
+    return True
 
 
 def _load_deribit_cfg() -> DeribitUserCfg:
