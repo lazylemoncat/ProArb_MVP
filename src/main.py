@@ -83,7 +83,7 @@ def _should_record_signal(
     seconds_to_expiry = expiration_timestamp_ms / 1000.0 - now.timestamp()
 
     # 时间窗口：默认 3 分钟，距离到期 < 24 小时则缩短为 1 分钟
-    time_window_seconds = 60 if seconds_to_expiry < 24 * 3600 else 180
+    time_window_seconds = 300
 
     if previous is None:
         return True
