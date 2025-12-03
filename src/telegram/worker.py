@@ -13,7 +13,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .config import TelegramSettings
 from .formatter_v2 import format_message
-from .models import OpportunityMessage, TradeMessage, TelegramMessage
+from .models import OpportunityMessage, TradeMessage, ErrorMessage, RecoveryMessage, TelegramMessage
 from .notifier import TelegramBotClient
 from .rate_limiter import AsyncRateLimiter
 
@@ -152,11 +152,16 @@ class TelegramWorker:
 
         msg_type = message.get("type")
 
+        # Bot 1 (Alert): opportunity, error, recovery
+        # Bot 2 (Trading): trade
+        allowed_types = {"opportunity", "trade", "error", "recovery"}
+
+        if msg_type not in allowed_types:
+            return
+
         if msg_type == "opportunity":
             if not self._should_send_opportunity_alert(message):
                 return
-        elif msg_type != "trade":
-            return
 
         try:
             payload = json.dumps(message, ensure_ascii=False)
@@ -224,6 +229,8 @@ class TelegramWorker:
                 bot = self._bots.alert
             elif isinstance(msg, TradeMessage):
                 bot = self._bots.trading
+            elif isinstance(msg, (ErrorMessage, RecoveryMessage)):
+                bot = self._bots.alert  # 错误/恢复消息发送到 Alert bot
 
             if bot:
                 await self._send_with_retry(bot, text)

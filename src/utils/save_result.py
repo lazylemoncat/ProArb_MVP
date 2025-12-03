@@ -134,14 +134,45 @@ class ResultsCsvHeader:
 RESULTS_CSV_HEADER = ResultsCsvHeader()
 
 POSITIONS_CSV_HEADER = [
+    # 基础信息
     "trade_id",
     "market_id",
-    "direction",
-    "contracts",
-    "entry_price_pm",
-    "im_usd",
+    "direction",           # "yes" 或 "no"
+    "strategy",            # 策略编号 (1 或 2)
+    "status",              # "OPEN", "DRY_RUN", "CLOSED", "EXITED"
     "entry_timestamp",
-    "status",
+
+    # PM 头寸信息
+    "pm_token_id",         # YES/NO token ID，用于执行卖单
+    "pm_tokens",           # 持有的 token 数量
+    "pm_entry_cost",       # PM 端投入成本（USDC）
+    "entry_price_pm",      # PM 入场均价
+
+    # DR 头寸信息
+    "contracts",           # Deribit 合约数量
+    "dr_entry_cost",       # DR 端入场成本（可为负=净收入）
+    "inst_k1",             # Deribit K1 合约名
+    "inst_k2",             # Deribit K2 合约名
+
+    # 行权价信息
+    "K_poly",              # Polymarket 边界价格
+    "K1",                  # 下行权价
+    "K2",                  # 上行权价
+
+    # 资本信息
+    "im_usd",              # 保证金（USD）
+    "capital_input",       # 总资本占用
+
+    # 到期信息
+    "expiry_date",         # 到期日 (YYYY-MM-DD)
+    "expiry_timestamp",    # 到期时间戳（毫秒）
+
+    # 平仓信息（平仓后填充）
+    "exit_timestamp",      # 平仓时间
+    "exit_price_pm",       # PM 平仓均价
+    "settlement_price",    # DR 结算价
+    "exit_pnl",            # 平仓盈亏
+    "exit_reason",         # "early_exit", "expired", "manual"
 ]
 
 

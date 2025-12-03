@@ -114,6 +114,20 @@ class LoggingConfig:
     trade_log_csv: str
     enable_debug: bool
 
+
+@dataclass
+class EarlyExitConfig:
+    """提前平仓配置"""
+    enabled: bool
+    check_time_window: bool
+    loss_threshold_pct: float
+    min_liquidity_multiplier: float
+    exit_fee_rate: float
+    check_interval_seconds: int
+    dry_run: bool
+    send_notifications: bool
+
+
 @dataclass
 class TradingConfig:
     mode: ModeConfig
@@ -123,6 +137,7 @@ class TradingConfig:
     alerts: AlertsConfig
     auth: AuthConfig
     logging: LoggingConfig
+    early_exit: EarlyExitConfig
 
 def read_trading_config(config_path: str):
     with open(config_path, "r", encoding="utf-8") as f:
@@ -223,6 +238,19 @@ def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "tra
         enable_debug=get_value_from_dict(config_data['logging'], 'enable_debug')
     )
 
+    # 加载提前平仓配置（如果不存在则使用默认值）
+    early_exit_data = config_data.get('early_exit', {})
+    early_exit_config = EarlyExitConfig(
+        enabled=early_exit_data.get('enabled', False),
+        check_time_window=early_exit_data.get('check_time_window', True),
+        loss_threshold_pct=early_exit_data.get('loss_threshold_pct', 0.05),
+        min_liquidity_multiplier=early_exit_data.get('min_liquidity_multiplier', 2.0),
+        exit_fee_rate=early_exit_data.get('exit_fee_rate', 0.0),
+        check_interval_seconds=early_exit_data.get('check_interval_seconds', 60),
+        dry_run=early_exit_data.get('dry_run', True),
+        send_notifications=early_exit_data.get('send_notifications', True),
+    )
+
     return TradingConfig(
         mode=mode_config,
         filters=filters_config,
@@ -230,5 +258,6 @@ def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "tra
         execution=execution_config,
         alerts=alerts_config,
         auth=auth_config,
-        logging=logging_config
+        logging=logging_config,
+        early_exit=early_exit_config
     )

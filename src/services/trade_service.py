@@ -428,15 +428,65 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
 
     # 保存头寸信息到 CSV
     position_status = "DRY_RUN" if dry_run else "OPEN"
+
+    # 从 row 提取完整的头寸信息
+    k_poly = _safe_float(row.get("K_poly"), default=0.0)
+    k1 = _safe_float(row.get("K1"), default=0.0)
+    k2 = _safe_float(row.get("K2"), default=0.0)
+
+    # 计算到期时间（从 Deribit 合约名解析或使用 days_to_expiry）
+    days_to_expiry = _safe_float(row.get("days_to_expiry"), default=0.0)
+    expiry_ts = int(time.time() * 1000 + days_to_expiry * 24 * 3600 * 1000)
+    expiry_date = datetime.fromtimestamp(expiry_ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+
+    # 计算 PM 入场成本和 DR 入场成本
+    pm_entry_cost = investment_usd  # PM 端投入成本 = 投资金额
+    # DR 入场成本 = Deribit 开仓费用（策略1卖牛差可能是净收入，策略2买牛差是净支出）
+    dr_entry_cost = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0) - pm_entry_cost
+
+    # 计算 PM token 数量
+    pm_tokens = investment_usd / limit_price if limit_price > 0 else 0.0
+
     position_data = {
+        # 基础信息
         "trade_id": tx_id,
         "market_id": market_id,
         "direction": result.direction,
-        "contracts": contracts,
-        "entry_price_pm": limit_price,
-        "im_usd": result.im_usd,
-        "entry_timestamp": datetime.now(timezone.utc).isoformat(),
+        "strategy": strategy,
         "status": position_status,
+        "entry_timestamp": datetime.now(timezone.utc).isoformat(),
+
+        # PM 头寸信息
+        "pm_token_id": token_id,
+        "pm_tokens": pm_tokens,
+        "pm_entry_cost": pm_entry_cost,
+        "entry_price_pm": limit_price,
+
+        # DR 头寸信息
+        "contracts": contracts,
+        "dr_entry_cost": dr_entry_cost,
+        "inst_k1": inst_k1,
+        "inst_k2": inst_k2,
+
+        # 行权价信息
+        "K_poly": k_poly,
+        "K1": k1,
+        "K2": k2,
+
+        # 资本信息
+        "im_usd": result.im_usd,
+        "capital_input": investment_usd + result.im_usd,
+
+        # 到期信息
+        "expiry_date": expiry_date,
+        "expiry_timestamp": expiry_ts,
+
+        # 平仓信息（开仓时为空）
+        "exit_timestamp": "",
+        "exit_price_pm": "",
+        "settlement_price": "",
+        "exit_pnl": "",
+        "exit_reason": "",
     }
 
     save_position_to_csv(position_data)

@@ -20,7 +20,7 @@ class OpportunityData(BaseModel):
 
 class TradeData(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    action: Literal["开仓", "平仓"]
+    action: Literal["开仓", "平仓", "提前平仓"]
     strategy: Literal[1, 2]
     market_title: str
     simulate: bool = False
@@ -28,7 +28,7 @@ class TradeData(BaseModel):
     pm_token: Literal["YES", "NO"]
     pm_price: float
     pm_amount_usd: float
-    deribit_action: Literal["卖出牛差", "买入牛差"]
+    deribit_action: Literal["卖出牛差", "买入牛差", "已结算"]
     deribit_k1: float
     deribit_k2: float
     deribit_contracts: float
@@ -39,6 +39,9 @@ class TradeData(BaseModel):
     net_ev: float
     note: Optional[str] = None
     timestamp: str
+    # 提前平仓专用字段
+    settlement_price: Optional[float] = None
+    exit_reason: Optional[str] = None
 
 
 class ErrorData(BaseModel):

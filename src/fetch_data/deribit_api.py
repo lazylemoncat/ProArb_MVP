@@ -155,3 +155,84 @@ class DeribitAPI:
         resp.raise_for_status()
 
         return resp.json()
+
+    @staticmethod
+    def get_delivery_price(
+        currency: Literal["BTC", "ETH"] = "BTC",
+        count: int = 1,
+    ) -> dict[str, Any]:
+        """
+        获取最近一次交割结算价
+
+        Deribit 每日 08:00 UTC 结算，返回结算价格信息。
+
+        参数：
+            currency: "BTC" 或 "ETH"
+            count: 返回的结算记录数量（默认1，即最近一次）
+
+        返回：
+            {
+                "delivery_price": float,      # 结算价格（USD）
+                "timestamp": int,             # 结算时间戳（毫秒）
+                "type": str,                  # 结算类型 ("delivery" 或 "settlement")
+                "instrument_name": str,       # 合约名称（如有）
+            }
+
+        异常：
+            ValueError: 无结算记录
+            requests.HTTPError: API 请求失败
+        """
+        url = f"{BASE_URL}/public/get_last_settlements_by_currency"
+        params = {
+            "currency": currency,
+            "type": "delivery",
+            "count": count,
+        }
+        resp = REQUESTS_SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+        resp.raise_for_status()
+
+        data = resp.json()
+        settlements = data.get("result", {}).get("settlements", [])
+
+        if not settlements:
+            raise ValueError(f"无 {currency} 结算记录")
+
+        latest = settlements[0]
+        return {
+            "delivery_price": float(latest.get("index_price", 0)),
+            "timestamp": int(latest.get("timestamp", 0)),
+            "type": latest.get("type", "unknown"),
+            "instrument_name": latest.get("instrument_name", ""),
+        }
+
+    @staticmethod
+    def get_index_delivery_price(
+        index_name: Literal["btc_usd", "eth_usd"] = "btc_usd",
+    ) -> dict[str, Any]:
+        """
+        获取指数的交割价格（08:00 UTC 结算价）
+
+        这是更直接的方式获取用于期权结算的指数价格。
+
+        参数：
+            index_name: "btc_usd" 或 "eth_usd"
+
+        返回：
+            {
+                "delivery_price": float,      # 08:00 UTC 结算价
+                "timestamp": int,             # 时间戳（毫秒）
+            }
+        """
+        # 先获取当前指数价格作为参考
+        url = f"{BASE_URL}/public/get_index_price"
+        params = {"index_name": index_name}
+        resp = REQUESTS_SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Deribit 的 index_price 在 08:00 UTC 之后会更新为结算价
+        # 我们返回当前值，调用方需要在正确时间调用
+        return {
+            "delivery_price": float(data["result"]["index_price"]),
+            "timestamp": int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000),
+        }
