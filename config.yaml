@@ -5,13 +5,12 @@ thresholds:
   notify_net_ev_min: 0.05
   check_interval_sec: 10
   INVESTMENTS: [1000]
-  MARGIN_USD: 1000
   min_contract_size: 0.1          #Deribit最小合约单位（BTC）
   min_pm_price: 0.01              # PM价格 < 0.01 拒绝
   max_pm_price: 0.99              # PM价格 > 0.99 拒绝
   min_net_ev: 0.0                 # 只接受正EV
   min_roi_pct: 0.0                # 只接受正ROI
-  dry_trade: false                 # 自动交易是否走模拟模式
+  dry_trade: true                 # 自动交易是否走模拟模式
   day_off: 1                      # 目标日期与今日的偏移（单位：天），例如今天 12/2、day_off=1 => 监控 12/3 市场
 
 events:

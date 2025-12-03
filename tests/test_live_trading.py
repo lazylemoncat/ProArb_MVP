@@ -210,8 +210,7 @@ def main() -> None:
     print("\n==== 使用说明 ====")
     print("1) 在终端复制运行：python src/test_live_trading.py")
     print("2) 按提示输入 Polymarket 的 CLOB id (yes_token_id) 与本次投入的 USD 金额。")
-    print("3) 如需实盘，请先导出交易所密钥，并将 ENABLE_LIVE_TRADING 设为 true/1/on/yes。")
-    print("4) 程序将先调用 execute_trade，再调用 /api/trade/execute 并打印结果。\n")
+    print("3) 程序将先调用 execute_trade，再调用 /api/trade/execute 并打印结果。\n")
 
     clob_id = input("请输入要买的 CLOB id: ").strip()
     amount_raw = input("请输入投入的 USD 金额: ").strip()
@@ -243,4 +242,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    # main()
+    pass

@@ -81,6 +81,3 @@ class Polymarket_trade:
                 if found:
                     return found
         return None
-
-
-

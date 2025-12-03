@@ -25,6 +25,10 @@ filters:
     max_pm_age_sec: 30
     max_db_age_sec: 15
     max_ev_age_sec: 60
+    # Wait time between trades
+    wait time:
+      min_wait_sec: 300
+
 
 # ----------------------------------------------------------------------------
 # RISK LIMITS — mapped directly into /trade/sim + /trade/execute

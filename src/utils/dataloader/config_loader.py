@@ -30,7 +30,6 @@ class ThresholdsConfig:
     notify_net_ev_min: float
     check_interval_sec: int
     INVESTMENTS: List[int]
-    MARGIN_USD: int
     min_contract_size: float
     min_pm_price: float
     max_pm_price: float
@@ -58,7 +57,6 @@ def load_config(config_path: str = os.getenv("CONFIG_PATH", "config.yaml")):
         notify_net_ev_min=get_value_from_dict(row_config['thresholds'], 'notify_net_ev_min'),
         check_interval_sec=get_value_from_dict(row_config['thresholds'], 'check_interval_sec'),
         INVESTMENTS=get_value_from_dict(row_config['thresholds'], 'INVESTMENTS'),
-        MARGIN_USD=get_value_from_dict(row_config['thresholds'], 'MARGIN_USD'),
         min_contract_size=get_value_from_dict(row_config['thresholds'], 'min_contract_size'),
         min_pm_price=get_value_from_dict(row_config['thresholds'], 'min_pm_price'),
         max_pm_price=get_value_from_dict(row_config['thresholds'], 'max_pm_price'),

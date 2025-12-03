@@ -276,7 +276,7 @@ def _require_cols(row: Dict[str, Any], cols: list[str], *, market_id: str, inves
         )
 
 
-async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float, dry_run: bool) -> tuple[TradeResult, str, Optional[str], Optional[str]]:
+async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float, dry_run: bool, should_record_signal: bool) -> tuple[TradeResult, str, Optional[str], Optional[str]]:
     """
     返回 (result, status, tx_id, message)
     - dry_run=True: 仅 simulation，返回 status=DRY_RUN
@@ -469,55 +469,56 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
 
     save_position_to_csv(position_data)
 
-    # --- Telegram: trade log (Bot2) ---
-    try:
-        tg = get_worker()
+    if should_record_signal:
+        # --- Telegram: trade log (Bot2) ---
+        try:
+            tg = get_worker()
 
-        asset = str(row.get("asset") or "")
-        k_poly = _safe_float(row.get("K_poly"), default=0.0)
-        market_title = f"{asset.upper()} > ${int(round(k_poly)):,}" if asset and k_poly else str(row.get("market_title") or market_id)
+            asset = str(row.get("asset") or "")
+            k_poly = _safe_float(row.get("K_poly"), default=0.0)
+            market_title = f"{asset.upper()} > ${int(round(k_poly)):,}" if asset and k_poly else str(row.get("market_title") or market_id)
 
-        # 从CSV读取正确的开仓成本（不包含投资本金）
-        open_cost_fee_bucket = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0)
+            # 从CSV读取正确的开仓成本（不包含投资本金）
+            open_cost_fee_bucket = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0)
 
-        # 注意：open_cost_fee_bucket 已经包含所有开仓费用：
-        # - PM开仓成本: $0（滑点已包含在平均价中）
-        # - Deribit开仓费: 手续费 + 滑点
-        # - Gas费: 如果启用
+            # 注意：open_cost_fee_bucket 已经包含所有开仓费用：
+            # - PM开仓成本: $0（滑点已包含在平均价中）
+            # - Deribit开仓费: 手续费 + 滑点
+            # - Gas费: 如果启用
 
-        # 为了向后兼容，保留 fees_total 计算（但不再使用）
-        slippage_rate = float(result.slippage_pct or 0.0)
-        slippage_usd = float(investment_usd * slippage_rate)
-        fees_total = max(0.0, float(open_cost_fee_bucket - slippage_usd))
+            # 为了向后兼容，保留 fees_total 计算（但不再使用）
+            slippage_rate = float(result.slippage_pct or 0.0)
+            slippage_usd = float(investment_usd * slippage_rate)
+            fees_total = max(0.0, float(open_cost_fee_bucket - slippage_usd))
 
-        k1 = _safe_float(row.get("K1"), default=0.0)
-        k2 = _safe_float(row.get("K2"), default=0.0)
+            k1 = _safe_float(row.get("K1"), default=0.0)
+            k2 = _safe_float(row.get("K2"), default=0.0)
 
-        tg.publish({
-            "type": "trade",
-            "data": {
-                "action": "开仓",
-                "strategy": int(strategy),
-                "market_title": market_title,
-                "simulate": bool(dry_run),
-                "pm_side": "买入",
-                "pm_token": "YES" if strategy == 1 else "NO",
-                "pm_price": float(limit_price),          # 注意：这里用 limit_price 近似成交均价
-                "pm_amount_usd": float(investment_usd),
-                "deribit_action": "卖出牛差" if strategy == 1 else "买入牛差",
-                "deribit_k1": float(k1),
-                "deribit_k2": float(k2),
-                "deribit_contracts": float(contracts),
-                "fees_total": float(fees_total),
-                "slippage_usd": float(slippage_usd),
-                "open_cost": float(open_cost_fee_bucket),  # ✅ 修复：直接使用正确的开仓成本，不包含投资额
-                "margin_usd": float(result.im_usd),
-                "net_ev": float(result.net_profit_usd),
-                "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            }
-        })
-    except Exception as exc:
-        # 发送失败不影响交易流程，但需要记录日志便于排查
-        logger.warning("Failed to publish Telegram trade notification: %s", exc, exc_info=True)
+            tg.publish({
+                "type": "trade",
+                "data": {
+                    "action": "开仓",
+                    "strategy": int(strategy),
+                    "market_title": market_title,
+                    "simulate": bool(dry_run),
+                    "pm_side": "买入",
+                    "pm_token": "YES" if strategy == 1 else "NO",
+                    "pm_price": float(limit_price),          # 注意：这里用 limit_price 近似成交均价
+                    "pm_amount_usd": float(investment_usd),
+                    "deribit_action": "卖出牛差" if strategy == 1 else "买入牛差",
+                    "deribit_k1": float(k1),
+                    "deribit_k2": float(k2),
+                    "deribit_contracts": float(contracts),
+                    "fees_total": float(fees_total),
+                    "slippage_usd": float(slippage_usd),
+                    "open_cost": float(open_cost_fee_bucket),  # ✅ 修复：直接使用正确的开仓成本，不包含投资额
+                    "margin_usd": float(result.im_usd),
+                    "net_ev": float(result.net_profit_usd),
+                    "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                }
+            })
+        except Exception as exc:
+            # 发送失败不影响交易流程，但需要记录日志便于排查
+            logger.warning("Failed to publish Telegram trade notification: %s", exc, exc_info=True)
 
     return result, status, tx_id, msg

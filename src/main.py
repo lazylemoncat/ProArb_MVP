@@ -1,30 +1,3 @@
-"""
-ProArb_MVP Main Entry Point
-
-⚠️ IMPORTANT: This file must be run as a module, not as a script!
-
-Correct:   python3 -m src.main
-Wrong:     python3 src/main.py  (will cause ImportError)
-
-This is required due to relative imports used throughout the codebase.
-"""
-
-# Check if being run incorrectly (as a script instead of as a module)
-if __name__ == "__main__" and __package__ is None:
-    import sys
-    print("\n" + "="*80)
-    print("❌ ERROR: This file must be run as a module, not as a script!")
-    print("="*80)
-    print("\n✅ CORRECT usage:")
-    print("   python3 -m src.main")
-    print("\n❌ WRONG usage (this is what you just tried):")
-    print("   python3 src/main.py")
-    print("\n💡 Why? This codebase uses relative imports (e.g., 'from .fetch_data import...')")
-    print("   which only work when running as a module with the -m flag.")
-    print("\n📖 See CLAUDE.md for more information.")
-    print("="*80 + "\n")
-    sys.exit(1)
-
 import asyncio
 import logging
 import os
@@ -363,7 +336,7 @@ async def loop_event(
     # 机会提醒阈值：用你 config.yaml 的 ev_spread_min 作为“概率优势”最小值（例如 0.05 = 5%）
     prob_edge_min = float(thresholds.get("ev_spread_min", 0.0))
     net_ev_min = float(thresholds.get("notify_net_ev_min", 0.0))  # 可选：不配就默认 0
-    cooldown_sec = float(thresholds.get("telegram_opportunity_cooldown_sec", 300))  # 可选：默认 5 分钟
+    cooldown_sec = float(thresholds.get("telegram_opportunity_cooldown_sec", 0))  # 可选：默认 5 分钟
     min_contract_size = float(thresholds.get("min_contract_size", 0.0))
     min_pm_price = float(thresholds.get("min_pm_price", 0.0))
     max_pm_price = float(thresholds.get("max_pm_price", 1.0))
@@ -487,26 +460,21 @@ async def loop_event(
                 )
                 continue
 
-            if should_record_signal:
-                signal_state[signal_key] = SignalSnapshot(
-                    recorded_at=datetime.now(timezone.utc),
-                    net_ev=net_ev,
-                    roi_pct=roi_pct,
-                    pm_price=pm_price,
-                    deribit_price=deribit_price,
-                    strategy=int(strategy),
-                )
-            else:
-                console.print(
-                    "⏸️ [dim]信号未满足记录条件（时间/EV变化/状态/市场阈值），本次仅跳过信号记录。[/dim]"
-                )
+            signal_state[signal_key] = SignalSnapshot(
+                recorded_at=datetime.now(timezone.utc),
+                net_ev=net_ev,
+                roi_pct=roi_pct,
+                pm_price=pm_price,
+                deribit_price=deribit_price,
+                strategy=int(strategy),
+            )
 
             # 控制台输出
-                console.print(
-                    f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
-                    f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
-                    f"IM={float(result.im_usd):.2f}"
-                )
+            console.print(
+                f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
+                f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
+                f"IM={float(result.im_usd):.2f}"
+            )
 
             # 发送套利机会到 Alert Bot（带冷却）
             try:
@@ -553,6 +521,7 @@ async def loop_event(
                     market_id=market_id,
                     investment_usd=inv_base_usd,
                     dry_run=dry_trade_mode,
+                    should_record_signal=should_record_signal
                 )
                 console.print(
                     f"✅ 自动交易{ ' (dry-run)' if dry_trade_mode else ''} 成功: status={status}, tx_id={tx_id}, "
@@ -700,8 +669,6 @@ async def run_monitor(config: dict) -> None:
 
 async def main(config_path: str = "config.yaml") -> None:
     config = load_all_configs()
-    if config.get("ENABLE_LIVE_TRADING"):
-        ensure_signing_ready(require_token=True)
     await run_monitor(config)
 
 
