@@ -57,6 +57,8 @@ from .utils.save_result import (
     rewrite_csv_with_header,
     save_result_csv,
 )
+from .strategy.early_exit_executor import run_early_exit_check
+from .strategy.early_exit import is_in_early_exit_window
 
 app = FastAPI()
 
@@ -667,6 +669,37 @@ async def run_monitor(config: dict) -> None:
                 except Exception as e:
                     title = data.get("polymarket", {}).get("market_title", "UNKNOWN")
                     console.print(f"❌ [red]处理 {title} 时出错: {e}[/red]")
+
+        # ======== 提前平仓检查 ========
+        # 在每个监控周期内检查是否有需要提前平仓的持仓
+        try:
+            early_exit_cfg = config.get("early_exit", {})
+            if early_exit_cfg.get("enabled", False):
+                in_window, window_reason = is_in_early_exit_window()
+                if in_window:
+                    console.print(f"\n🔍 [cyan]检查提前平仓: {window_reason}[/cyan]")
+                    dry_run = early_exit_cfg.get("dry_run", True)
+                    exit_results = await run_early_exit_check(
+                        early_exit_cfg=early_exit_cfg,
+                        dry_run=dry_run,
+                        csv_path="data/positions.csv",
+                    )
+                    if exit_results:
+                        for result in exit_results:
+                            status_emoji = "✅" if result.success else "❌"
+                            pnl_emoji = "🟢" if result.exit_pnl >= 0 else "🔴"
+                            console.print(
+                                f"  {status_emoji} trade_id={result.trade_id} | "
+                                f"{pnl_emoji} pnl=${result.exit_pnl:.2f} | "
+                                f"exit_price={result.exit_price:.4f}"
+                            )
+                    else:
+                        console.print("  [dim]没有需要提前平仓的持仓[/dim]")
+                else:
+                    console.print(f"\n⏸️ [dim]提前平仓: {window_reason}[/dim]")
+        except Exception as exc:
+            health.error("提前平仓", str(exc))
+            console.print(f"❌ [red]提前平仓检查失败: {exc}[/red]")
 
         console.print(
             f"\n[dim]⏳ 等待 {check_interval} 秒后重连 Deribit/Polymarket 数据流...[/dim]\n"

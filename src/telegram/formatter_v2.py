@@ -57,6 +57,27 @@ def format_message(msg: TelegramMessage) -> str:
 
     if isinstance(msg, TradeMessage):
         d = msg.data
+
+        # 提前平仓使用不同的格式
+        if d.action == "提前平仓":
+            pnl_emoji = "🟢" if d.net_ev >= 0 else "🔴"
+            sim_tag = "【模拟】" if d.simulate else ""
+            lines = [
+                f"⚡ 提前平仓{sim_tag}",
+                f"市场: {d.market_title}",
+                f"策略: {d.strategy} ({_strategy_desc(d.strategy)})",
+                f"",
+                f"📊 DR结算价: ${_fmt_money(d.settlement_price)}" if d.settlement_price else None,
+                f"PM: {d.pm_side} {d.pm_token} @ ${d.pm_price:.4f}",
+                f"Deribit: {d.deribit_action} ({d.deribit_contracts:.6f}份)",
+                f"",
+                f"{pnl_emoji} 平仓盈亏: ${_fmt_money(d.net_ev)}",
+                f"💡 原因: {d.exit_reason}" if d.exit_reason else None,
+                f"⏰ {_fmt_ts_iso_to_utc(d.timestamp)}",
+            ]
+            return "\n".join(line for line in lines if line is not None)
+
+        # 开仓/平仓使用原有格式
         lines = [
             "💰 交易已执行",
             f"类型: {d.action}",
