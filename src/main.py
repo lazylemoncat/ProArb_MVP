@@ -481,7 +481,7 @@ async def loop_event(
                 opportunity_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
                 last_sent = opp_state.get(opportunity_key)
                 now_ts = datetime.now(timezone.utc)
-                if last_sent and (now_ts - last_sent).total_seconds() < cooldown_sec:
+                if should_record_signal or last_sent and (now_ts - last_sent).total_seconds() < cooldown_sec:
                     console.print(
                         "[dim]⏸️ 已在冷却时间内，跳过重复的套利提醒。[/dim]"
                     )
