@@ -152,9 +152,9 @@ class TelegramWorker:
 
         msg_type = message.get("type")
 
-        # Bot 1 (Alert): opportunity, error, recovery
+        # Bot 1 (Alert): opportunity with positive EV only
         # Bot 2 (Trading): trade
-        allowed_types = {"opportunity", "trade", "error", "recovery"}
+        allowed_types = {"opportunity", "trade"}
 
         if msg_type not in allowed_types:
             return
@@ -230,8 +230,8 @@ class TelegramWorker:
             elif isinstance(msg, TradeMessage):
                 bot = self._bots.trading
             elif isinstance(msg, (ErrorMessage, RecoveryMessage)):
-                bot = self._bots.alert  # 错误/恢复消息发送到 Alert bot
-
+                logger.debug("skip sending %s message via alert bot", obj.get("type"))
+            
             if bot:
                 await self._send_with_retry(bot, text)
                 logger.info("telegram sent %s message", obj.get("type"))

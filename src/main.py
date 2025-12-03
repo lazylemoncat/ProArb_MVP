@@ -502,11 +502,44 @@ async def loop_event(
                 )
 
             # 控制台输出
-            console.print(
-                f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
-                f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
-                f"IM={float(result.im_usd):.2f}"
-            )
+                console.print(
+                    f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
+                    f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
+                    f"IM={float(result.im_usd):.2f}"
+                )
+
+            # 发送套利机会到 Alert Bot（带冷却）
+            try:
+                opportunity_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
+                last_sent = opp_state.get(opportunity_key)
+                now_ts = datetime.now(timezone.utc)
+                if last_sent and (now_ts - last_sent).total_seconds() < cooldown_sec:
+                    console.print(
+                        "[dim]⏸️ 已在冷却时间内，跳过重复的套利提醒。[/dim]"
+                    )
+                else:
+                    opp_state[opportunity_key] = now_ts
+                    tg_worker.publish(
+                        {
+                            "type": "opportunity",
+                            "data": {
+                                "market_title": market_title,
+                                "net_ev": float(net_ev),
+                                "strategy": int(strategy),
+                                "prob_diff": float(abs(prob_diff)),
+                                "pm_price": float(pm_price),
+                                "deribit_price": float(deribit_price),
+                                "investment": float(inv_base_usd),
+                                "data_lag_seconds": float(data_lag_seconds),
+                                "ROI": roi_str,
+                                "timestamp": now_ts.replace(microsecond=0)
+                                .isoformat()
+                                .replace("+00:00", "Z"),
+                            },
+                        }
+                    )
+            except Exception as exc:
+                logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
 
             # 写入本次检测结果
             csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
