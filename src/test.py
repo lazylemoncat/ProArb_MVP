@@ -1,23 +1,35 @@
+from __future__ import annotations
+
+import logging
 import os
 from typing import Any, Dict
 
+import requests
+from dotenv import load_dotenv
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs
+from py_clob_client.exceptions import PolyApiException
 from py_clob_client.order_builder.constants import BUY
 from py_clob_client.exceptions import PolyApiException
-
-import logging
-from dotenv import load_dotenv
-import requests
 from web3 import Web3
 
 load_dotenv()
 
+HOST = "https://clob.polymarket.com"
+CHAIN_ID = 137
+DEFAULT_PROXY_FUNDER = "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"
+DEFAULT_TOKEN_ID = "73598490064107318565005114994104398195344624125668078818829746637727926056405"
+DEFAULT_PRICE = 0.01
+DEFAULT_SIZE = 5.0
+
+logging.basicConfig(
+    level="INFO",
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 class SigningError(RuntimeError):
     """Raised when remote signing is misconfigured or rejected."""
-
-
-logger = logging.getLogger(__name__)
 
 
 def get_signer_url() -> str:
@@ -41,17 +53,11 @@ def ensure_signing_ready(*, require_token: bool = True, log: bool = True) -> str
         logger.info("remote signer config: %s", status)
     return status
 
+
 def remote_sign_and_send(w3: Web3, tx_params: Dict[str, Any], *, retries: int = 2, timeout: float = 3.0) -> str:
-    """Send tx_params to the signing service and broadcast the signed tx.
+    """Send tx_params to the signing service and broadcast the signed tx."""
 
-    The signing service enforces strategy rules; this helper handles the
-    high-level error semantics described in the signer documentation:
-    - 400: logic error (e.g., wrong chainId/value) -> do not retry.
-    - 401: auth error -> caller should update SIGNING_TOKEN.
-    - 5xx/network: retry up to ``retries`` times.
-    """
-
-    if tx_params.get("chainId") != 137:
+    if tx_params.get("chainId") != CHAIN_ID:
         raise SigningError("chainId must be 137 for Polygon mainnet")
     if int(tx_params.get("value", 0)) != 0:
         raise SigningError("value must be 0 for the current signing strategy")
@@ -84,56 +90,96 @@ def remote_sign_and_send(w3: Web3, tx_params: Dict[str, Any], *, retries: int = 
     raise SigningError(f"failed to reach signer after {retries + 1} attempts: {last_error}")
 
 
-HOST = "https://clob.polymarket.com"
-CHAIN_ID = 137
-cfg = {
-    "polymarket_secret": remote_sign_and_send()
-}
-PRIVATE_KEY = os.getenv("POLYMARKET_PRIVATE_KEY") or cfg.get("polymarket_secret")
-if not PRIVATE_KEY:
-    raise RuntimeError("Missing env/config: POLYMARKET_PRIVATE_KEY or polymarket_secret")
-PROXY_FUNDER = (
-    os.getenv("POLYMARKET_PROXY_ADDRESS")
-    or cfg.get("POLYMARKET_PROXY_ADDRESS")
-    or "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"
-)
+def build_client() -> ClobClient:
+    """Create a configured ``ClobClient`` using environment defaults."""
 
-signer_status = ensure_signing_ready(require_token=False, log=False)
-print(f"[signer] {signer_status}")
+    # Use remote signing to get the private key
+    w3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))  # Ensure Web3 is connected
+    from_addr = "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D"
 
-client = ClobClient(
-    HOST,  # The CLOB API endpoint
-    key=PRIVATE_KEY,  # Your wallet's private key
-    chain_id=CHAIN_ID,  # Polygon chain ID (137)
-    signature_type=1,  # 1 for email/Magic wallet signatures
-    funder=PROXY_FUNDER,  # Address that holds your funds
-)
-client.set_api_creds(client.create_or_derive_api_creds())
+    # Define contract ABI for the setPrice function (example)
+    contract_abi = [
+        {
+            "constant": False,
+            "inputs": [
+                {"name": "price", "type": "uint256"}
+            ],
+            "name": "setPrice",
+            "outputs": [],
+            "payable": False,
+            "stateMutability": "nonpayable",
+            "type": "function"
+        }
+    ]
 
-# mo = MarketOrderArgs(
-#     token_id="73598490064107318565005114994104398195344624125668078818829746637727926056405", 
-#     amount=1.0, 
-#     side=BUY, 
-#     order_type=OrderType.FOK
-# )  # Get a token ID: https://docs.polymarket.com/developers/gamma-markets-api/get-markets
-# signed = client.create_market_order(mo)
-# resp = client.post_order(signed, OrderType.FOK)
-# print(resp)
+    # Get contract instance
+    contract_address = "0x91430CaD2d3975766499717fA0D66A78D814E5c5"  # Polymarket contract address
+    contract = w3.eth.contract(address=contract_address, abi=contract_abi)
 
-try:
-    order_args = OrderArgs(
-        price=0.01,
-        size=5.0,
-        side=BUY,
-        token_id="73598490064107318565005114994104398195344624125668078818829746637727926056405", #Token ID you want to purchase goes here. 
+    # Example parameter for setPrice function
+    price = 1000
+
+    # Encode calldata for the setPrice function using the contract's functions
+    # Correct way to get calldata with web3.py
+    encoded_data = contract.encodeABI(fn_name="setPrice", args=[price])
+
+    # Get nonce and create transaction parameters
+    nonce = w3.eth.get_transaction_count(from_addr, "pending")
+    tx_params = {
+        "nonce": nonce,
+        "gas": 250000,
+        "gasPrice": w3.to_wei("30", "gwei"),
+        "to": contract_address,
+        "value": 0,
+        "data": encoded_data,  # Use the encoded calldata here
+        "chainId": CHAIN_ID,
+    }
+
+    # Use remote signing to sign the transaction and get the transaction hash
+    signed_tx_hash = remote_sign_and_send(w3, tx_params)
+    logger.info(f"Signed transaction hash: {signed_tx_hash}")
+
+    private_key = signed_tx_hash  # In practice, you'd get the private key from the remote signing service
+
+    proxy_funder = os.getenv("POLYMARKET_PROXY_ADDRESS") or DEFAULT_PROXY_FUNDER
+
+    signer_status = ensure_signing_ready(require_token=False, log=False)
+
+    client = ClobClient(
+        HOST,
+        key=private_key,  # Now using the signed transaction as the key
+        chain_id=CHAIN_ID,
+        signature_type=1,
+        funder=proxy_funder,
     )
+    client.set_api_creds(client.create_or_derive_api_creds())
+    return client
+
+
+def place_gtc_order(client: ClobClient, token_id: str, price: float, size: float) -> dict[str, Any]:
+    """Create and post a Good-Till-Cancelled order."""
+
+    order_args = OrderArgs(price=price, size=size, side=BUY, token_id=token_id)
     signed_order = client.create_order(order_args)
+    return client.post_order(signed_order)
 
-    ## GTC(Good-Till-Cancelled) Order
-    resp = client.post_order(signed_order)
-    print(resp)
-except PolyApiException as e:
-    print(f"polyapi exception: {e}")
-except Exception as e:
-    print(f"something wrong: {e}")
 
+def main() -> None:
+    token_id = os.getenv("POLYMARKET_TEST_TOKEN_ID", DEFAULT_TOKEN_ID)
+    price = float(os.getenv("POLYMARKET_TEST_PRICE", str(DEFAULT_PRICE)))
+    size = float(os.getenv("POLYMARKET_TEST_SIZE", str(DEFAULT_SIZE)))
+
+    client = build_client()
+    logger.info("Attempting order: token_id=%s price=%s size=%s", token_id, price, size)
+
+    try:
+        response = place_gtc_order(client, token_id=token_id, price=price, size=size)
+        print(response)
+    except PolyApiException as exc:
+        logger.error("polyapi exception: %s", exc)
+    except Exception as exc:  # noqa: BLE001 - top-level testing script
+        logger.error("something wrong: %s", exc)
+
+
+if __name__ == "__main__":
+    main()

@@ -127,7 +127,7 @@ async def _send_rpc(websocket: ClientConnection, msg: Dict[str, Any]) -> Dict[st
 
 async def deribit_websocket_auth(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg) -> Dict[str, Any]:
     msg = {
-        "id": int(deribitUserCfg.user_id),
+        "id": str(deribitUserCfg.user_id),
         "jsonrpc": "2.0",
         "method": "public/auth",
         "params": {
@@ -147,7 +147,7 @@ async def open_position(
     type: str = "market",
 ) -> Dict[str, Any]:
     msg = {
-        "id": int(deribitUserCfg.user_id),
+        "id": str(deribitUserCfg.user_id),
         "jsonrpc": "2.0",
         "method": "private/buy",
         "params": {"amount": amount, "instrument_name": instrument_name, "type": type},
@@ -163,7 +163,7 @@ async def close_position(
     type: str = "market",
 ) -> Dict[str, Any]:
     msg = {
-        "id": int(deribitUserCfg.user_id),
+        "id": str(deribitUserCfg.user_id),
         "jsonrpc": "2.0",
         "method": "private/sell",
         "params": {"amount": amount, "instrument_name": instrument_name, "type": type},
@@ -191,6 +191,31 @@ async def sell(deribitUserCfg: DeribitUserCfg, amount: float, instrument_name: s
             deribitUserCfg=deribitUserCfg,
             instrument_name=instrument_name,
         )
+    
+async def get_margins(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg, instrument_name: str, amount, price):
+    msg = {
+        "id": str(deribitUserCfg.user_id),
+        "jsonrpc":"2.0", 
+        "method":"private/get_margins", 
+        "params": {
+            "amount": amount, 
+            "instrument_name": instrument_name, 
+            "price": price
+        }
+    }
+    return await _send_rpc(websocket, msg)
+
+async def get_positions(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg):
+    msg = {
+        "id": str(deribitUserCfg.user_id),
+        "jsonrpc": "2.0",
+        "method": "private/get_positions",
+        "params": {
+            "currency": "BTC",
+            "kind": "option"
+        }
+    }
+    return await _send_rpc(websocket, msg)
 
 
 async def execute_vertical_spread(
@@ -330,15 +355,85 @@ def _prompt_float(label: str) -> float:
         print("输入格式不正确，需要数字。")
         sys.exit(1)
 
+async def execute_single_leg_trade(
+    deribitUserCfg: DeribitUserCfg,
+    contracts: float,
+    instrument_name: str,
+    strategy: int,
+) -> Tuple[List[Dict[str, Any]], List[Optional[str]], float]:
+    """
+    执行单腿操作：
+      - strategy=1: 卖出合约（sell）
+      - strategy=2: 买入合约（buy）
+
+    返回 (responses, order_ids, executed_amount)
+    """
+    amount = float(contracts)
+
+    async with websockets.connect(WS_URL) as websocket:
+        await deribit_websocket_auth(websocket, deribitUserCfg)
+        print(await get_positions(websocket, deribitUserCfg))
+        print(await get_margins(websocket, deribitUserCfg, instrument_name, amount, 1000))
+        resps: List[Dict[str, Any]] = []
+        ids: List[Optional[str]] = []
+        executed_amount = amount
+
+        def _filled_amount(resp: Dict[str, Any], *, default: float) -> float:
+            order = resp.get("result", {}).get("order", {}) if isinstance(resp, dict) else {}
+            for key in ("filled_amount", "filledAmount", "amount_filled", "filled"):
+                val = order.get(key)
+                if val is not None:
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        continue
+            try:
+                return float(order.get("amount", default))
+            except (TypeError, ValueError):
+                return default
+
+        if strategy == 1:  # 卖出
+            r1 = await close_position(websocket, deribitUserCfg, amount=amount, instrument_name=instrument_name)
+        elif strategy == 2:  # 买入
+            r1 = await open_position(websocket, deribitUserCfg, amount=amount, instrument_name=instrument_name)
+        else:
+            raise ValueError("strategy must be 1 or 2")
+
+        resps.append(r1)
+        ids.append(_extract_order_id(r1))
+
+        filled1 = _filled_amount(r1, default=amount)
+        executed_amount = filled1
+
+        return resps, ids, executed_amount
+
+def run_single_leg_trade(inst_k1: str, contracts: float, strategy: int, *, dry_run: bool) -> None:
+    if strategy not in (1, 2):
+        raise ValueError("strategy 需为 1 或 2")
+
+    print("\n==== Deribit 单腿交易 ====")
+    print(f"inst_k1={inst_k1}")
+    print(f"contracts={contracts}")
+    print(f"strategy={'卖出(1)' if strategy == 1 else '买入(2)'}")
+
+    if dry_run:
+        print("\n当前为干跑模式，不会向 Deribit 发送真实订单。")
+        return
+
+    cfg = _load_deribit_cfg()
+    resps, ids, executed = asyncio.run(
+        execute_single_leg_trade(cfg, contracts=contracts, instrument_name=inst_k1, strategy=strategy)
+    )
+    _print_responses(resps, ids, executed)
+
 
 def main() -> None:
-    print("\n==== Deribit 双腿下单测试 ====")
-    print("说明：本脚本仅用于测试 Deribit 交易链路，不会调用 Polymarket。")
+    print("\n==== Deribit 单腿下单测试 ====")
+    print("说明：本脚本仅用于测试 Deribit 单腿买入或卖出，不会调用 Polymarket。")
 
-    inst_k1 = input("请输入 inst_k1（第一条腿合约名）: ").strip()
-    inst_k2 = input("请输入 inst_k2（第二条腿合约名）: ").strip()
+    inst_k1 = input("请输入 inst_k1（合约名）: ").strip()
     contracts = _prompt_float("请输入合约数量（支持小数）: ")
-    strategy_raw = input("请选择策略方向（1=卖价差, 2=买价差）: ").strip()
+    strategy_raw = input("请选择策略方向（1=卖出, 2=买入）: ").strip()
 
     try:
         strategy = int(strategy_raw)
@@ -350,7 +445,7 @@ def main() -> None:
     print("当前模式：", "实盘" if not dry_run else "干跑 (dry-run)")
 
     try:
-        run_deribit_spread(inst_k1, inst_k2, contracts, strategy, dry_run=dry_run)
+        run_single_leg_trade(inst_k1, contracts, strategy, dry_run=dry_run)
     except Exception as exc:  # pragma: no cover - 以易读格式打印错误
         print("\nDeribit 下单失败：", exc)
 
