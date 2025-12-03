@@ -93,42 +93,6 @@ class SignalSnapshot:
     strategy: int
 
 
-class _ComponentHealth:
-    """只在 down->up/up->down 变化时发 error/recovery，避免刷屏。"""
-    def __init__(self, tg_worker):
-        self.tg = tg_worker
-        self.down_since: dict[str, datetime] = {}
-        self.last_error_sent: dict[str, datetime] = {}
-
-    def error(self, component: str, error_msg: str) -> None:
-        now = datetime.now(timezone.utc)
-        if component not in self.down_since:
-            self.down_since[component] = now
-            self.tg.publish({
-                "type": "error",
-                "data": {
-                    "component": component,
-                    "error_msg": error_msg,
-                    "timestamp": _iso_utc_now(),
-                }
-            })
-
-    def recovery(self, component: str) -> None:
-        if component not in self.down_since:
-            return
-        now = datetime.now(timezone.utc)
-        since = self.down_since.pop(component)
-        mins = max(0.0, (now - since).total_seconds() / 60.0)
-        self.tg.publish({
-            "type": "recovery",
-            "data": {
-                "component": component,
-                "downtime_minutes": mins,
-                "timestamp": _iso_utc_now(),
-            }
-        })
-
-
 def _should_record_signal(
     previous: SignalSnapshot | None,
     *,
@@ -392,7 +356,6 @@ async def loop_event(
     instruments_map: dict,
     *,
     tg_worker,
-    health: _ComponentHealth,
     thresholds: dict,
     opp_state: dict,
     signal_state: dict[str, SignalSnapshot],
@@ -563,12 +526,10 @@ async def loop_event(
                     f"direction={trade_result.direction}, contracts={trade_result.contracts:.4f}, net_ev=${trade_result.net_profit_usd:.2f}"
                 )
             except TradeApiError as exc:
-                health.error("交易执行", exc.message)
                 console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                health.error("交易执行", str(exc))
                 logger.exception("交易执行异常: %s", exc)
                 console.print(f"❌ 交易执行异常 ({market_id}, 投资={inv_base_usd}): {exc}")
                 raise
@@ -576,7 +537,6 @@ async def loop_event(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            health.error("投资引擎", f"{_fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)} | {exc}")
             logger.exception("投资引擎异常: %s", exc)
             console.print(f"❌ 处理 {inv_base_usd:.0f} USD 投资时出错: {exc}")
             raise
@@ -600,7 +560,6 @@ async def run_monitor(config: dict) -> None:
     day_off = int(thresholds.get("day_off", 1))
 
     tg_worker = get_worker()
-    health = _ComponentHealth(tg_worker)
     opp_state: dict = {}
     signal_state: dict[str, SignalSnapshot] = {}
 
@@ -662,7 +621,6 @@ async def run_monitor(config: dict) -> None:
                         output_csv=output_csv,
                         instruments_map=instruments_map,
                         tg_worker=tg_worker,
-                        health=health,
                         thresholds=thresholds,
                         opp_state=opp_state,
                         signal_state=signal_state,
@@ -699,7 +657,6 @@ async def run_monitor(config: dict) -> None:
                 else:
                     console.print(f"\n⏸️ [dim]提前平仓: {window_reason}[/dim]")
         except Exception as exc:
-            health.error("提前平仓", str(exc))
             console.print(f"❌ [red]提前平仓检查失败: {exc}[/red]")
 
         console.print(
