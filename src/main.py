@@ -336,7 +336,7 @@ async def loop_event(
     # 机会提醒阈值：用你 config.yaml 的 ev_spread_min 作为“概率优势”最小值（例如 0.05 = 5%）
     prob_edge_min = float(thresholds.get("ev_spread_min", 0.0))
     net_ev_min = float(thresholds.get("notify_net_ev_min", 0.0))  # 可选：不配就默认 0
-    cooldown_sec = float(thresholds.get("telegram_opportunity_cooldown_sec", 0))  # 可选：默认 5 分钟
+    cooldown_sec = float(thresholds.get("telegram_opportunity_cooldown_sec", 300))  # 可选：默认 5 分钟
     min_contract_size = float(thresholds.get("min_contract_size", 0.0))
     min_pm_price = float(thresholds.get("min_pm_price", 0.0))
     max_pm_price = float(thresholds.get("max_pm_price", 1.0))
@@ -481,7 +481,7 @@ async def loop_event(
                 opportunity_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
                 last_sent = opp_state.get(opportunity_key)
                 now_ts = datetime.now(timezone.utc)
-                if should_record_signal or last_sent and (now_ts - last_sent).total_seconds() < cooldown_sec:
+                if last_sent and (now_ts - last_sent).total_seconds() < cooldown_sec:
                     console.print(
                         "[dim]⏸️ 已在冷却时间内，跳过重复的套利提醒。[/dim]"
                     )
