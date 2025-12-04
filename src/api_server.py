@@ -12,6 +12,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from .fetch_data.polymarket_api import PolymarketAPI
 from .services.api_models import (
     DBSnapshotResponse,
     EVResponse,
@@ -230,28 +231,53 @@ async def get_positions():
     total_margin = 0
     total_unrealized_pnl = 0
     open_positions_count = 0
+    price_cache: dict[str, list[float]] = {}
 
     # 读取 CSV 文件中的数据
     with open(positions_file, mode='r', encoding='utf-8') as file:
         reader = csv.DictReader(file)
         for row in reader:
-            # 假设 CSV 中的每一行包含必要的数据
             entry_price_pm = float(row.get("entry_price_pm", 0) or 0)
             contracts = float(row.get("contracts", 0) or 0)
             im_usd = float(row.get("im_usd", 0) or 0)
+            pm_tokens = float(row.get("pm_tokens", 0) or 0)
+            pm_entry_cost = float(row.get("pm_entry_cost", 0) or 0)
+
+            market_id = row.get("market_id") or ""
+            direction = (row.get("direction") or "").lower()
+
+            if market_id not in price_cache:
+                try:
+                    market_data = PolymarketAPI.get_market_by_id(market_id)
+                    raw_prices = market_data.get("outcomePrices")
+                    if isinstance(raw_prices, str):
+                        prices = json.loads(raw_prices)
+                    else:
+                        prices = raw_prices
+                    price_cache[market_id] = [float(p) for p in prices or []]
+                except Exception as exc:
+                    raise HTTPException(status_code=503, detail=f"failed to fetch market {market_id}: {exc}")
+
+            prices = price_cache.get(market_id) or []
+            yes_price, no_price = (prices + [0.0, 0.0])[:2]
+            current_price_pm = yes_price if direction == "yes" else no_price
+
+            current_value = pm_tokens * current_price_pm
+            unrealized_pnl_usd = current_value - pm_entry_cost
+            current_ev_usd = current_value
 
             position = {
                 "trade_id": row.get("trade_id"),
-                "market_id": row.get("market_id"),
+                "market_id": market_id,
                 "direction": row.get("direction"),
                 "contracts": contracts,
                 "entry_price_pm": entry_price_pm,
                 "entry_timestamp": row.get("entry_timestamp"),
                 "im_usd": im_usd,
                 "status": row.get("status"),
-                "current_price_pm": 0.497,  # 假设当前价格（可以根据需求从外部 API 获取）
-                "unrealized_pnl_usd": im_usd * 0.497 - (entry_price_pm * contracts),  # 简单计算未实现盈亏
-                "current_ev_usd": im_usd * 0.497,  # 假设 EV 基于当前价格
+                "current_price_pm": current_price_pm,
+                "unrealized_pnl_usd": unrealized_pnl_usd,
+                "current_ev_usd": current_ev_usd,
             }
 
             positions.append(position)
