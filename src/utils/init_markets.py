@@ -45,12 +45,14 @@ def init_markets(
                 call=True,
                 currency=asset,
                 exp_timestamp=k1_explicit,
+                settlement_currency="USDC",
             )
             inst_k2, k2_exp = DeribitClient.find_option_instrument(
                 k2,
                 call=True,
                 currency=asset,
                 exp_timestamp=k2_explicit,
+                settlement_currency="USDC",
             )
             expected_expiration_date = datetime.fromtimestamp(
                 k1_explicit / 1000.0, tz=timezone.utc
@@ -61,12 +63,14 @@ def init_markets(
                 call=True,
                 currency=asset,
                 day_offset=day_offset,
+                settlement_currency="USDC",
             )
             inst_k2, k2_exp = DeribitClient.find_option_instrument(
                 k2,
                 call=True,
                 currency=asset,
                 day_offset=day_offset,
+                settlement_currency="USDC",
             )
 
         if expected_expiration_date:

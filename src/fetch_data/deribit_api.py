@@ -34,6 +34,7 @@ class DeribitAPI:
         call: bool = True,
         day_offset: int = 0,
         exp_timestamp: float | None = None,
+        settlement_currency: Literal["BTC", "USDC"] | None = "USDC",
     ):
         """
         根据行权价找到最近的可交易期权。
@@ -54,6 +55,17 @@ class DeribitAPI:
         r = REQUESTS_SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         instruments = r.json()["result"]
+
+        if settlement_currency:
+            instruments = [
+                inst
+                for inst in instruments
+                if inst.get("settlement_currency", "").upper() == settlement_currency
+            ]
+            if not instruments:
+                raise ValueError(
+                    f"无 {currency} {settlement_currency} 结算的期权合约可用"
+                )
 
         option_type = "call" if call else "put"
 
@@ -146,15 +158,30 @@ class DeribitAPI:
     def get_deribit_option_data(
         currency: str = "BTC",
         kind: str = "option",
+        settlement_currency: str | None = "USDC",
     ) -> Any:
         """
         获取 Deribit 期权数据
         """
         url = f"{BASE_URL}/public/get_book_summary_by_currency"
-        resp = REQUESTS_SESSION.get(url, params={"currency": currency, "kind": kind}, timeout=HTTP_TIMEOUT)
+        resp = REQUESTS_SESSION.get(
+            url,
+            params={"currency": currency, "kind": kind},
+            timeout=HTTP_TIMEOUT,
+        )
         resp.raise_for_status()
 
-        return resp.json()
+        data = resp.json()
+
+        if settlement_currency:
+            data["result"] = [
+                item
+                for item in data.get("result", [])
+                if str(item.get("settlement_currency", "")).upper()
+                == settlement_currency
+            ]
+
+        return data
 
     @staticmethod
     def get_delivery_price(

@@ -107,27 +107,43 @@ def build_deribit_context(
     if not inst_k1 or not inst_k2:
         raise ValueError(f"无法找到 {title} 对应的 Deribit 期权合约")
 
-    # === Deribit 报价（BTC 单位）===
-    deribit_list = DeribitClient.get_deribit_option_data(currency=asset)
+    # === Deribit 报价（USDC 结算的 BTC 期权）===
+    deribit_list = DeribitClient.get_deribit_option_data(
+        currency=asset, settlement_currency="USDC"
+    )
     k1_info = next((d for d in deribit_list if d.instrument_name == inst_k1), None)
     k2_info = next((d for d in deribit_list if d.instrument_name == inst_k2), None)
     if k1_info is None or k2_info is None:
         raise RuntimeError("missing deribit option quotes")
 
-    k1_bid_btc = float(k1_info.bid_price)
-    k1_ask_btc = float(k1_info.ask_price)
-    k2_bid_btc = float(k2_info.bid_price)
-    k2_ask_btc = float(k2_info.ask_price)
+    k1_usdc_settled = str(k1_info.settlement_currency).upper() == "USDC"
+    k2_usdc_settled = str(k2_info.settlement_currency).upper() == "USDC"
+
+    k1_bid_raw = float(k1_info.bid_price)
+    k1_ask_raw = float(k1_info.ask_price)
+    k2_bid_raw = float(k2_info.bid_price)
+    k2_ask_raw = float(k2_info.ask_price)
+
+    def _to_btc(price: float, is_usdc: bool) -> float:
+        return price / spot if (is_usdc and spot > 0) else price
+
+    def _to_usd(price: float, is_usdc: bool) -> float:
+        return price if is_usdc else price * spot
+
+    k1_bid_btc = _to_btc(k1_bid_raw, k1_usdc_settled)
+    k1_ask_btc = _to_btc(k1_ask_raw, k1_usdc_settled)
+    k2_bid_btc = _to_btc(k2_bid_raw, k2_usdc_settled)
+    k2_ask_btc = _to_btc(k2_ask_raw, k2_usdc_settled)
     k1_mid_btc = (k1_bid_btc + k1_ask_btc) / 2.0
     k2_mid_btc = (k2_bid_btc + k2_ask_btc) / 2.0
 
     # === 转为 USD，方便后续风控 / 收益计算 ===
-    k1_bid_usd = k1_bid_btc * spot
-    k1_ask_usd = k1_ask_btc * spot
-    k2_bid_usd = k2_bid_btc * spot
-    k2_ask_usd = k2_ask_btc * spot
-    k1_mid_usd = k1_mid_btc * spot
-    k2_mid_usd = k2_mid_btc * spot
+    k1_bid_usd = _to_usd(k1_bid_raw, k1_usdc_settled)
+    k1_ask_usd = _to_usd(k1_ask_raw, k1_usdc_settled)
+    k2_bid_usd = _to_usd(k2_bid_raw, k2_usdc_settled)
+    k2_ask_usd = _to_usd(k2_ask_raw, k2_usdc_settled)
+    k1_mid_usd = (k1_bid_usd + k1_ask_usd) / 2.0
+    k2_mid_usd = (k2_bid_usd + k2_ask_usd) / 2.0
 
     k1_iv = float(k1_info.mark_iv)
     k2_iv = float(k2_info.mark_iv)
