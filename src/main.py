@@ -1,9 +1,11 @@
 import asyncio
+import csv
 import logging
 import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from dotenv import load_dotenv
@@ -46,6 +48,61 @@ logger = logging.getLogger(__name__)
 
 def _iso_utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _load_positions(csv_path: str = "data/positions.csv") -> list[dict]:
+    path = Path(csv_path)
+    if not path.exists():
+        return []
+
+    try:
+        with path.open("r", newline="", encoding="utf-8") as f:
+            return list(csv.DictReader(f))
+    except Exception:
+        return []
+
+
+def _count_daily_trades(rows: list[dict], day: date) -> int:
+    """统计指定日期内已执行的真实交易数量，用于每日最多 3 笔的仓位管理规则。"""
+    count = 0
+    for row in rows:
+        ts = row.get("entry_timestamp") or ""
+        try:
+            ts_date = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+        except Exception:
+            continue
+        if ts_date == day and str(row.get("status") or "").upper() != "DRY_RUN":
+            count += 1
+    return count
+
+
+def _count_open_positions(rows: list[dict]) -> int:
+    """计算当前 CSV 中仍为 OPEN 的记录数量，对应最大持仓数 3 的限制。"""
+    return sum(1 for row in rows if str(row.get("status") or "").upper() == "OPEN")
+
+
+def _has_open_position_for_market(rows: list[dict], market_id: str) -> bool:
+    """检查某市场是否已有未平仓头寸，落实“同一市场不加仓”规则。"""
+    market_id = str(market_id)
+    for row in rows:
+        if (
+            str(row.get("status") or "").upper() == "OPEN"
+            and str(row.get("market_id") or "") == market_id
+        ):
+            return True
+    return False
+
+
+def _cumulative_realized_pnl(rows: list[dict]) -> float:
+    """汇总已结算盈亏，用于触发累计亏损 >100u 的人工复盘提示。"""
+    pnl = 0.0
+    for row in rows:
+        try:
+            val = float(row.get("exit_pnl") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        pnl += val
+    return pnl
 
 
 def _fmt_market_title(asset: str, k_poly: float) -> str:
@@ -339,9 +396,12 @@ async def loop_event(
     min_contract_size = float(thresholds.get("min_contract_size", 0.0))
     min_pm_price = float(thresholds.get("min_pm_price", 0.0))
     max_pm_price = float(thresholds.get("max_pm_price", 1.0))
-    min_net_ev_accept = float(thresholds.get("min_net_ev", float("-inf")))
-    min_roi_pct = float(thresholds.get("min_roi_pct", float("-inf")))
     dry_trade_mode = bool(thresholds.get("dry_trade", False))
+
+    RULE_REQUIRED_INVESTMENT = 50.0
+    RULE_MIN_PROB_EDGE = 0.01  # 1%
+    RULE_MIN_ROI_PCT = 3.0
+    RULE_STOP_DERIBIT_ROI_PCT = 2.0
 
     start_ts = datetime.now(timezone.utc)
 
@@ -383,29 +443,56 @@ async def loop_event(
     table = make_summary_table(deribit_ctx, poly_ctx, timestamp=timestamp)
     console.print(table)
 
+    positions_rows = _load_positions()
+    today = datetime.now(timezone.utc).date()
+    daily_trades = _count_daily_trades(positions_rows, today)
+    open_positions_count = _count_open_positions(positions_rows)
+
     for inv in investments:
         inv_base_usd = float(inv)
 
+        if abs(inv_base_usd - RULE_REQUIRED_INVESTMENT) > 1e-6:
+            console.print(
+                f"⏸️ [yellow]跳过非规则手数 {inv_base_usd:.0f}（仅允许运行 {RULE_REQUIRED_INVESTMENT:.0f}u）[/yellow]"
+            )
+            continue
+
+        if daily_trades >= 3:
+            console.print("⛔ [red]已达到当日 3 笔交易上限，停止开仓。[/red]")
+            continue
+
+        if open_positions_count >= 3:
+            console.print("⛔ [red]持仓数已达上限 3，暂停加仓。[/red]")
+            continue
+
+        market_id = f"{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}"
+        if _has_open_position_for_market(positions_rows, market_id):
+            console.print(
+                f"⏸️ [yellow]{market_id} 已有持仓，规则禁止重复开仓，等待平仓后再试。[/yellow]"
+            )
+            continue
+
         try:
-            result, strategy = await evaluate_investment(
+            result, _ = await evaluate_investment(
                 inv_base_usd=inv_base_usd,
                 deribit_ctx=deribit_ctx,
                 poly_ctx=poly_ctx,
             )
 
-            # 选中策略的净EV
-            net_ev = float(result.ev_yes if strategy == 1 else result.ev_no)
-
-            # 方向一致的“概率/价格”
-            pm_price = float(poly_ctx.yes_price if strategy == 1 else poly_ctx.no_price)
-            deribit_price = float(deribit_ctx.deribit_prob if strategy == 1 else (1.0 - deribit_ctx.deribit_prob))
+            strategy = 2
+            net_ev = float(result.net_ev_strategy2)
+            pm_price = float(poly_ctx.no_price)
+            deribit_price = float(1.0 - deribit_ctx.deribit_prob)
             prob_diff = (deribit_price - pm_price) * 100.0
 
             data_lag_seconds = (datetime.now(timezone.utc) - start_ts).total_seconds()
 
-            denom = inv_base_usd + float(result.im_usd or 0.0)
+            dr_net_spend = max(0.0, float(result.open_cost_strategy2) - inv_base_usd)
+            denom = inv_base_usd + dr_net_spend
             roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
             roi_str = f"{roi_pct:.2f}%"
+
+            contracts_strategy2 = float(result.contracts_strategy2)
 
             signal_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
             previous_snapshot = signal_state.get(signal_key)
@@ -421,14 +508,14 @@ async def loop_event(
             )
 
             prob_edge_pct = abs(prob_diff) / 100.0
-            meets_opportunity_gate = prob_edge_pct >= prob_edge_min and net_ev >= net_ev_min
+            meets_opportunity_gate = prob_edge_pct >= RULE_MIN_PROB_EDGE and net_ev > 0
 
             market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
 
             validation_errors = []
-            if float(result.contracts) < min_contract_size:
+            if contracts_strategy2 < min_contract_size:
                 validation_errors.append(
-                    f"合约数 {float(result.contracts):.4f} 小于最小合约单位 {min_contract_size}"
+                    f"合约数 {contracts_strategy2:.4f} 小于最小合约单位 {min_contract_size}"
                 )
             if pm_price < min_pm_price:
                 validation_errors.append(
@@ -438,18 +525,16 @@ async def loop_event(
                 validation_errors.append(
                     f"PM 价格 {pm_price:.4f} 高于最大阈值 {max_pm_price}"
                 )
-            if net_ev < min_net_ev_accept:
+            if net_ev <= 0:
+                validation_errors.append("净EV 不大于 0")
+            if roi_pct < RULE_MIN_ROI_PCT:
                 validation_errors.append(
-                    f"净EV ${net_ev:.2f} 低于最小阈值 ${min_net_ev_accept:.2f}"
-                )
-            if roi_pct < min_roi_pct:
-                validation_errors.append(
-                    f"ROI {roi_pct:.2f}% 低于最小阈值 {min_roi_pct:.2f}%"
+                    f"ROI {roi_pct:.2f}% 低于规则阈值 {RULE_MIN_ROI_PCT:.2f}%"
                 )
 
             if not meets_opportunity_gate:
                 validation_errors.append(
-                    f"未满足机会提醒条件 (|Δprob|={prob_edge_pct:.4f}, 净EV=${net_ev:.2f})"
+                    f"未满足进场概率优势 (|Δprob|={prob_edge_pct:.4f}, 净EV=${net_ev:.2f})"
                 )
 
             if validation_errors:
@@ -472,7 +557,7 @@ async def loop_event(
             console.print(
                 f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
                 f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
-                f"IM={float(result.im_usd):.2f}"
+                f"IM={float(result.im_usd_strategy2):.2f}"
             )
 
             # 发送套利机会到 Alert Bot（带冷却）
@@ -527,6 +612,10 @@ async def loop_event(
                         f"✅ 自动交易{ ' (dry-run)' if dry_trade_mode else ''} 成功: status={status}, tx_id={tx_id}, "
                         f"direction={trade_result.direction}, contracts={trade_result.contracts:.4f}, net_ev=${trade_result.net_profit_usd:.2f}"
                     )
+                    if status != "DRY_RUN":
+                        daily_trades += 1
+                        if status == "EXECUTED":
+                            open_positions_count += 1
                 else:
                     console.print("未到冷却时间不能交易")
             except TradeApiError as exc:
@@ -566,6 +655,7 @@ async def run_monitor(config: dict) -> None:
     tg_worker = get_worker()
     opp_state: dict = {}
     signal_state: dict[str, SignalSnapshot] = {}
+    risk_review_triggered = False
 
     current_target_date: date | None = None
     events: List[dict] = []
@@ -574,6 +664,14 @@ async def run_monitor(config: dict) -> None:
     while True:
         now_utc = datetime.now(timezone.utc)
         target_date = now_utc.date() + timedelta(days=day_off)
+
+        positions_rows = _load_positions()
+        realized_pnl = _cumulative_realized_pnl(positions_rows)
+        if realized_pnl <= -100 and not risk_review_triggered:
+            risk_review_triggered = True
+            console.print(
+                "⚠️ [red]累计亏损已超过 100u，请立即人工复盘（不自动停止）。[/red]"
+            )
 
         if current_target_date is None or target_date != current_target_date:
             current_target_date = target_date

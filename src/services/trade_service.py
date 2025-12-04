@@ -295,6 +295,9 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
 
     strategy = _choose_strategy(row)
 
+    # 进场执行规则：若 PM 成交后 ROI 低于 2%，放弃 DR 侧并回滚 PM
+    STOP_AFTER_PM_ROI = 2.0
+
     # 需要 CSV 中包含用于下单的 token/instrument 字段
     _require_cols(
         row,
@@ -345,6 +348,40 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                 },
                 status_code=502,
             )
+
+        dr_net_spend = max(0.0, _safe_float(row.get(f"open_cost_strategy{strategy}")) - investment_usd)
+        roi_checkpoint = (
+            (result.net_profit_usd / (investment_usd + dr_net_spend) * 100.0)
+            if (investment_usd + dr_net_spend) > 0
+            else 0.0
+        )
+
+        if roi_checkpoint < STOP_AFTER_PM_ROI:
+            try:
+                close_resp, close_order_id = Polymarket_trade_client.place_sell_by_size(
+                    token_id=token_id, size=pm_size, limit_price=limit_price
+                )
+            except Exception as exc:
+                raise TradeApiError(
+                    error_code="ROLLBACK_FAILED",
+                    message=f"PM rollback failed after ROI drop: {exc}",
+                    details={
+                        "stage": "polymarket_rollback",
+                        "market_id": market_id,
+                        "investment_usd": investment_usd,
+                        "token_id": token_id,
+                        "pm_size": pm_size,
+                    },
+                    status_code=502,
+                )
+
+            tx_id = f"pm:{pm_order_id or 'unknown'};rollback:{close_order_id or 'unknown'}"
+            msg = (
+                f"PM 已成交但 ROI {roi_checkpoint:.2f}% 低于 {STOP_AFTER_PM_ROI:.2f}%，"
+                "已平掉 PM 放弃 Deribit。"
+            )
+            status = "ABORTED_AFTER_PM"
+            return result, status, tx_id, msg
 
         try:
             deribit_cfg = DeribitUserCfg(
