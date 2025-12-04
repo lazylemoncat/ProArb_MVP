@@ -401,7 +401,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
 
         tx_id = f"pm:{pm_order_id or 'unknown'};db:{(db_order_ids[0] if db_order_ids else 'unknown')},{(db_order_ids[1] if len(db_order_ids)>1 else 'unknown')}"
 
-        msg = f"Executed strategy={strategy} direction={result.direction} pm_limit={limit_price:.6f} contracts={contracts:.6f}"
+        msg = f"Executed strategy={strategy} direction={result.direction} pm_limit={limit_price:.6f} contracts={contracts:.6f}, details:{pm_resp}"
         status = "EXECUTED"
 
     # 保存头寸信息到 CSV
@@ -515,6 +515,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                     "margin_usd": float(result.im_usd),
                     "net_ev": float(result.net_profit_usd),
                     "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                    "details": pm_resp
                 }
             })
         except Exception as exc:

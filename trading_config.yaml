@@ -1,5 +1,6 @@
 mode:
   dry_run: true            # execute endpoint always returns DRY_RUN
+  # Deprecated
   allow_execute: true      # set false to disable trading completely
   log_trades: true         # CSV-based trade logging
 

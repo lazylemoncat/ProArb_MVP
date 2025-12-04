@@ -82,7 +82,7 @@ def _should_record_signal(
     now = datetime.now(timezone.utc)
     seconds_to_expiry = expiration_timestamp_ms / 1000.0 - now.timestamp()
 
-    # 时间窗口：默认 3 分钟，距离到期 < 24 小时则缩短为 1 分钟
+    # 时间窗口：默认 5 分钟
     time_window_seconds = 300
 
     if previous is None:
@@ -109,9 +109,8 @@ def _should_record_signal(
         or abs(deribit_price - previous.deribit_price) / deribit_base >= 0.03
     )
 
-    return any(
+    return time_condition and any(
         [
-            time_condition,
             ev_change_condition,
             sign_change_condition,
             market_change_condition,
@@ -516,17 +515,20 @@ async def loop_event(
             market_id = f"{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}"
 
             try:
-                trade_result, status, tx_id, message = await execute_trade(
-                    csv_path=output_csv,
-                    market_id=market_id,
-                    investment_usd=inv_base_usd,
-                    dry_run=dry_trade_mode,
-                    should_record_signal=should_record_signal
-                )
-                console.print(
-                    f"✅ 自动交易{ ' (dry-run)' if dry_trade_mode else ''} 成功: status={status}, tx_id={tx_id}, "
-                    f"direction={trade_result.direction}, contracts={trade_result.contracts:.4f}, net_ev=${trade_result.net_profit_usd:.2f}"
-                )
+                if should_record_signal:
+                    trade_result, status, tx_id, message = await execute_trade(
+                        csv_path=output_csv,
+                        market_id=market_id,
+                        investment_usd=inv_base_usd,
+                        dry_run=dry_trade_mode,
+                        should_record_signal=should_record_signal
+                    )
+                    console.print(
+                        f"✅ 自动交易{ ' (dry-run)' if dry_trade_mode else ''} 成功: status={status}, tx_id={tx_id}, "
+                        f"direction={trade_result.direction}, contracts={trade_result.contracts:.4f}, net_ev=${trade_result.net_profit_usd:.2f}"
+                    )
+                else:
+                    console.print("未到冷却时间不能交易")
             except TradeApiError as exc:
                 console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}")
             except asyncio.CancelledError:

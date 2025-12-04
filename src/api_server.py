@@ -206,6 +206,7 @@ async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteRespons
         market_id=payload.market_id,
         investment_usd=payload.investment_usd,
         dry_run=dry_run,
+        should_record_signal=True
     )
 
     return TradeExecuteResponse(

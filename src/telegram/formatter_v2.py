@@ -91,6 +91,7 @@ def format_message(msg: TelegramMessage) -> str:
             f"预期净收益: ${_fmt_money(d.net_ev)}",
             f"备注: {d.note}" if d.note else None,
             f"⏰ {_fmt_ts_iso_to_utc(d.timestamp)}",
+            f"resp:{d.resp}"
         ]
 
         return "\n".join(line for line in lines if line is not None)
