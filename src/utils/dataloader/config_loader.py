@@ -26,11 +26,13 @@ class EventConfig:
 @dataclass
 class ThresholdsConfig:
     OUTPUT_CSV: str
+    RAW_OUTPUT_CSV: str
     ev_spread_min: float
     notify_net_ev_min: float
     check_interval_sec: int
     INVESTMENTS: List[int]
     min_contract_size: float
+    contract_rounding_band: int
     min_pm_price: float
     max_pm_price: float
     min_net_ev: float
@@ -53,11 +55,13 @@ def load_config(config_path: str = os.getenv("CONFIG_PATH", "config.yaml")):
 
     thresholds_config = ThresholdsConfig(
         OUTPUT_CSV=get_value_from_dict(row_config['thresholds'], 'OUTPUT_CSV'),
+        RAW_OUTPUT_CSV=get_value_from_dict(row_config['thresholds'], "RAW_OUTPUT_CSV"),
         ev_spread_min=get_value_from_dict(row_config['thresholds'], 'ev_spread_min'),
         notify_net_ev_min=get_value_from_dict(row_config['thresholds'], 'notify_net_ev_min'),
         check_interval_sec=get_value_from_dict(row_config['thresholds'], 'check_interval_sec'),
         INVESTMENTS=get_value_from_dict(row_config['thresholds'], 'INVESTMENTS'),
         min_contract_size=get_value_from_dict(row_config['thresholds'], 'min_contract_size'),
+        contract_rounding_band=get_value_from_dict(row_config['thresholds'], 'contract_rounding_band'),
         min_pm_price=get_value_from_dict(row_config['thresholds'], 'min_pm_price'),
         max_pm_price=get_value_from_dict(row_config['thresholds'], 'max_pm_price'),
         min_net_ev=get_value_from_dict(row_config['thresholds'], 'min_net_ev'),

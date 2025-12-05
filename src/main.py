@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from src.telegram.TG_bot import TG_bot
+from src.utils.dataloader.config_loader import Config, ThresholdsConfig
 
 from .fetch_data.polymarket_client import PolymarketClient
 from .strategy.investment_runner import InvestmentResult, evaluate_investment
@@ -34,6 +35,7 @@ from .utils.save_result import (
 )
 from .strategy.early_exit_executor import run_early_exit_check
 from .strategy.early_exit import is_in_early_exit_window
+from dataclasses import asdict
 
 app = FastAPI()
 
@@ -285,7 +287,7 @@ def discover_strike_markets_for_event(event_title: str) -> List[Dict[str, Any]]:
     return results
 
 
-def build_events_for_date(config: dict, target_date: date) -> List[dict]:
+def build_events_for_date(target_date: date) -> List[dict]:
     """
     基于 config['events'] 中的“模板事件”，为指定的 target_date 生成真正要跑的事件列表。
 
@@ -320,6 +322,8 @@ def build_events_for_date(config: dict, target_date: date) -> List[dict]:
     """
     import copy
 
+    _, config, _ = load_all_configs()
+    config = asdict(config)
     base_events = config.get("events") or []
     expanded_events: List[dict] = []
 
@@ -394,24 +398,24 @@ async def loop_event(
     data: dict,
     investments: Iterable[float],
     output_csv: str,
+    raw_output_csv: str,
     instruments_map: dict,
     *,
     alert_bot: TG_bot,
     trading_bot: TG_bot,
-    thresholds: dict,
+    thresholds: ThresholdsConfig,
     opp_state: dict,
     signal_state: dict[str, SignalSnapshot],
 ) -> None:
     market_id = data["polymarket"]["market_id"]
     # 机会提醒阈值：用你 config.yaml 的 ev_spread_min 作为“概率优势”最小值（例如 0.05 = 5%）
-    prob_edge_min = float(thresholds.get("ev_spread_min", 0.0))
-    net_ev_min = float(thresholds.get("notify_net_ev_min", 0.0))  # 可选：不配就默认 0
-    cooldown_sec = float(thresholds.get("telegram_opportunity_cooldown_sec", 300))  # 可选：默认 5 分钟
-    min_contract_size = float(thresholds.get("min_contract_size", 0.0))
-    contract_rounding_band = int(thresholds.get("contract_rounding_band", 0))
-    min_pm_price = float(thresholds.get("min_pm_price", 0.0))
-    max_pm_price = float(thresholds.get("max_pm_price", 1.0))
-    dry_trade_mode = bool(thresholds.get("dry_trade", False))
+    prob_edge_min = float(thresholds.ev_spread_min)
+    net_ev_min = float(thresholds.notify_net_ev_min)  # 可选：不配就默认 0
+    min_contract_size = float(thresholds.min_contract_size)
+    contract_rounding_band = int(thresholds.contract_rounding_band)
+    min_pm_price = float(thresholds.min_pm_price)
+    max_pm_price = float(thresholds.max_pm_price)
+    dry_trade_mode = bool(thresholds.dry_trade)
 
     RULE_REQUIRED_INVESTMENT = 200.0
     RULE_MIN_PROB_EDGE = 0.01  # 1%
@@ -603,19 +607,21 @@ async def loop_event(
                 f"IM={float(result.im_usd_strategy2):.2f}"
             )
 
-            # 发送套利机会到 Alert Bot（带冷却）
-            try:
-                now_ts = datetime.now(timezone.utc)
+            # 发送套利机会到 Alert Bot
+            now = datetime.now(timezone.utc)
+            if previous_snapshot is None or (now - previous_snapshot.recorded_at).total_seconds() >= 300:
+                try:
+                    now_ts = datetime.now(timezone.utc)
 
-                await alert_bot.publish((
-                        f"BTC > ${market_title} | EV: +${net_ev}/n"
-                        f"策略{strategy}, 概率差{prob_diff}/n"
-                        f"PM ${pm_price}, Deribit ${deribit_price}/n"
-                        f"建议投资${inv_base_usd}/n"
-                        f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
-                    ))
-            except Exception as exc:
-                logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
+                    await alert_bot.publish((
+                            f"BTC > ${market_title} | EV: +${net_ev}/n"
+                            f"策略{strategy}, 概率差{prob_diff}/n"
+                            f"PM ${pm_price}, Deribit ${deribit_price}/n"
+                            f"建议投资${inv_base_usd}/n"
+                            f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+                        ))
+                except Exception as exc:
+                    logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
 
             # 写入本次检测结果
             save_result_csv(csv_row, csv_path=output_csv)
@@ -668,7 +674,7 @@ async def loop_event(
             raise
 
 
-async def run_monitor(config: dict, env_config: Env_config) -> None:
+async def run_monitor(config: Config, env_config: Env_config) -> None:
     """
     根据配置启动监控循环（方案二：自动按日期轮换事件）。
 
@@ -679,12 +685,12 @@ async def run_monitor(config: dict, env_config: Env_config) -> None:
         3. 为每个 strike 生成具体事件（含 K_poly/k1/k2 到期时间等）
         4. 调 init_markets 构建 Deribit instruments_map
     """
-    thresholds = config["thresholds"]
-    investments = thresholds["INVESTMENTS"]
-    output_csv = thresholds["OUTPUT_CSV"]
-    raw_output_csv = thresholds.get("RAW_OUTPUT_CSV") or str(Path(output_csv).with_name("raw_results.csv"))
-    check_interval = thresholds["check_interval_sec"]
-    day_off = int(thresholds.get("day_off", 1))
+    thresholds = config.thresholds
+    investments = thresholds.INVESTMENTS
+    output_csv = thresholds.OUTPUT_CSV
+    raw_output_csv = thresholds.RAW_OUTPUT_CSV
+    check_interval = thresholds.check_interval_sec
+    day_off = int(thresholds.day_off)
 
     opp_state: dict = {}
     signal_state: dict[str, SignalSnapshot] = {}
@@ -724,7 +730,7 @@ async def run_monitor(config: dict, env_config: Env_config) -> None:
                 )
             )
 
-            events = build_events_for_date(config, target_date)
+            events = build_events_for_date(target_date)
 
             if not events:
                 console.print(
@@ -733,7 +739,8 @@ async def run_monitor(config: dict, env_config: Env_config) -> None:
                 )
                 instruments_map = {}
             else:
-                cfg_for_markets = dict(config)
+                _config = asdict(config)
+                cfg_for_markets = dict(_config)
                 cfg_for_markets["events"] = events
                 instruments_map, skipped_titles = init_markets(
                     cfg_for_markets, day_offset=day_off, target_date=target_date
@@ -761,6 +768,7 @@ async def run_monitor(config: dict, env_config: Env_config) -> None:
                         data=data,
                         investments=investments,
                         output_csv=output_csv,
+                        raw_output_csv=raw_output_csv,
                         instruments_map=instruments_map,
                         alert_bot=alert_bot,
                         trading_bot=trading_bot,
@@ -774,8 +782,9 @@ async def run_monitor(config: dict, env_config: Env_config) -> None:
 
         # ======== 提前平仓检查 ========
         # 在每个监控周期内检查是否有需要提前平仓的持仓
+        _config = asdict(config)
         try:
-            early_exit_cfg = config.get("early_exit", {})
+            early_exit_cfg = _config.get("early_exit", {})
             if early_exit_cfg.get("enabled", False):
                 in_window, window_reason = is_in_early_exit_window()
                 if in_window:
@@ -809,7 +818,7 @@ async def run_monitor(config: dict, env_config: Env_config) -> None:
 
 
 async def main(config_path: str = "config.yaml") -> None:
-    config = load_all_configs()
+    env, config, trading_config = load_all_configs()
     await run_monitor(config, env)
 
 

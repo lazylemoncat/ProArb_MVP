@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from dataclasses import asdict
 
 from src.fetch_data.polymarket_client import PolymarketClient
 
@@ -77,14 +78,15 @@ REFRESH_SECONDS = float(config.thresholds.check_interval_sec)
 ENDPOINT_BROADCAST_SECONDS = 3600
 
 logging.basicConfig(
-    level=_CONFIG.get("LOG_LEVEL", "INFO"),
+    level="INFO",
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
 
 def _get_csv_path() -> str:
-    cfg = _get_config()
+    _, cfg, _ = _get_config()
+    cfg = asdict(cfg)
     thresholds = cfg.get("thresholds") or {}
     return thresholds.get("OUTPUT_CSV", "data/results.csv")
 
@@ -94,7 +96,8 @@ def _position_csv_path() -> str:
 
 
 def _should_force_dry_trade() -> bool:
-    cfg = _get_config()
+    _, cfg, _ = _get_config()
+    cfg = asdict(cfg)
     thresholds = cfg.get("thresholds") or {}
     return bool(thresholds.get("dry_trade", False))
 
@@ -120,21 +123,23 @@ def _format_endpoint_message(paths: list[str]) -> str:
 
 
 def _init_telegram_bots_for_endpoints() -> list[TG_bot]:
-    cfg = _get_config()
+    env, cfg, _ = _get_config()
+    env = asdict(env)
+    cfg = asdict(cfg)
 
-    if not cfg.get("TELEGRAM_ENABLED", False):
+    if not env.get("TELEGRAM_ENABLED", True):
         logger.info("telegram disabled; skip endpoint broadcast")
         return []
 
-    chat_id = cfg.get("TELEGRAM_CHAT_ID")
+    chat_id = env.get("TELEGRAM_CHAT_ID")
     bots: list[TG_bot] = []
 
     try:
-        if cfg.get("TELEGRAM_ALART_ENABLED") and cfg.get("TELEGRAM_BOT_TOKEN_ALERT"):
-            bots.append(TG_bot(name="alert", token=cfg["TELEGRAM_BOT_TOKEN_ALERT"], chat_id=chat_id))
+        if env.get("TELEGRAM_ALART_ENABLED") and env.get("TELEGRAM_BOT_TOKEN_ALERT"):
+            bots.append(TG_bot(name="alert", token=env["TELEGRAM_BOT_TOKEN_ALERT"], chat_id=chat_id))
 
-        if cfg.get("TELEGRAM_TRADING_ENABLED") and cfg.get("TELEGRAM_BOT_TOKEN_TRADING"):
-            bots.append(TG_bot(name="trading", token=cfg["TELEGRAM_BOT_TOKEN_TRADING"], chat_id=chat_id))
+        if env.get("TELEGRAM_TRADING_ENABLED") and env.get("TELEGRAM_BOT_TOKEN_TRADING"):
+            bots.append(TG_bot(name="trading", token=env["TELEGRAM_BOT_TOKEN_TRADING"], chat_id=chat_id))
     except Exception as exc:
         logger.exception("failed to initialize telegram bots for endpoints: %s", exc)
         return []
