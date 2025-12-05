@@ -464,6 +464,10 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     # 计算 PM token 数量
     pm_tokens = investment_usd / limit_price if limit_price > 0 else 0.0
 
+    theoretical_contracts = _safe_float(
+        row.get(f"contracts_strategy{strategy}_theoretical"), default=contracts
+    )
+
     position_data = {
         # 基础信息
         "trade_id": tx_id,
@@ -481,6 +485,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
 
         # DR 头寸信息
         "contracts": contracts,
+        "contracts_theoretical": theoretical_contracts,
         "dr_entry_cost": dr_entry_cost,
         "inst_k1": inst_k1,
         "inst_k2": inst_k2,

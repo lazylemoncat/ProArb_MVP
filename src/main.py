@@ -398,6 +398,7 @@ async def loop_event(
     net_ev_min = float(thresholds.get("notify_net_ev_min", 0.0))  # 可选：不配就默认 0
     cooldown_sec = float(thresholds.get("telegram_opportunity_cooldown_sec", 300))  # 可选：默认 5 分钟
     min_contract_size = float(thresholds.get("min_contract_size", 0.0))
+    contract_rounding_band = int(thresholds.get("contract_rounding_band", 0))
     min_pm_price = float(thresholds.get("min_pm_price", 0.0))
     max_pm_price = float(thresholds.get("max_pm_price", 1.0))
     dry_trade_mode = bool(thresholds.get("dry_trade", False))
@@ -495,7 +496,25 @@ async def loop_event(
             roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
             roi_str = f"{roi_pct:.2f}%"
 
+            validation_errors = []
             contracts_strategy2 = float(result.contracts_strategy2)
+            theoretical_contracts_strategy2 = contracts_strategy2
+            rounding_tolerance = contract_rounding_band * 0.01
+            if contract_rounding_band > 0:
+                rounded_contracts = round(contracts_strategy2 * 10) / 10.0
+                lower_bound = rounded_contracts - rounding_tolerance
+                upper_bound = rounded_contracts + rounding_tolerance
+
+                if lower_bound <= contracts_strategy2 <= upper_bound:
+                    contracts_strategy2 = rounded_contracts
+                    result.contracts_strategy2 = contracts_strategy2
+                else:
+                    validation_errors.append(
+                        (
+                            f"合约数 {contracts_strategy2:.4f} 不在允许的 "
+                            f"{rounded_contracts:.1f} ± {rounding_tolerance:.2f} 范围内"
+                        )
+                    )
 
             signal_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
             previous_snapshot = signal_state.get(signal_key)
@@ -515,14 +534,9 @@ async def loop_event(
 
             market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
 
-            validation_errors = []
             if contracts_strategy2 < min_contract_size:
                 validation_errors.append(
                     f"合约数 {contracts_strategy2:.4f} 小于最小合约单位 {min_contract_size}"
-                )
-            if int(abs(contracts_strategy2) * 100) % 10 < 5:
-                validation_errors.append(
-                    f"合约数 {contracts_strategy2:.4f} 小数点后第二位 小于 5"
                 )
             if pm_price < min_pm_price:
                 validation_errors.append(
@@ -583,6 +597,7 @@ async def loop_event(
 
             # 写入本次检测结果
             csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
+            csv_row["contracts_strategy2_theoretical"] = theoretical_contracts_strategy2
             save_result_csv(csv_row, csv_path=output_csv)
 
 
