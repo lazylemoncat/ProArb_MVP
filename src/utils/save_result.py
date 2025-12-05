@@ -150,6 +150,7 @@ POSITIONS_CSV_HEADER = [
 
     # DR 头寸信息
     "contracts",           # Deribit 合约数量
+    "contracts_theoretical",  # 未经四舍五入的理论合约数
     "dr_entry_cost",       # DR 端入场成本（可为负=净收入）
     "inst_k1",             # Deribit K1 合约名
     "inst_k2",             # Deribit K2 合约名

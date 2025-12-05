@@ -496,7 +496,9 @@ async def loop_event(
             roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
             roi_str = f"{roi_pct:.2f}%"
 
+            validation_errors = []
             contracts_strategy2 = float(result.contracts_strategy2)
+            theoretical_contracts_strategy2 = contracts_strategy2
             rounding_tolerance = contract_rounding_band * 0.01
             if contract_rounding_band > 0:
                 rounded_contracts = round(contracts_strategy2 * 10) / 10.0
@@ -532,7 +534,6 @@ async def loop_event(
 
             market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
 
-            validation_errors = []
             if contracts_strategy2 < min_contract_size:
                 validation_errors.append(
                     f"合约数 {contracts_strategy2:.4f} 小于最小合约单位 {min_contract_size}"
@@ -596,6 +597,7 @@ async def loop_event(
 
             # 写入本次检测结果
             csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
+            csv_row["contracts_strategy2_theoretical"] = theoretical_contracts_strategy2
             save_result_csv(csv_row, csv_path=output_csv)
 
 
