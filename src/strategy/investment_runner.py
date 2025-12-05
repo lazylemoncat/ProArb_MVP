@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Tuple
 
 from ..fetch_data.polymarket_client import PolymarketClient
@@ -106,6 +106,9 @@ class InvestmentResult:
     slippage_open_strategy1: float = 0.0      # 策略1开仓滑点率
     slippage_open_strategy2: float = 0.0      # 策略2开仓滑点率
 
+    # === 新增：记录合约验证中的跳过原因 ===
+    contract_validation_notes: list[str] = field(default_factory=list)
+
     def to_csv_row(
         self,
         timestamp: str,
@@ -209,6 +212,7 @@ def adjust_and_validate_contracts(
     contracts_raw: float,
     strategy_name: str,
     inv_base_usd: float,
+    contract_validation_notes: list[str] | None = None,
 ) -> tuple[float, str]:
     """
     调整和验证合约数量以符合 Deribit 交易规格
@@ -254,19 +258,27 @@ def adjust_and_validate_contracts(
 
     # 3a. 调整幅度过大：拒绝交易
     if adjustment_pct > ERROR_THRESHOLD:
-        raise ValueError(
+        message = (
             f"{strategy_name}: 合约数量调整幅度 {adjustment_pct*100:.1f}% 超过最大允许值 {ERROR_THRESHOLD*100:.0f}%。\n"
             f"原始: {contracts_raw:.6f} BTC → 调整后: {contracts_adjusted:.1f} BTC\n"
             f"对冲效果将被严重破坏，拒绝执行此交易。\n"
             f"建议：增加投资金额至 ${inv_base_usd * 1.5:.2f} 或选择不同的期权组合。"
         )
+        if contract_validation_notes is not None:
+            contract_validation_notes.append(message)
+        raise ValueError(message)
 
     # 3b. 调整幅度较大：警告
     if adjustment_pct > WARNING_THRESHOLD:
-        print(f"⚠️  {strategy_name}: 合约数量调整可能影响对冲效果")
-        print(f"   原始: {contracts_raw:.6f} BTC")
-        print(f"   调整: {contracts_adjusted:.1f} BTC")
-        print(f"   变化: {adjustment_pct*100:.1f}%")
+        warning_message = (
+            f"⚠️  {strategy_name}: 合约数量调整可能影响对冲效果\n"
+            f"   原始: {contracts_raw:.6f} BTC\n"
+            f"   调整: {contracts_adjusted:.1f} BTC\n"
+            f"   变化: {adjustment_pct*100:.1f}%"
+        )
+        print(warning_message)
+        if contract_validation_notes is not None:
+            contract_validation_notes.append(warning_message)
 
     # 4. 评估风险等级（不再拒绝，只提示）
     risk_level = "normal"
@@ -499,16 +511,20 @@ async def evaluate_investment(
     # 策略2：基于NO份数计算合约数（买NO，买牛差）
     contracts_strategy2_raw = pm_no_shares_open / spread_width
 
+    contract_validation_notes: list[str] = []
+
     # === 2.1 尝试验证策略1的合约数 ===
     strategy1_valid = False
     strategy1_risk = "normal"
     try:
         contracts_strategy1, strategy1_risk = adjust_and_validate_contracts(
-            contracts_strategy1_raw, "策略1", inv_base_usd
+            contracts_strategy1_raw, "策略1", inv_base_usd, contract_validation_notes
         )
         strategy1_valid = True
     except ValueError as e:
-        print(f"⚠️  策略1合约数量验证失败: {e}")
+        message = f"⚠️  策略1合约数量验证失败: {e}"
+        print(message)
+        contract_validation_notes.append(message)
         contracts_strategy1 = 0.0
 
     # === 2.2 尝试验证策略2的合约数 ===
@@ -516,11 +532,13 @@ async def evaluate_investment(
     strategy2_risk = "normal"
     try:
         contracts_strategy2, strategy2_risk = adjust_and_validate_contracts(
-            contracts_strategy2_raw, "策略2", inv_base_usd
+            contracts_strategy2_raw, "策略2", inv_base_usd, contract_validation_notes
         )
         strategy2_valid = True
     except ValueError as e:
-        print(f"⚠️  策略2合约数量验证失败: {e}")
+        message = f"⚠️  策略2合约数量验证失败: {e}"
+        print(message)
+        contract_validation_notes.append(message)
         contracts_strategy2 = 0.0
 
     # === 2.3 如果两个策略都无效，抛出错误 ===
@@ -771,6 +789,7 @@ async def evaluate_investment(
         # === 滑点数据 ===
         slippage_open_strategy1=pm_yes_slip_open,
         slippage_open_strategy2=pm_no_slip_open,
+        contract_validation_notes=contract_validation_notes,
     )
 
     return result, optimal_strategy
