@@ -10,4 +10,5 @@
 10. scp trading_config.yaml rex@104.248.192.200:~
 11. docker run -d --name proarb --env-file .env -e CONFIG_PATH=/app/config.yaml  -e TRADING_CONFIG_PATH=/app/trading_config.yaml -e EV_REFRESH_SECONDS=10 -p 8000:8000 -v $(pwd)/data:/app/data -v $(pwd)/config.yaml:/app/config.yaml:ro -v $(pwd)/trading_config.yaml:/app/trading_config.yaml:ro lazylemonkitty/proarb_build:latest
 12. scp rex@104.248.192.200:data/positions.csv ./data/positions.csv
-13. docker logs -f -n 200 proarb
+13. scp rex@104.248.192.200:data/results.csv ./data/results.csv
+14. docker logs -f -n 200 proarb
