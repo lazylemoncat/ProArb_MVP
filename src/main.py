@@ -361,6 +361,7 @@ def build_events_for_date(config: dict, target_date: date) -> List[dict]:
                 "name": f"{asset} > {strike:g}",
                 "asset": asset,
                 "polymarket": {
+                    "market_id": sm["market_id"],
                     "event_title": rotated_title,
                     "market_title": market_title,
                 },
@@ -391,6 +392,7 @@ async def loop_event(
     opp_state: dict,
     signal_state: dict[str, SignalSnapshot],
 ) -> None:
+    market_id = data["polymarket"]["market_id"]
     # 机会提醒阈值：用你 config.yaml 的 ev_spread_min 作为“概率优势”最小值（例如 0.05 = 5%）
     prob_edge_min = float(thresholds.get("ev_spread_min", 0.0))
     net_ev_min = float(thresholds.get("notify_net_ev_min", 0.0))  # 可选：不配就默认 0
@@ -467,7 +469,6 @@ async def loop_event(
             console.print("⛔ [red]持仓数已达上限 3，暂停加仓。[/red]")
             continue
 
-        market_id = f"{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}"
         if _has_open_position_for_market(positions_rows, market_id):
             console.print(
                 f"⏸️ [yellow]{market_id} 已有持仓，规则禁止重复开仓，等待平仓后再试。[/yellow]"
@@ -518,6 +519,10 @@ async def loop_event(
             if contracts_strategy2 < min_contract_size:
                 validation_errors.append(
                     f"合约数 {contracts_strategy2:.4f} 小于最小合约单位 {min_contract_size}"
+                )
+            if int(abs(contracts_strategy2) * 100) % 10 < 5:
+                validation_errors.append(
+                    f"合约数 {contracts_strategy2:.4f} 小数点后第二位 小于 5"
                 )
             if pm_price < min_pm_price:
                 validation_errors.append(
@@ -580,7 +585,6 @@ async def loop_event(
             csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
             save_result_csv(csv_row, csv_path=output_csv)
 
-            market_id = f"{deribit_ctx.asset}_{int(round(deribit_ctx.K_poly))}"
 
             try:
                 if should_record_signal:
