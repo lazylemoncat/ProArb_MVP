@@ -536,16 +536,16 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             k2 = _safe_float(row.get("K2"), default=0.0)
 
             await trading_bot.publish((
-                "交易已执行/n"
-                "类型： 开仓/n"
-                f"策略{strategy}/n"
-                f"模拟:{dry_run}/n"
-                f"市场: BTC > ${market_title}/n"
-                f"PM: 买入 {"YES" if strategy == 1 else "NO"} ${float(limit_price)}({investment_usd})/n"
-                f"Deribit: {"卖出牛差" if strategy == 1 else "买入牛差"} {float(k1)}-{float(k2)}({float(contracts)})/n"
-                f"手续费: ${float(fees_total)}, 滑点:{float(slippage_usd)}/n"
-                f"开仓成本{float(open_cost_fee_bucket)}, 保证金:{float(result.im_usd)}/n"
-                f"预期净收益:{float(result.net_profit_usd)}/n"
+                "交易已执行\n"
+                "类型： 开仓\n"
+                f"策略{strategy}\n"
+                f"模拟:{dry_run}\n"
+                f"市场: BTC > ${market_title}\n"
+                f"PM: 买入 {"YES" if strategy == 1 else "NO"} ${float(limit_price)}({investment_usd})\n"
+                f"Deribit: {"卖出牛差" if strategy == 1 else "买入牛差"} {float(k1)}-{float(k2)}({float(contracts)})\n"
+                f"手续费: ${float(fees_total)}, 滑点:{float(slippage_usd)}\n"
+                f"开仓成本{float(open_cost_fee_bucket)}, 保证金:{float(result.im_usd)}\n"
+                f"预期净收益:{float(result.net_profit_usd)}\n"
                 f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
             ))
         except Exception as exc:

@@ -614,10 +614,10 @@ async def loop_event(
                     now_ts = datetime.now(timezone.utc)
 
                     await alert_bot.publish((
-                            f"BTC > ${market_title} | EV: +${net_ev}/n"
-                            f"策略{strategy}, 概率差{prob_diff}/n"
-                            f"PM ${pm_price}, Deribit ${deribit_price}/n"
-                            f"建议投资${inv_base_usd}/n"
+                            f"BTC > ${market_title} | EV: +${round(net_ev, 3)}\n"
+                            f"策略{strategy}, 概率差{round(prob_diff, 3)}\n"
+                            f"PM ${pm_price}, Deribit ${round(deribit_price, 3)}\n"
+                            f"建议投资${inv_base_usd}\n"
                             f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
                         ))
                 except Exception as exc:
