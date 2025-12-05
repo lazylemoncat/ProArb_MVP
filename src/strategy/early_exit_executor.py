@@ -18,18 +18,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from dotenv import load_dotenv
-
 from ..fetch_data.deribit_client import DeribitClient
 from ..fetch_data.polymarket_client import PolymarketClient
 from ..telegram.TG_bot import TG_bot
 from ..trading.polymarket_trade_client import Polymarket_trade_client
+from ..utils.dataloader import Env_config, load_all_configs
 from ..utils.save_result import POSITIONS_CSV_HEADER, file_lock
 from .early_exit import is_in_early_exit_window, make_exit_decision
 from .models import CalculationInput, ExitDecision, Position
 from .strategy import PMEParams
 
-load_dotenv()
+
+_ENV_CONFIG: Env_config | None = None
+
+
+def _get_env_config() -> Env_config:
+    global _ENV_CONFIG
+    if _ENV_CONFIG is None:
+        _ENV_CONFIG, _, _ = load_all_configs()
+    return _ENV_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -233,8 +240,9 @@ def send_early_exit_notification(
     发送提前平仓 Telegram 通知
     """
     try:
-        trading_token = str(os.getenv("TELEGRAM_BOT_TOKEN_TRADING"))
-        chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
+        env_config = _get_env_config()
+        trading_token = str(env_config.TELEGRAM_BOT_TOKEN_TRADING)
+        chat_id = str(env_config.TELEGRAM_CHAT_ID)
         trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
 
         direction = position_row.get("direction", "yes")

@@ -1,29 +1,38 @@
-import os
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional
 
-from dotenv import load_dotenv
 from py_clob_client.client import ClobClient, PolyException
 from py_clob_client.clob_types import OrderArgs
 
-load_dotenv()
+from ..utils.dataloader import Env_config, load_all_configs
+
+
+_ENV_CONFIG: Env_config | None = None
+
+
+def _get_env_config() -> Env_config:
+    global _ENV_CONFIG
+    if _ENV_CONFIG is None:
+        _ENV_CONFIG, _, _ = load_all_configs()
+    return _ENV_CONFIG
+
 
 @dataclass
 class PolymarketClientCfg:
     proxy_address: str
     private_key: str
-    host: str="https://clob.polymarket.com"
-    chain_id: int=137
+    host: str = "https://clob.polymarket.com"
+    chain_id: int = 137
+
 
 class Polymarket_trade:
     @staticmethod
     def get_client() -> ClobClient:
-        private_key = os.getenv("polymarket_secret")
-        proxy_address = os.getenv("POLYMARKET_PROXY_ADDRESS")
+        env_config = _get_env_config()
 
         cfg = PolymarketClientCfg(
-            private_key=str(private_key),
-            proxy_address=str(proxy_address),
+            private_key=str(env_config.polymarket_secret),
+            proxy_address=str(env_config.POLYMARKET_PROXY_ADDRESS),
         )
 
         client = ClobClient(

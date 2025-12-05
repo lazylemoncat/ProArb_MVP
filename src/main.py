@@ -1,14 +1,12 @@
 import asyncio
 import csv
 import logging
-import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from rich.console import Console
 from rich.panel import Panel
@@ -19,7 +17,7 @@ from .fetch_data.polymarket_client import PolymarketClient
 from .strategy.investment_runner import InvestmentResult, evaluate_investment
 from .services.trade_service import TradeApiError, execute_trade
 from .utils.auth import ensure_signing_ready
-from .utils.dataloader import load_all_configs
+from .utils.dataloader import Env_config, load_all_configs
 from .utils.init_markets import init_markets
 from .utils.market_context import (
     DeribitMarketContext,
@@ -40,7 +38,6 @@ from .strategy.early_exit import is_in_early_exit_window
 app = FastAPI()
 
 console = Console()
-load_dotenv()
 logging.basicConfig(
     level="INFO",
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
@@ -637,7 +634,7 @@ async def loop_event(
             raise
 
 
-async def run_monitor(config: dict) -> None:
+async def run_monitor(config: dict, env_config: Env_config) -> None:
     """
     根据配置启动监控循环（方案二：自动按日期轮换事件）。
 
@@ -661,9 +658,9 @@ async def run_monitor(config: dict) -> None:
     current_target_date: date | None = None
     events: List[dict] = []
     instruments_map: dict = {}
-    alert_token = str(os.getenv("TELEGRAM_BOT_TOKEN_ALERT"))
-    trading_token = str(os.getenv("TELEGRAM_BOT_TOKEN_TRADING"))
-    chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
+    alert_token = str(env_config.TELEGRAM_BOT_TOKEN_ALERT)
+    trading_token = str(env_config.TELEGRAM_BOT_TOKEN_TRADING)
+    chat_id = str(env_config.TELEGRAM_CHAT_ID)
     alert_bot = TG_bot(name="alert", token=alert_token, chat_id=chat_id)
     trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
 
@@ -776,7 +773,7 @@ async def run_monitor(config: dict) -> None:
 
 async def main(config_path: str = "config.yaml") -> None:
     config = load_all_configs()
-    await run_monitor(config)
+    await run_monitor(config, env)
 
 
 if __name__ == "__main__":

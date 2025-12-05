@@ -8,11 +8,12 @@ surface small to make it easy to audit what gets sent to the signer service.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict
 
 import requests
 from web3 import Web3
+
+from .dataloader import Env_config, load_all_configs
 
 
 class SigningError(RuntimeError):
@@ -21,13 +22,22 @@ class SigningError(RuntimeError):
 
 logger = logging.getLogger(__name__)
 
+_ENV_CONFIG: Env_config | None = None
+
+
+def _get_env_config() -> Env_config:
+    global _ENV_CONFIG
+    if _ENV_CONFIG is None:
+        _ENV_CONFIG, _, _ = load_all_configs()
+    return _ENV_CONFIG
+
 
 def get_signer_url() -> str:
-    return os.getenv("SIGNER_URL", "")
+    return _get_env_config().SIGNER_URL
 
 
 def get_signing_token(*, required: bool = True) -> str | None:
-    token = os.getenv("SIGNING_TOKEN")
+    token = _get_env_config().SIGNING_TOKEN
     if required and not token:
         raise SigningError("SIGNING_TOKEN is required for remote signing")
     return token

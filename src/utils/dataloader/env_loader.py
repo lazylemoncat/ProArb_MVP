@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 import dotenv
 import os
@@ -19,6 +20,9 @@ class Env_config:
     polymarket_secret: str
     POLYMARKET_PROXY_ADDRESS: str
 
+    SIGNER_URL: str
+    SIGNING_TOKEN: Optional[str]
+
     TELEGRAM_ENABLED: bool
     TELEGRAM_ALART_ENABLED: bool
     TELEGRAM_TRADING_ENABLED: bool
@@ -26,6 +30,7 @@ class Env_config:
     TELEGRAM_BOT_TOKEN_ALERT: str
     TELEGRAM_BOT_TOKEN_TRADING: str
     TELEGRAM_CHAT_ID: str
+    TELEGRAM_TOKEN: Optional[str]
 
     MAX_RETRIES: int
     RETRY_DELAY_SECONDS: int
@@ -68,12 +73,15 @@ def load_env_config():
                 "0x1bD027BCA18bCe3dC541850FB42b789439b36B6D",
             )
         ),
+        SIGNER_URL=str(_get_optional_env("SIGNER_URL", "")),
+        SIGNING_TOKEN=str(_get_optional_env("SIGNING_TOKEN", "")) or None,
         TELEGRAM_ENABLED=bool(get_value_from_env("TELEGRAM_ENABLED")),
         TELEGRAM_ALART_ENABLED=bool(get_value_from_env("TELEGRAM_ALART_ENABLED")),
         TELEGRAM_TRADING_ENABLED=bool(get_value_from_env("TELEGRAM_TRADING_ENABLED")),
         TELEGRAM_BOT_TOKEN_ALERT=str(get_value_from_env("TELEGRAM_BOT_TOKEN_ALERT")),
         TELEGRAM_BOT_TOKEN_TRADING=str(get_value_from_env("TELEGRAM_BOT_TOKEN_TRADING")),
         TELEGRAM_CHAT_ID=str(get_value_from_env("TELEGRAM_CHAT_ID")),
+        TELEGRAM_TOKEN=str(_get_optional_env("TELEGRAM_TOKEN", "")) or None,
         MAX_RETRIES=int(get_value_from_env("MAX_RETRIES")),
         RETRY_DELAY_SECONDS=int(get_value_from_env("RETRY_DELAY_SECONDS")),
         RETRY_BACKOFF=int(get_value_from_env("RETRY_BACKOFF")),
