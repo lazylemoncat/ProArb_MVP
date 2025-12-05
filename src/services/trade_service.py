@@ -4,7 +4,6 @@ import asyncio
 import csv
 import logging
 from datetime import datetime, timezone
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -18,7 +17,6 @@ from ..trading.deribit_trade import DeribitUserCfg
 from ..trading.deribit_trade_client import Deribit_trade_client
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from .api_models import TradeResult
-from dotenv import load_dotenv
 
 # ---------- errors ----------
 
@@ -513,8 +511,8 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     if should_record_signal:
         # --- Telegram: trade log (Bot2) ---
         try:
-            trading_token = str(os.getenv("TELEGRAM_BOT_TOKEN_TRADING"))
-            chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
+            trading_token = str(env.TELEGRAM_BOT_TOKEN_TRADING)
+            chat_id = str(env.TELEGRAM_CHAT_ID)
             trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
 
             asset = str(row.get("asset") or "")
