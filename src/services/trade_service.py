@@ -4,11 +4,12 @@ import asyncio
 import csv
 import logging
 from datetime import datetime, timezone
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from ..telegram.singleton import get_worker
+from ..telegram.TG_bot import TG_bot
 from ..utils.dataloader import load_all_configs
 from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
@@ -17,6 +18,7 @@ from ..trading.deribit_trade import DeribitUserCfg
 from ..trading.deribit_trade_client import Deribit_trade_client
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from .api_models import TradeResult
+from dotenv import load_dotenv
 
 # ---------- errors ----------
 
@@ -509,7 +511,9 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     if should_record_signal:
         # --- Telegram: trade log (Bot2) ---
         try:
-            tg = get_worker()
+            trading_token = str(os.getenv("TELEGRAM_BOT_TOKEN_TRADING"))
+            chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
+            trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
 
             asset = str(row.get("asset") or "")
             k_poly = _safe_float(row.get("K_poly"), default=0.0)
@@ -531,30 +535,19 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             k1 = _safe_float(row.get("K1"), default=0.0)
             k2 = _safe_float(row.get("K2"), default=0.0)
 
-            tg.publish({
-                "type": "trade",
-                "data": {
-                    "action": "开仓",
-                    "strategy": int(strategy),
-                    "market_title": market_title,
-                    "simulate": bool(dry_run),
-                    "pm_side": "买入",
-                    "pm_token": "YES" if strategy == 1 else "NO",
-                    "pm_price": float(limit_price),          # 注意：这里用 limit_price 近似成交均价
-                    "pm_amount_usd": float(investment_usd),
-                    "deribit_action": "卖出牛差" if strategy == 1 else "买入牛差",
-                    "deribit_k1": float(k1),
-                    "deribit_k2": float(k2),
-                    "deribit_contracts": float(contracts),
-                    "fees_total": float(fees_total),
-                    "slippage_usd": float(slippage_usd),
-                    "open_cost": float(open_cost_fee_bucket),  # ✅ 修复：直接使用正确的开仓成本，不包含投资额
-                    "margin_usd": float(result.im_usd),
-                    "net_ev": float(result.net_profit_usd),
-                    "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-                    "details": pm_resp
-                }
-            })
+            await trading_bot.publish((
+                "交易已执行/n"
+                "类型： 开仓/n"
+                f"策略{strategy}/n"
+                f"模拟:{dry_run}/n"
+                f"市场: BTC > ${market_title}/n"
+                f"PM: 买入 {"YES" if strategy == 1 else "NO"} ${float(limit_price)}({investment_usd})/n"
+                f"Deribit: {"卖出牛差" if strategy == 1 else "买入牛差"} {float(k1)}-{float(k2)}({float(contracts)})/n"
+                f"手续费: ${float(fees_total)}, 滑点:{float(slippage_usd)}/n"
+                f"开仓成本{float(open_cost_fee_bucket)}, 保证金:{float(result.im_usd)}/n"
+                f"预期净收益:{float(result.net_profit_usd)}/n"
+                f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+            ))
         except Exception as exc:
             # 发送失败不影响交易流程，但需要记录日志便于排查
             logger.warning("Failed to publish Telegram trade notification: %s", exc, exc_info=True)

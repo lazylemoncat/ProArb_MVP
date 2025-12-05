@@ -13,10 +13,11 @@ from fastapi import FastAPI, HTTPException
 from rich.console import Console
 from rich.panel import Panel
 
+from src.telegram.TG_bot import TG_bot
+
 from .fetch_data.polymarket_client import PolymarketClient
 from .strategy.investment_runner import InvestmentResult, evaluate_investment
 from .services.trade_service import TradeApiError, execute_trade
-from .telegram.singleton import get_worker
 from .utils.auth import ensure_signing_ready
 from .utils.dataloader import load_all_configs
 from .utils.init_markets import init_markets
@@ -384,7 +385,8 @@ async def loop_event(
     output_csv: str,
     instruments_map: dict,
     *,
-    tg_worker,
+    alart_bot,
+    trading_bot,
     thresholds: dict,
     opp_state: dict,
     signal_state: dict[str, SignalSnapshot],
@@ -562,34 +564,15 @@ async def loop_event(
 
             # 发送套利机会到 Alert Bot（带冷却）
             try:
-                opportunity_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
-                last_sent = opp_state.get(opportunity_key)
                 now_ts = datetime.now(timezone.utc)
-                if last_sent and (now_ts - last_sent).total_seconds() < cooldown_sec:
-                    console.print(
-                        "[dim]⏸️ 已在冷却时间内，跳过重复的套利提醒。[/dim]"
-                    )
-                else:
-                    opp_state[opportunity_key] = now_ts
-                    tg_worker.publish(
-                        {
-                            "type": "opportunity",
-                            "data": {
-                                "market_title": market_title,
-                                "net_ev": float(net_ev),
-                                "strategy": int(strategy),
-                                "prob_diff": float(abs(prob_diff)),
-                                "pm_price": float(pm_price),
-                                "deribit_price": float(deribit_price),
-                                "investment": float(inv_base_usd),
-                                "data_lag_seconds": float(data_lag_seconds),
-                                "ROI": roi_str,
-                                "timestamp": now_ts.replace(microsecond=0)
-                                .isoformat()
-                                .replace("+00:00", "Z"),
-                            },
-                        }
-                    )
+
+                alart_bot.publish((
+                        f"BTC > ${market_title} | EV: +${net_ev}/n"
+                        f"策略{strategy}, 概率差{prob_diff}/n"
+                        f"PM ${pm_price}, Deribit ${deribit_price}/n"
+                        f"建议投资${inv_base_usd}/n"
+                        f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+                    ))
             except Exception as exc:
                 logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
 
@@ -652,7 +635,6 @@ async def run_monitor(config: dict) -> None:
     check_interval = thresholds["check_interval_sec"]
     day_off = int(thresholds.get("day_off", 1))
 
-    tg_worker = get_worker()
     opp_state: dict = {}
     signal_state: dict[str, SignalSnapshot] = {}
     risk_review_triggered = False
@@ -660,6 +642,11 @@ async def run_monitor(config: dict) -> None:
     current_target_date: date | None = None
     events: List[dict] = []
     instruments_map: dict = {}
+    alart_token = str(os.getenv("TELEGRAM_BOT_TOKEN_ALERT"))
+    trading_token = str(os.getenv("TELEGRAM_BOT_TOKEN_TRADING"))
+    chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
+    alart_bot = TG_bot(name="alart", token=alart_token, chat_id=chat_id)
+    trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
 
     while True:
         now_utc = datetime.now(timezone.utc)
@@ -722,7 +709,8 @@ async def run_monitor(config: dict) -> None:
                         investments=investments,
                         output_csv=output_csv,
                         instruments_map=instruments_map,
-                        tg_worker=tg_worker,
+                        alart_bot=alart_bot,
+                        trading_bot=trading_bot,
                         thresholds=thresholds,
                         opp_state=opp_state,
                         signal_state=signal_state,

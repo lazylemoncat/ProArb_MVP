@@ -21,12 +21,15 @@ from typing import Any, Dict, List, Optional
 from ..fetch_data.deribit_api import DeribitAPI
 from ..fetch_data.get_polymarket_slippage import get_polymarket_slippage
 from ..trading.polymarket_trade_client import Polymarket_trade_client
-from ..telegram.singleton import get_worker
+from ..telegram.TG_bot import TG_bot
 from ..utils.save_result import POSITIONS_CSV_HEADER, file_lock
 
 from .early_exit import make_exit_decision, is_in_early_exit_window
 from .models import Position, ExitDecision, CalculationInput
 from .strategy import PMEParams
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +233,9 @@ def send_early_exit_notification(
     发送提前平仓 Telegram 通知
     """
     try:
-        tg = get_worker()
+        trading_token = str(os.getenv("TELEGRAM_BOT_TOKEN_TRADING"))
+        chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
+        trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
 
         direction = position_row.get("direction", "yes")
         k_poly = _safe_float(position_row.get("K_poly"), 0.0)
@@ -239,31 +244,34 @@ def send_early_exit_notification(
         market_title = f"{asset} > ${int(round(k_poly)):,}" if k_poly else position_row.get("market_id", "")
 
         # 构建 trade 消息
-        tg.publish({
-            "type": "trade",
-            "data": {
-                "action": "提前平仓",
-                "strategy": _safe_int(position_row.get("strategy")) or 1,
-                "market_title": market_title,
-                "simulate": dry_run,
-                "pm_side": "卖出",
-                "pm_token": "YES" if direction == "yes" else "NO",
-                "pm_price": result.exit_price,
-                "pm_amount_usd": result.exit_price * _safe_float(position_row.get("pm_tokens"), 0.0),
-                "deribit_action": "已结算",
-                "deribit_k1": _safe_float(position_row.get("K1"), 0.0),
-                "deribit_k2": _safe_float(position_row.get("K2"), 0.0),
-                "deribit_contracts": _safe_float(position_row.get("contracts"), 0.0),
-                "fees_total": 0.1,  # Gas fee
-                "slippage_usd": 0.0,
-                "open_cost": 0.0,
-                "margin_usd": _safe_float(position_row.get("im_usd"), 0.0),
-                "net_ev": result.exit_pnl,
-                "settlement_price": result.settlement_price,
-                "exit_reason": result.decision.decision_reason[:100] if result.decision.decision_reason else "",
-                "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            }
-        })
+        # tg.publish({
+        #     "type": "trade",
+        #     "data": {
+        #         "action": "提前平仓",
+        #         "strategy": _safe_int(position_row.get("strategy")) or 1,
+        #         "market_title": market_title,
+        #         "simulate": dry_run,
+        #         "pm_side": "卖出",
+        #         "pm_token": "YES" if direction == "yes" else "NO",
+        #         "pm_price": result.exit_price,
+        #         "pm_amount_usd": result.exit_price * _safe_float(position_row.get("pm_tokens"), 0.0),
+        #         "deribit_action": "已结算",
+        #         "deribit_k1": _safe_float(position_row.get("K1"), 0.0),
+        #         "deribit_k2": _safe_float(position_row.get("K2"), 0.0),
+        #         "deribit_contracts": _safe_float(position_row.get("contracts"), 0.0),
+        #         "fees_total": 0.1,  # Gas fee
+        #         "slippage_usd": 0.0,
+        #         "open_cost": 0.0,
+        #         "margin_usd": _safe_float(position_row.get("im_usd"), 0.0),
+        #         "net_ev": result.exit_pnl,
+        #         "settlement_price": result.settlement_price,
+        #         "exit_reason": result.decision.decision_reason[:100] if result.decision.decision_reason else "",
+        #         "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        #     }
+        # })
+        # await trading_bot.publish((
+        #     ""
+        # ))
         logger.info("Telegram notification sent for trade_id=%s", result.trade_id)
 
     except Exception as exc:

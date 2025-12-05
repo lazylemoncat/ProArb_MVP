@@ -12,6 +12,8 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
+from src.fetch_data.polymarket_client import PolymarketClient
+
 from .fetch_data.polymarket_api import PolymarketAPI
 from .services.api_models import (
     DBSnapshotResponse,
@@ -245,9 +247,11 @@ async def get_positions():
 
             market_id = row.get("market_id") or ""
             direction = (row.get("direction") or "").lower()
+            market_title = market_id.split('_')[1]
 
             if market_id not in price_cache:
                 try:
+                    market_id = PolymarketClient.get_market_id_by_market_title(market_title)
                     market_data = PolymarketAPI.get_market_by_id(market_id)
                     raw_prices = market_data.get("outcomePrices")
                     if isinstance(raw_prices, str):
