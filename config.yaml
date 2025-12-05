@@ -1,17 +1,18 @@
 # === 全局参数 ===
 thresholds:
   OUTPUT_CSV: "data/results.csv"
-  ev_spread_min: 0.02
-  notify_net_ev_min: 0.05
-  check_interval_sec: 10
-  INVESTMENTS: [200]
-  min_contract_size: 0.1          #Deribit最小合约单位（BTC）
+  POSITIONS_CSV: data/positions.csv
+  ev_spread_min: 0.02             # 概率优势最小值
+  notify_net_ev_min: 0.05         # 通知的最小净利润
+  check_interval_sec: 10          # 循环的间隔秒数
+  INVESTMENTS: [200]              # 一笔的投资金额
+  dry_trade: false                # 交易是否走模拟模式
+  min_contract_size: 0.1          # Deribit最小合约单位（BTC）
   contract_rounding_band: 1       # 合约数四舍五入窗口（1 表示允许四舍五入到 0.1 ± 0.01，2 表示 ± 0.02）
   min_pm_price: 0.01              # PM价格 < 0.01 拒绝
   max_pm_price: 0.99              # PM价格 > 0.99 拒绝
   min_net_ev: 0.0                 # 只接受正EV
   min_roi_pct: 0.0                # 只接受正ROI
-  dry_trade: false                 # 交易是否走模拟模式
   day_off: 1                      # 目标日期与今日的偏移（单位：天），例如今天 12/2、day_off=1 => 监控 12/3 市场
 
 events:

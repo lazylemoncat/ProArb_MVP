@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
@@ -15,8 +15,8 @@ from fastapi.responses import JSONResponse
 
 from src.fetch_data.polymarket_client import PolymarketClient
 
-from .fetch_data.polymarket_api import PolymarketAPI
 from .services.api_models import (
+    ApiErrorResponse,
     DBSnapshotResponse,
     EVResponse,
     HealthResponse,
@@ -25,12 +25,20 @@ from .services.api_models import (
     TradeExecuteResponse,
     TradeSimRequest,
     TradeSimResponse,
-    ApiErrorResponse,
 )
-from .services.data_adapter import CACHE, load_db_snapshot, load_pm_snapshot, refresh_cache
-from .services.trade_service import TradeApiError, execute_trade, simulate_trade
+from .services.data_adapter import (
+    CACHE,
+    load_db_snapshot,
+    load_pm_snapshot,
+    refresh_cache,
+)
+from .services.trade_service import (
+    TradeApiError,
+    execute_trade,
+    simulate_trade,
+)
 from .telegram.TG_bot import TG_bot
-from .utils.dataloader import load_all_configs
+from .utils.dataloader import load_all_configs, Env_config, Config, TradingConfig 
 
 
 def _round_floats(value: Any, precision: int = 6) -> Any:
@@ -58,18 +66,14 @@ class SixDecimalJSONResponse(JSONResponse):
 app = FastAPI(title="arb-engine", default_response_class=SixDecimalJSONResponse)
 router = APIRouter()
 
-_CONFIG_CACHE: Dict[str, Any] | None = None
 
 
-def _get_config() -> Dict[str, Any]:
-    global _CONFIG_CACHE
-    if _CONFIG_CACHE is None:
-        _CONFIG_CACHE = load_all_configs()
-    return _CONFIG_CACHE
+def _get_config() -> Tuple[Env_config, Config, TradingConfig]:
+    env, config, trading_config = load_all_configs()
+    return env, config, trading_config
 
-
-_CONFIG = _get_config()
-REFRESH_SECONDS = float(_CONFIG.get("EV_REFRESH_SECONDS", 10))
+env, config, trading_config = _get_config()
+REFRESH_SECONDS = float(config.thresholds.check_interval_sec)
 ENDPOINT_BROADCAST_SECONDS = 3600
 
 logging.basicConfig(
@@ -316,22 +320,8 @@ async def get_positions():
 
             market_id = row.get("market_id") or ""
             direction = (row.get("direction") or "").lower()
-            market_title = market_id.split('_')[1]
 
-            if market_id not in price_cache:
-                try:
-                    market_data = PolymarketAPI.get_market_by_id(market_id)
-                    raw_prices = market_data.get("outcomePrices")
-                    if isinstance(raw_prices, str):
-                        prices = json.loads(raw_prices)
-                    else:
-                        prices = raw_prices
-                    price_cache[market_id] = [float(p) for p in prices or []]
-                except Exception as exc:
-                    raise HTTPException(status_code=503, detail=f"failed to fetch market {market_id}: {exc}")
-
-            prices = price_cache.get(market_id) or []
-            yes_price, no_price = (prices + [0.0, 0.0])[:2]
+            yes_price, no_price = PolymarketClient.get_prices(market_id)
             current_price_pm = yes_price if direction == "yes" else no_price
 
             current_value = pm_tokens * current_price_pm

@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from .deribit_api import DeribitAPI
+
 
 @dataclass
 class Deribit_option_data:
@@ -69,3 +70,14 @@ class DeribitClient:
             day_offset=day_offset, 
             exp_timestamp=exp_timestamp
         )
+    
+    @staticmethod
+    def get_delivery_price(
+        currency: Literal["BTC", "ETH"] = "BTC",
+        count: int = 1,
+    ) -> dict[str, Any]:
+        return DeribitAPI.get_delivery_price(currency=currency, count=count)
+    
+    @staticmethod
+    def get_spot_price(index_name: Literal["btc_usd", "eth_usd"] = "btc_usd"):
+        return DeribitAPI.get_spot_price(index_name)

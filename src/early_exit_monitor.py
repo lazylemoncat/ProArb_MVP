@@ -7,10 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Dict, Any, Optional, Literal
 
-from .fetch_data.polymarket_client import (
-    get_polymarket_slippage,
-    PolymarketClient,
-)
+from .fetch_data.polymarket_client import PolymarketClient
 from .utils.dataloader import load_all_configs
 from .utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file
 
@@ -275,7 +272,7 @@ async def evaluate_position(csv_pos: CsvPosition) -> Optional[EarlyExitResult]:
 
     # 通过 orderbook 估算卖出 pm_tokens 的平均价格 & 流动性
     try:
-        slip = await get_polymarket_slippage(
+        slip = await PolymarketClient.get_polymarket_slippage(
             asset_id=pm_token_id,
             amount=csv_pos.pm_tokens,
             side="sell",

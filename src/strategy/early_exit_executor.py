@@ -18,16 +18,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..fetch_data.deribit_api import DeribitAPI
-from ..fetch_data.get_polymarket_slippage import get_polymarket_slippage
-from ..trading.polymarket_trade_client import Polymarket_trade_client
-from ..telegram.TG_bot import TG_bot
-from ..utils.save_result import POSITIONS_CSV_HEADER, file_lock
-
-from .early_exit import make_exit_decision, is_in_early_exit_window
-from .models import Position, ExitDecision, CalculationInput
-from .strategy import PMEParams
 from dotenv import load_dotenv
+
+from ..fetch_data.deribit_client import DeribitClient
+from ..fetch_data.polymarket_client import PolymarketClient
+from ..telegram.TG_bot import TG_bot
+from ..trading.polymarket_trade_client import Polymarket_trade_client
+from ..utils.save_result import POSITIONS_CSV_HEADER, file_lock
+from .early_exit import is_in_early_exit_window, make_exit_decision
+from .models import CalculationInput, ExitDecision, Position
+from .strategy import PMEParams
 
 load_dotenv()
 
@@ -304,7 +304,7 @@ async def process_single_position(
 
     # 1. 获取 Deribit 结算价
     try:
-        delivery_data = DeribitAPI.get_delivery_price(currency="BTC")
+        delivery_data = DeribitClient.get_delivery_price(currency="BTC")
         settlement_price = delivery_data["delivery_price"]
         logger.info("Deribit settlement price: %.2f", settlement_price)
     except Exception as exc:
@@ -314,7 +314,7 @@ async def process_single_position(
     # 2. 获取 PM 实时流动性和价格
     try:
         pm_tokens = _safe_float(row.get("pm_tokens"), 0.0)
-        slippage_result = await get_polymarket_slippage(
+        slippage_result = await PolymarketClient.get_polymarket_slippage(
             pm_token_id,
             pm_tokens,
             side="sell",

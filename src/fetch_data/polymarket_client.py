@@ -1,5 +1,7 @@
 import json
-from typing import Any
+from typing import Any, Literal, Tuple
+
+from .get_polymarket_slippage import Polymarket_Slippage, get_polymarket_slippage
 
 from .polymarket_api import PolymarketAPI
 
@@ -127,3 +129,31 @@ class PolymarketClient:
     @staticmethod
     def get_event_by_id(event_id: str):
         return PolymarketAPI.get_event_by_id(event_id=event_id)
+
+    @staticmethod
+    def get_prices(market_id: str) -> Tuple[float, float]:
+        market_data = PolymarketAPI.get_market_by_id(market_id)
+        raw = market_data.get("outcomePrices", None)
+        if raw is None:
+            raise ValueError(f"No outcomePrices found for market {market_id}")
+        try:
+            if isinstance(raw, str):
+                prices: list[str] = json.loads(raw)
+            else:
+                prices = raw
+            yes_price = float(prices[0])
+            no_prices = float(prices[1])
+        except Exception:
+            raise ValueError(
+                f"Invalid outcomePrices format for market {market_id}: {raw}"
+            )
+        return yes_price, no_prices
+    
+    @staticmethod
+    async def get_polymarket_slippage(
+        asset_id: str,
+        amount: float,
+        side: Literal["buy", "sell"] = "buy",
+        amount_type: Literal["usd", "shares"] = "usd",
+    ) -> Polymarket_Slippage:
+        return await get_polymarket_slippage(asset_id, amount, side, amount_type)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
-from ..fetch_data.get_polymarket_slippage import get_polymarket_slippage
+from ..fetch_data.polymarket_client import PolymarketClient
 from .early_exit import make_exit_decision
 from .models import ExitDecision, OptionPosition, Position
 from .strategy import (
@@ -441,7 +441,7 @@ async def evaluate_investment(
 
     # === 1. Polymarket slippage 估计 ===
     try:
-        pm_yes_open = await get_polymarket_slippage(
+        pm_yes_open = await PolymarketClient.get_polymarket_slippage(
             poly_ctx.yes_token_id,
             inv_base_usd,
             side="buy",
@@ -451,7 +451,7 @@ async def evaluate_investment(
         pm_yes_shares_open = float(pm_yes_open.shares)
         pm_yes_slip_open = float(pm_yes_open.slippage_pct) / 100.0
 
-        pm_yes_close = await get_polymarket_slippage(
+        pm_yes_close = await PolymarketClient.get_polymarket_slippage(
             poly_ctx.yes_token_id,
             pm_yes_shares_open,
             side="sell",
@@ -460,7 +460,7 @@ async def evaluate_investment(
         pm_yes_avg_close = float(pm_yes_close.avg_price)
         pm_yes_slip_close = float(pm_yes_close.slippage_pct) / 100.0
 
-        pm_no_open = await get_polymarket_slippage(
+        pm_no_open = await PolymarketClient.get_polymarket_slippage(
             poly_ctx.no_token_id,
             inv_base_usd,
             side="buy",
@@ -470,7 +470,7 @@ async def evaluate_investment(
         pm_no_shares_open = float(pm_no_open.shares)
         pm_no_slip_open = float(pm_no_open.slippage_pct) / 100.0
 
-        pm_no_close = await get_polymarket_slippage(
+        pm_no_close = await PolymarketClient.get_polymarket_slippage(
             poly_ctx.no_token_id,
             pm_no_shares_open,
             side="sell",

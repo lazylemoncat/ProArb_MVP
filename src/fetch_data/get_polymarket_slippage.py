@@ -1,8 +1,5 @@
 from dataclasses import dataclass
-import json
 from typing import Literal, Optional
-
-import websockets
 
 from .polymarket_ws import PolymarketWS
 

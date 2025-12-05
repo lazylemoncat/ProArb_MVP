@@ -9,7 +9,6 @@ from typing import Any, Dict
 from rich import box
 from rich.table import Table
 
-from ..fetch_data.deribit_api import DeribitAPI
 from ..fetch_data.deribit_client import DeribitClient
 from ..fetch_data.polymarket_client import PolymarketClient
 from ..strategy.probability_engine import bs_probability_gt
@@ -100,7 +99,7 @@ def build_deribit_context(
     asset = instruments_map[title]["asset"]
 
     spot_symbol = "btc_usd" if asset.upper() == "BTC" else "eth_usd"
-    spot = float(DeribitAPI.get_spot_price(spot_symbol))
+    spot = float(DeribitClient.get_spot_price(spot_symbol))
 
     inst_k1 = instruments_map[title]["k1"]
     inst_k2 = instruments_map[title]["k2"]

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..telegram.TG_bot import TG_bot
-from ..utils.dataloader import load_all_configs
+from ..utils.dataloader import load_all_configs, Env_config, Config, TradingConfig
 from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
 # trading executors (async)
@@ -34,14 +34,11 @@ class TradeApiError(Exception):
 logger = logging.getLogger(__name__)
 
 
-_CONFIG_CACHE: Dict[str, Any] | None = None
 
 
-def _get_config() -> Dict[str, Any]:
-    global _CONFIG_CACHE
-    if _CONFIG_CACHE is None:
-        _CONFIG_CACHE = load_all_configs()
-    return _CONFIG_CACHE
+def _get_config() -> Tuple[Env_config, Config, TradingConfig]:
+    env, config, trading_config = load_all_configs()
+    return env, config, trading_config
 
 
 # ---------- helpers ----------
@@ -98,8 +95,8 @@ def _build_manual_row(market_id: str, investment_usd: float) -> list[Dict[str, A
     - poly_yes_price / poly_no_price / slippage_pct (optional)
     """
 
-    cfg = _get_config()
-    manual = cfg.get("manual_trade") or {}
+    env, config, trading_config = _get_config()
+    manual = {}
     yes_token_id = manual.get("yes_token_id")
     inst_k1 = manual.get("inst_k1")
     inst_k2 = manual.get("inst_k2")
@@ -326,7 +323,7 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
             status_code=503,
         )
 
-    config = _get_config()
+    env, config, trading_config = _get_config()
 
     if dry_run:
         status = "DRY_RUN"
@@ -387,9 +384,9 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
 
         try:
             deribit_cfg = DeribitUserCfg(
-                user_id=str(config["deribit_user_id"]),
-                client_id=str(config["deribit_client_id"]),
-                client_secret=str(config["deribit_client_secret"]),
+                user_id=env.deribit_user_id,
+                client_id=env.deribit_client_id,
+                client_secret=str(env.deribit_client_secret),
             )
             sps, db_order_ids, executed_contracts = await Deribit_trade_client.execute_vertical_spread(
                 deribit_cfg,
