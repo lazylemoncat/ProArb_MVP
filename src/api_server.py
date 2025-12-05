@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
@@ -28,6 +29,7 @@ from .services.api_models import (
 )
 from .services.data_adapter import CACHE, load_db_snapshot, load_pm_snapshot, refresh_cache
 from .services.trade_service import TradeApiError, execute_trade, simulate_trade
+from .telegram.TG_bot import TG_bot
 from .utils.dataloader import load_all_configs
 
 
@@ -68,6 +70,7 @@ def _get_config() -> Dict[str, Any]:
 
 _CONFIG = _get_config()
 REFRESH_SECONDS = float(_CONFIG.get("EV_REFRESH_SECONDS", 10))
+ENDPOINT_BROADCAST_SECONDS = 3600
 
 logging.basicConfig(
     level=_CONFIG.get("LOG_LEVEL", "INFO"),
@@ -92,6 +95,71 @@ def _should_force_dry_trade() -> bool:
     return bool(thresholds.get("dry_trade", False))
 
 
+def _list_get_api_paths() -> list[str]:
+    paths: set[str] = set()
+    for route in app.router.routes:
+        methods = getattr(route, "methods", set())
+        path = getattr(route, "path", "")
+        if "GET" in methods and str(path).startswith("/api/"):
+            paths.add(str(path))
+    return sorted(paths)
+
+
+def _format_endpoint_message(paths: list[str]) -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    lines = [f"GET API endpoints ({timestamp} UTC)"]
+    if not paths:
+        lines.append("- 无可用端点")
+    else:
+        lines.extend(f"- {p}" for p in paths)
+    return "\n".join(lines)
+
+
+def _init_telegram_bots_for_endpoints() -> list[TG_bot]:
+    cfg = _get_config()
+
+    if not cfg.get("TELEGRAM_ENABLED", False):
+        logger.info("telegram disabled; skip endpoint broadcast")
+        return []
+
+    chat_id = cfg.get("TELEGRAM_CHAT_ID")
+    bots: list[TG_bot] = []
+
+    try:
+        if cfg.get("TELEGRAM_ALART_ENABLED") and cfg.get("TELEGRAM_BOT_TOKEN_ALERT"):
+            bots.append(TG_bot(name="alert", token=cfg["TELEGRAM_BOT_TOKEN_ALERT"], chat_id=chat_id))
+
+        if cfg.get("TELEGRAM_TRADING_ENABLED") and cfg.get("TELEGRAM_BOT_TOKEN_TRADING"):
+            bots.append(TG_bot(name="trading", token=cfg["TELEGRAM_BOT_TOKEN_TRADING"], chat_id=chat_id))
+    except Exception as exc:
+        logger.exception("failed to initialize telegram bots for endpoints: %s", exc)
+        return []
+
+    if not bots:
+        logger.info("no telegram bots configured for endpoint broadcast")
+
+    return bots
+
+
+async def _broadcast_get_endpoints_loop() -> None:
+    bots = _init_telegram_bots_for_endpoints()
+    if not bots:
+        return
+
+    while True:
+        try:
+            paths = _list_get_api_paths()
+            message = _format_endpoint_message(paths)
+            for bot in bots:
+                success, _ = await bot.publish(message)
+                if not success:
+                    logger.warning("failed to publish get endpoints via bot=%s", bot.name)
+        except Exception as exc:
+            logger.exception("failed to broadcast get endpoints: %s", exc)
+
+        await asyncio.sleep(ENDPOINT_BROADCAST_SECONDS)
+
+
 async def _background_loop() -> None:
     """
     后台刷新循环：每 10 秒读一次 CSV，刷新快照缓存（pm/db/ev）。
@@ -110,6 +178,7 @@ async def _background_loop() -> None:
 @app.on_event("startup")
 async def _on_startup() -> None:
     asyncio.create_task(_background_loop())
+    asyncio.create_task(_broadcast_get_endpoints_loop())
 
 
 @app.exception_handler(TradeApiError)
