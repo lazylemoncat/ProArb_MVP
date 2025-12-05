@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 import yaml
 
-from .get_value import get_value_from_dict
+from ._get_value import get_value_from_dict
 
 
 @dataclass

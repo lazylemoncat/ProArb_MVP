@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import dotenv
 import os
 
-from .get_value import get_value_from_env
+from ._get_value import get_value_from_env
 
 dotenv.load_dotenv()
 

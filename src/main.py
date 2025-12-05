@@ -385,8 +385,8 @@ async def loop_event(
     output_csv: str,
     instruments_map: dict,
     *,
-    alart_bot,
-    trading_bot,
+    alert_bot: TG_bot,
+    trading_bot: TG_bot,
     thresholds: dict,
     opp_state: dict,
     signal_state: dict[str, SignalSnapshot],
@@ -400,7 +400,7 @@ async def loop_event(
     max_pm_price = float(thresholds.get("max_pm_price", 1.0))
     dry_trade_mode = bool(thresholds.get("dry_trade", False))
 
-    RULE_REQUIRED_INVESTMENT = 50.0
+    RULE_REQUIRED_INVESTMENT = 200.0
     RULE_MIN_PROB_EDGE = 0.01  # 1%
     RULE_MIN_ROI_PCT = 3.0
     RULE_STOP_DERIBIT_ROI_PCT = 2.0
@@ -566,7 +566,7 @@ async def loop_event(
             try:
                 now_ts = datetime.now(timezone.utc)
 
-                alart_bot.publish((
+                await alert_bot.publish((
                         f"BTC > ${market_title} | EV: +${net_ev}/n"
                         f"策略{strategy}, 概率差{prob_diff}/n"
                         f"PM ${pm_price}, Deribit ${deribit_price}/n"
@@ -642,10 +642,10 @@ async def run_monitor(config: dict) -> None:
     current_target_date: date | None = None
     events: List[dict] = []
     instruments_map: dict = {}
-    alart_token = str(os.getenv("TELEGRAM_BOT_TOKEN_ALERT"))
+    alert_token = str(os.getenv("TELEGRAM_BOT_TOKEN_ALERT"))
     trading_token = str(os.getenv("TELEGRAM_BOT_TOKEN_TRADING"))
     chat_id = str(os.getenv("TELEGRAM_CHAT_ID"))
-    alart_bot = TG_bot(name="alart", token=alart_token, chat_id=chat_id)
+    alert_bot = TG_bot(name="alert", token=alert_token, chat_id=chat_id)
     trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
 
     while True:
@@ -709,7 +709,7 @@ async def run_monitor(config: dict) -> None:
                         investments=investments,
                         output_csv=output_csv,
                         instruments_map=instruments_map,
-                        alart_bot=alart_bot,
+                        alert_bot=alert_bot,
                         trading_bot=trading_bot,
                         thresholds=thresholds,
                         opp_state=opp_state,
