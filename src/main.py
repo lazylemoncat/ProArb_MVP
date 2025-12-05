@@ -79,6 +79,19 @@ def _count_open_positions(rows: list[dict]) -> int:
     return sum(1 for row in rows if str(row.get("status") or "").upper() == "OPEN")
 
 
+def _record_raw_result(
+    csv_row: Dict[str, Any], *, raw_csv_path: str, net_ev: float, skip_reasons: List[str]
+) -> None:
+    """Write the raw result row when EV is positive, including any skip reasons."""
+
+    if net_ev <= 0:
+        return
+
+    raw_row = dict(csv_row)
+    raw_row["skip_reasons"] = ";".join(skip_reasons)
+    save_result_csv(raw_row, csv_path=raw_csv_path)
+
+
 def _has_open_position_for_market(rows: list[dict], market_id: str) -> bool:
     """检查某市场是否已有未平仓头寸，落实“同一市场不加仓”规则。"""
     market_id = str(market_id)
@@ -531,6 +544,11 @@ async def loop_event(
 
             market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
 
+            csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
+            csv_row["contracts_strategy2_theoretical"] = theoretical_contracts_strategy2
+            skip_reasons: List[str] = []
+            skip_reasons.extend(result.contract_validation_notes)
+
             if contracts_strategy2 < min_contract_size:
                 validation_errors.append(
                     f"合约数 {contracts_strategy2:.4f} 小于最小合约单位 {min_contract_size}"
@@ -556,6 +574,13 @@ async def loop_event(
                 )
 
             if validation_errors:
+                skip_reasons.extend(validation_errors)
+                _record_raw_result(
+                    csv_row,
+                    raw_csv_path=raw_output_csv,
+                    net_ev=net_ev,
+                    skip_reasons=skip_reasons,
+                )
                 console.print(
                     "⏸️ [yellow]未满足所有交易条件，已跳过通知/下单：[/yellow] "
                     + "；".join(validation_errors)
@@ -593,8 +618,6 @@ async def loop_event(
                 logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
 
             # 写入本次检测结果
-            csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
-            csv_row["contracts_strategy2_theoretical"] = theoretical_contracts_strategy2
             save_result_csv(csv_row, csv_path=output_csv)
 
 
@@ -617,14 +640,25 @@ async def loop_event(
                             open_positions_count += 1
                 else:
                     console.print("未到冷却时间不能交易")
+                    skip_reasons.append("未到冷却时间未交易")
             except TradeApiError as exc:
+                skip_reasons.append(f"交易执行失败: {exc.message}")
                 console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}")
             except asyncio.CancelledError:
+                skip_reasons.append("交易被取消")
                 raise
             except Exception as exc:
+                skip_reasons.append(f"交易执行异常: {exc}")
                 logger.exception("交易执行异常: %s", exc)
                 console.print(f"❌ 交易执行异常 ({market_id}, 投资={inv_base_usd}): {exc}")
                 raise
+            finally:
+                _record_raw_result(
+                    csv_row,
+                    raw_csv_path=raw_output_csv,
+                    net_ev=net_ev,
+                    skip_reasons=skip_reasons,
+                )
 
         except asyncio.CancelledError:
             raise
@@ -648,6 +682,7 @@ async def run_monitor(config: dict, env_config: Env_config) -> None:
     thresholds = config["thresholds"]
     investments = thresholds["INVESTMENTS"]
     output_csv = thresholds["OUTPUT_CSV"]
+    raw_output_csv = thresholds.get("RAW_OUTPUT_CSV") or str(Path(output_csv).with_name("raw_results.csv"))
     check_interval = thresholds["check_interval_sec"]
     day_off = int(thresholds.get("day_off", 1))
 
@@ -663,6 +698,8 @@ async def run_monitor(config: dict, env_config: Env_config) -> None:
     chat_id = str(env_config.TELEGRAM_CHAT_ID)
     alert_bot = TG_bot(name="alert", token=alert_token, chat_id=chat_id)
     trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
+
+    ensure_csv_file(raw_output_csv, header=RESULTS_CSV_HEADER)
 
     while True:
         now_utc = datetime.now(timezone.utc)
