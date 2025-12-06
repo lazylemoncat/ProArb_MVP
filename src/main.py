@@ -5,7 +5,7 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 from fastapi import FastAPI, HTTPException
 from rich.console import Console
@@ -146,7 +146,7 @@ def _should_record_signal(
     strategy: int,
     investment: float,
     expiration_timestamp_ms: float,
-) -> bool:
+) -> Tuple[bool, str]:
     """根据多维度条件判断是否需要记录/推送信号。"""
 
     now = datetime.now(timezone.utc)
@@ -156,7 +156,7 @@ def _should_record_signal(
     time_window_seconds = 300
 
     if previous is None:
-        return True
+        return True, ""
 
     time_condition = (now - previous.recorded_at).total_seconds() >= time_window_seconds
 
@@ -179,13 +179,32 @@ def _should_record_signal(
         or abs(deribit_price - previous.deribit_price) / deribit_base >= 0.03
     )
 
+    details: str = ""
+    if not ev_change_condition:
+        details += ((
+            f"ev 变化维度不能同时满足： abs(新ROI - 旧ROI) = {abs(roi_pct - previous.roi_pct)}"
+            f"abs(新net_ev - 旧net_ev) = {abs(net_ev - previous.net_ev)}"
+        ))
+    if not sign_change_condition:
+        details += ((
+            f"状态切换维度不满足: ev从负转正: {(previous.net_ev < 0 <= net_ev)}"
+            f"ev从正转负: {(previous.net_ev > 0 >= net_ev)}"
+            f"策略切换: {(strategy != previous.strategy)}, 当前策略: {strategy}"
+        ))
+    if not market_change_condition:
+        details += ((
+            f"市场关键变化不满足: PM 价格变化: {round(abs(pm_price - previous.pm_price) / pm_base, 3)}"
+            f"Deribit 期权价格变化: {round(abs(deribit_price - previous.deribit_price) / deribit_base, 3)}"
+        ))
+
+
     return time_condition and any(
         [
             ev_change_condition,
             sign_change_condition,
             market_change_condition,
         ]
-    )
+    ), details
 
 
 def rotate_event_title_date(template_title: str, target_date: date) -> str:
@@ -532,7 +551,7 @@ async def loop_event(
 
             signal_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
             previous_snapshot = signal_state.get(signal_key)
-            should_record_signal = _should_record_signal(
+            should_record_signal, details = _should_record_signal(
                 previous_snapshot,
                 net_ev=net_ev,
                 roi_pct=roi_pct,
@@ -646,8 +665,8 @@ async def loop_event(
                         if status == "EXECUTED":
                             open_positions_count += 1
                 else:
-                    console.print("未到冷却时间不能交易")
-                    skip_reasons.append("未到冷却时间未交易")
+                    console.print(details)
+                    skip_reasons.append(details)
             except TradeApiError as exc:
                 skip_reasons.append(f"交易执行失败: {exc.message}")
                 console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}")
