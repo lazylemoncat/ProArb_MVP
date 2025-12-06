@@ -412,7 +412,7 @@ async def loop_event(
     prob_edge_min = float(thresholds.ev_spread_min)
     net_ev_min = float(thresholds.notify_net_ev_min)  # 可选：不配就默认 0
     min_contract_size = float(thresholds.min_contract_size)
-    contract_rounding_band = int(thresholds.contract_rounding_band)
+    contract_rounding_band = float(thresholds.contract_rounding_band)
     min_pm_price = float(thresholds.min_pm_price)
     max_pm_price = float(thresholds.max_pm_price)
     dry_trade_mode = bool(thresholds.dry_trade)
@@ -513,9 +513,9 @@ async def loop_event(
             validation_errors = []
             contracts_strategy2 = float(result.contracts_strategy2)
             theoretical_contracts_strategy2 = contracts_strategy2
-            rounding_tolerance = contract_rounding_band * 0.01
             if contract_rounding_band > 0:
                 rounded_contracts = round(contracts_strategy2 * 10) / 10.0
+                rounding_tolerance = rounded_contracts * contract_rounding_band * 0.1
                 lower_bound = rounded_contracts - rounding_tolerance
                 upper_bound = rounded_contracts + rounding_tolerance
 

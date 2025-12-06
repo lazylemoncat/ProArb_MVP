@@ -32,7 +32,7 @@ class ThresholdsConfig:
     check_interval_sec: int
     INVESTMENTS: List[int]
     min_contract_size: float
-    contract_rounding_band: int
+    contract_rounding_band: float
     min_pm_price: float
     max_pm_price: float
     min_net_ev: float
