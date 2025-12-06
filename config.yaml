@@ -9,7 +9,7 @@ thresholds:
   INVESTMENTS: [200]              # 一笔的投资金额
   dry_trade: false                # 交易是否走模拟模式
   min_contract_size: 0.1          # Deribit最小合约单位（BTC）
-  contract_rounding_band: 1       # 合约数调整范围系数；1 表示允许在目标合约数的 ±10% 内四舍五入到最接近的 0.1
+  contract_rounding_band: 3       # 合约数调整范围系数；1 表示允许在目标合约数的 ±10% 内四舍五入到最接近的 0.1（当前值 3 = ±30%）
   min_pm_price: 0.01              # PM价格 < 0.01 拒绝
   max_pm_price: 0.99              # PM价格 > 0.99 拒绝
   min_net_ev: 0.0                 # 只接受正EV
