@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from dataclasses import asdict
 
 from src.fetch_data.polymarket_client import PolymarketClient
+from src.fetch_data.deribit_client import DeribitClient
 
 from .services.api_models import (
     ApiErrorResponse,
@@ -311,7 +312,49 @@ async def get_positions():
     total_margin = 0
     total_unrealized_pnl = 0
     open_positions_count = 0
-    price_cache: dict[str, list[float]] = {}
+    deribit_price_cache: dict[str, dict[str, float]] = {}
+    deribit_spot_cache: dict[str, float] = {}
+
+    def _get_deribit_mid_price(instrument: str) -> float:
+        if not instrument:
+            return 0.0
+
+        currency = instrument.split("-")[0].upper()
+        if currency not in deribit_price_cache:
+            try:
+                option_list = DeribitClient.get_deribit_option_data(currency=currency)
+            except Exception as exc:  # pragma: no cover - 网络异常时直接返回0
+                logger.warning("Failed to fetch Deribit prices for %s: %s", currency, exc)
+                deribit_price_cache[currency] = {}
+            else:
+                price_map: dict[str, float] = {}
+                for opt in option_list:
+                    bid = float(getattr(opt, "bid_price", 0.0) or 0.0)
+                    ask = float(getattr(opt, "ask_price", 0.0) or 0.0)
+                    if bid > 0 and ask > 0:
+                        mid = (bid + ask) / 2
+                    else:
+                        mid = bid or ask
+                    price_map[opt.instrument_name] = mid
+                deribit_price_cache[currency] = price_map
+
+        return deribit_price_cache.get(currency, {}).get(instrument, 0.0)
+
+    def _get_deribit_spot_usd(currency: str) -> float:
+        """获取 Deribit 现货价格（USD），避免重复请求。"""
+        key = currency.lower()
+        if key in deribit_spot_cache:
+            return deribit_spot_cache[key]
+
+        index_name = "btc_usd" if key == "btc" else "eth_usd"
+        try:
+            spot_price = float(DeribitClient.get_spot_price(index_name))
+        except Exception as exc:  # pragma: no cover - 网络异常直接返回0
+            logger.warning("Failed to fetch Deribit spot for %s: %s", currency, exc)
+            spot_price = 0.0
+
+        deribit_spot_cache[key] = spot_price
+        return spot_price
 
     # 读取 CSV 文件中的数据
     with open(positions_file, mode='r', encoding='utf-8') as file:
@@ -322,6 +365,10 @@ async def get_positions():
             im_usd = float(row.get("im_usd", 0) or 0)
             pm_tokens = float(row.get("pm_tokens", 0) or 0)
             pm_entry_cost = float(row.get("pm_entry_cost", 0) or 0)
+            dr_entry_cost = float(row.get("dr_entry_cost", 0) or 0)
+            strategy = int(float(row.get("strategy", 0) or 0))
+            inst_k1 = row.get("inst_k1") or ""
+            inst_k2 = row.get("inst_k2") or ""
 
             market_id = row.get("market_id") or ""
             direction = (row.get("direction") or "").lower()
@@ -330,8 +377,23 @@ async def get_positions():
             current_price_pm = yes_price if direction == "yes" else no_price
 
             current_value = pm_tokens * current_price_pm
-            unrealized_pnl_usd = current_value - pm_entry_cost
-            current_ev_usd = current_value
+
+            price_k1 = _get_deribit_mid_price(inst_k1)
+            price_k2 = _get_deribit_mid_price(inst_k2)
+            deribit_value = 0.0
+            # Deribit 期权报价以币本位计价，需折算为 USD
+            currency = (inst_k1 or inst_k2).split("-")[0].upper() if (inst_k1 or inst_k2) else ""
+            spot_usd = _get_deribit_spot_usd(currency) if currency else 0.0
+            if contracts:
+                if strategy == 1:
+                    deribit_value = (price_k2 - price_k1) * contracts
+                elif strategy == 2:
+                    deribit_value = (price_k1 - price_k2) * contracts
+
+            deribit_value_usd = deribit_value * spot_usd
+            deribit_unrealized_pnl = deribit_value_usd - dr_entry_cost
+            unrealized_pnl_usd = (current_value - pm_entry_cost) + deribit_unrealized_pnl
+            current_ev_usd = current_value + deribit_value_usd
 
             position = {
                 "trade_id": row.get("trade_id"),
@@ -343,6 +405,9 @@ async def get_positions():
                 "im_usd": im_usd,
                 "status": row.get("status"),
                 "current_price_pm": current_price_pm,
+                "deribit_price_k1": price_k1,
+                "deribit_price_k2": price_k2,
+                "deribit_unrealized_pnl_usd": deribit_unrealized_pnl,
                 "unrealized_pnl_usd": unrealized_pnl_usd,
                 "current_ev_usd": current_ev_usd,
             }
