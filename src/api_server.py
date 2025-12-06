@@ -312,8 +312,8 @@ async def get_positions():
     total_margin = 0
     total_unrealized_pnl = 0
     open_positions_count = 0
-    price_cache: dict[str, list[float]] = {}
     deribit_price_cache: dict[str, dict[str, float]] = {}
+    deribit_spot_cache: dict[str, float] = {}
 
     def _get_deribit_mid_price(instrument: str) -> float:
         if not instrument:
@@ -340,6 +340,22 @@ async def get_positions():
 
         return deribit_price_cache.get(currency, {}).get(instrument, 0.0)
 
+    def _get_deribit_spot_usd(currency: str) -> float:
+        """获取 Deribit 现货价格（USD），避免重复请求。"""
+        key = currency.lower()
+        if key in deribit_spot_cache:
+            return deribit_spot_cache[key]
+
+        index_name = "btc_usd" if key == "btc" else "eth_usd"
+        try:
+            spot_price = float(DeribitClient.get_spot_price(index_name))
+        except Exception as exc:  # pragma: no cover - 网络异常直接返回0
+            logger.warning("Failed to fetch Deribit spot for %s: %s", currency, exc)
+            spot_price = 0.0
+
+        deribit_spot_cache[key] = spot_price
+        return spot_price
+
     # 读取 CSV 文件中的数据
     with open(positions_file, mode='r', encoding='utf-8') as file:
         reader = csv.DictReader(file)
@@ -365,15 +381,19 @@ async def get_positions():
             price_k1 = _get_deribit_mid_price(inst_k1)
             price_k2 = _get_deribit_mid_price(inst_k2)
             deribit_value = 0.0
+            # Deribit 期权报价以币本位计价，需折算为 USD
+            currency = (inst_k1 or inst_k2).split("-")[0].upper() if (inst_k1 or inst_k2) else ""
+            spot_usd = _get_deribit_spot_usd(currency) if currency else 0.0
             if contracts:
                 if strategy == 1:
                     deribit_value = (price_k2 - price_k1) * contracts
                 elif strategy == 2:
                     deribit_value = (price_k1 - price_k2) * contracts
 
-            deribit_unrealized_pnl = deribit_value - dr_entry_cost
+            deribit_value_usd = deribit_value * spot_usd
+            deribit_unrealized_pnl = deribit_value_usd - dr_entry_cost
             unrealized_pnl_usd = (current_value - pm_entry_cost) + deribit_unrealized_pnl
-            current_ev_usd = current_value + deribit_value
+            current_ev_usd = current_value + deribit_value_usd
 
             position = {
                 "trade_id": row.get("trade_id"),
