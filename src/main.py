@@ -419,7 +419,7 @@ async def loop_event(
 
     RULE_REQUIRED_INVESTMENT = 200.0
     RULE_MIN_PROB_EDGE = 0.01  # 1%
-    RULE_MIN_ROI_PCT = 3.0
+    RULE_MIN_ROI_PCT = 1.0
     RULE_STOP_DERIBIT_ROI_PCT = 2.0
 
     start_ts = datetime.now(timezone.utc)
