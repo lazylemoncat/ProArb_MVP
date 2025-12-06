@@ -602,6 +602,7 @@ async def loop_event(
 
             # 控制台输出
             console.print(
+                f"{market_title}"
                 f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
                 f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
                 f"IM={float(result.im_usd_strategy2):.2f}"

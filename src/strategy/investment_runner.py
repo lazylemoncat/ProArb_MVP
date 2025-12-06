@@ -253,33 +253,6 @@ def adjust_and_validate_contracts(
             f"  - 或选择价差更窄的期权（降低 spread_width）"
         )
 
-    # 3. 检查调整幅度
-    adjustment_pct = abs(contracts_adjusted - contracts_raw) / contracts_raw if contracts_raw > 0 else 0
-
-    # 3a. 调整幅度过大：拒绝交易
-    if adjustment_pct > ERROR_THRESHOLD:
-        message = (
-            f"{strategy_name}: 合约数量调整幅度 {adjustment_pct*100:.1f}% 超过最大允许值 {ERROR_THRESHOLD*100:.0f}%。\n"
-            f"原始: {contracts_raw:.6f} BTC → 调整后: {contracts_adjusted:.1f} BTC\n"
-            f"对冲效果将被严重破坏，拒绝执行此交易。\n"
-            f"建议：增加投资金额至 ${inv_base_usd * 1.5:.2f} 或选择不同的期权组合。"
-        )
-        if contract_validation_notes is not None:
-            contract_validation_notes.append(message)
-        raise ValueError(message)
-
-    # 3b. 调整幅度较大：警告
-    if adjustment_pct > WARNING_THRESHOLD:
-        warning_message = (
-            f"⚠️  {strategy_name}: 合约数量调整可能影响对冲效果\n"
-            f"   原始: {contracts_raw:.6f} BTC\n"
-            f"   调整: {contracts_adjusted:.1f} BTC\n"
-            f"   变化: {adjustment_pct*100:.1f}%"
-        )
-        print(warning_message)
-        if contract_validation_notes is not None:
-            contract_validation_notes.append(warning_message)
-
     # 4. 评估风险等级（不再拒绝，只提示）
     risk_level = "normal"
     if contracts_adjusted > HIGH_RISK_THRESHOLD:
