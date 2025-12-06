@@ -61,7 +61,7 @@ def _safe_int(v: Any) -> Optional[int]:
 
 def _compute_api_market_id(row: Dict[str, Any]) -> str:
     # Prefer explicit market_id in csv; otherwise derive from asset + K_poly/strike
-    mid = row.get("market_id")
+    mid = row.get("pm_market_id")
     if mid:
         return str(mid)
     asset = str(row.get("asset") or "")
@@ -540,12 +540,12 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
                 "类型： 开仓\n"
                 f"策略{strategy}\n"
                 f"模拟:{dry_run}\n"
-                f"市场: BTC > ${market_title}\n"
+                f"市场: {market_title}\n"
                 f"PM: 买入 {"YES" if strategy == 1 else "NO"} ${float(limit_price)}({investment_usd})\n"
                 f"Deribit: {"卖出牛差" if strategy == 1 else "买入牛差"} {float(k1)}-{float(k2)}({float(contracts)})\n"
-                f"手续费: ${float(fees_total)}, 滑点:{float(slippage_usd)}\n"
-                f"开仓成本{float(open_cost_fee_bucket)}, 保证金:{float(result.im_usd)}\n"
-                f"预期净收益:{float(result.net_profit_usd)}\n"
+                f"手续费: ${round(float(fees_total), 3)}, 滑点:{float(slippage_usd)}\n"
+                f"开仓成本{round(float(open_cost_fee_bucket), 3)}, 保证金:{round(float(result.im_usd), 3)}\n"
+                f"预期净收益:{round(float(result.net_profit_usd), 3)}\n"
                 f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
             ))
         except Exception as exc:

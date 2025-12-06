@@ -668,8 +668,8 @@ async def loop_event(
                     console.print(details)
                     skip_reasons.append(details)
             except TradeApiError as exc:
-                skip_reasons.append(f"交易执行失败: {exc.message}")
-                console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}")
+                skip_reasons.append(f"交易执行失败: {exc.message}, {exc.error_code}")
+                console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}, {exc.error_code}")
             except asyncio.CancelledError:
                 skip_reasons.append("交易被取消")
                 raise
