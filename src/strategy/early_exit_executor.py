@@ -426,7 +426,7 @@ async def run_early_exit_check(
         return []
 
     # 2. 检查时间窗口（可通过配置跳过）
-    check_time_window = early_exit_cfg.get("check_time_window", True)
+    check_time_window = early_exit_cfg.get("check_time_window", False)
     if check_time_window:
         in_window, reason = is_in_early_exit_window()
         if not in_window:

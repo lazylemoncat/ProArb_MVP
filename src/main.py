@@ -804,8 +804,9 @@ async def run_monitor(config: Config, env_config: Env_config) -> None:
         # 在每个监控周期内检查是否有需要提前平仓的持仓
         _config = asdict(config)
         try:
-            early_exit_cfg = _config.get("early_exit", {})
-            if early_exit_cfg.get("enabled", False):
+            _, _, trading_config = load_all_configs()
+            early_exit_cfg = asdict(trading_config.early_exit)
+            if True:
                 in_window, window_reason = is_in_early_exit_window()
                 if in_window:
                     console.print(f"\n🔍 [cyan]检查提前平仓: {window_reason}[/cyan]")

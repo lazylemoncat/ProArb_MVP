@@ -106,11 +106,11 @@ early_exit:
   # 亏损阈值（默认 5%）
   # - 亏损 <= 阈值：持有博反转
   # - 亏损 > 阈值：立即止损
-  loss_threshold_pct: 0.05
+  loss_threshold_pct: 0.00
 
   # 流动性检查倍数
   # 要求：可用流动性 >= 持仓数量 × 此倍数
-  min_liquidity_multiplier: 2.0
+  min_liquidity_multiplier: 1.0
 
   # 平仓手续费率（目前 PM 无手续费）
   exit_fee_rate: 0.0
@@ -119,7 +119,7 @@ early_exit:
   check_interval_seconds: 60
 
   # 模拟模式（true = 不真实执行，只记录日志）
-  dry_run: true
+  dry_run: false
 
   # Telegram 通知
   send_notifications: true
