@@ -452,9 +452,38 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     expiry_date = datetime.fromtimestamp(expiry_ts / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
     # 计算 PM 入场成本和 DR 入场成本
-    pm_entry_cost = investment_usd  # PM 端投入成本 = 投资金额
-    # DR 入场成本 = Deribit 开仓费用（策略1卖牛差可能是净收入，策略2买牛差是净支出）
-    dr_entry_cost = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0) - pm_entry_cost
+    # PM 入场成本 = PM 本金 + PM Gas 费（0.1 USD）
+    pm_gas_fee = 0.1
+    pm_entry_cost = investment_usd + pm_gas_fee  # 例如：200 + 0.1 = 200.1
+
+    # DR 入场成本 = Deribit 期权权利金 + Deribit 交易费用
+    # 从 opportunities.csv 读取期权价格
+    k1_price_btc = _safe_float(row.get("k1_ask_btc" if strategy == 2 else "k1_bid_btc"), default=0.0)
+    k2_price_btc = _safe_float(row.get("k2_bid_btc" if strategy == 2 else "k2_ask_btc"), default=0.0)
+    spot_price = _safe_float(row.get("spot"), default=0.0)
+
+    # 计算期权权利金（净支付或净收入）
+    if strategy == 1:
+        # 策略1：卖牛市价差（short K1, long K2）
+        # 卖出 K1 收到权利金，买入 K2 支付权利金
+        # 净收入 = K1_bid - K2_ask（通常为正，收到钱）
+        premium_per_contract = (k1_price_btc - k2_price_btc) * spot_price
+        deribit_premium = premium_per_contract * contracts
+        # 收到钱，所以是负成本
+        dr_entry_cost = -deribit_premium
+    else:
+        # 策略2：买牛市价差（long K1, short K2）
+        # 买入 K1 支付权利金，卖出 K2 收到权利金
+        # 净支出 = K1_ask - K2_bid（通常为正，支付钱）
+        premium_per_contract = (k1_price_btc - k2_price_btc) * spot_price
+        deribit_premium = premium_per_contract * contracts
+        # 支付钱，所以是正成本
+        dr_entry_cost = deribit_premium
+
+    # 加上 Deribit 交易费用（open_cost_strategy 包含 Deribit 费用 + PM Gas，需要减去 PM Gas）
+    open_cost_strategy = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0)
+    deribit_open_fee = open_cost_strategy - pm_gas_fee  # 减去 PM 的 Gas 费
+    dr_entry_cost += deribit_open_fee
 
     # 计算 PM token 数量
     pm_tokens = investment_usd / limit_price if limit_price > 0 else 0.0

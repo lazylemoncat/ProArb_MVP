@@ -385,10 +385,20 @@ async def get_positions():
             currency = (inst_k1 or inst_k2).split("-")[0].upper() if (inst_k1 or inst_k2) else ""
             spot_usd = _get_deribit_spot_usd(currency) if currency else 0.0
             if contracts:
+                # 计算持仓价值（注意方向）
+                # 价差市场价值 = (K1价格 - K2价格) × 合约数
+                spread_value = (price_k1 - price_k2) * contracts
+
                 if strategy == 1:
-                    deribit_value = (price_k1 - price_k2) * contracts
+                    # 策略1：卖出牛市价差（Short Bull Spread）
+                    # 持仓是负债，价差上涨对卖方不利
+                    # 持仓价值 = -价差市场价值（负值）
+                    deribit_value = -spread_value
                 elif strategy == 2:
-                    deribit_value = (price_k2 - price_k1) * contracts
+                    # 策略2：买入牛市价差（Long Bull Spread）
+                    # 持仓是资产，价差上涨对买方有利
+                    # 持仓价值 = 价差市场价值（正值）
+                    deribit_value = spread_value
 
             deribit_value_usd = deribit_value * spot_usd
             deribit_unrealized_pnl = deribit_value_usd - dr_entry_cost
