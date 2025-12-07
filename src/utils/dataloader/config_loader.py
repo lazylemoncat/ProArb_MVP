@@ -39,6 +39,7 @@ class ThresholdsConfig:
     min_roi_pct: float
     dry_trade: bool
     day_off: int
+    daily_trades: int
 
 @dataclass
 class Config:

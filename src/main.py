@@ -35,7 +35,6 @@ from .utils.save_result import (
 )
 from .strategy.early_exit_executor import run_early_exit_check
 from .strategy.early_exit import is_in_early_exit_window
-from dataclasses import asdict
 
 app = FastAPI()
 
@@ -485,6 +484,7 @@ async def loop_event(
     today = datetime.now(timezone.utc).date()
     daily_trades = _count_daily_trades(positions_rows, today)
     open_positions_count = _count_open_positions(positions_rows)
+    env, config, trading_config = load_all_configs()
 
     for inv in investments:
         inv_base_usd = float(inv)
@@ -495,12 +495,12 @@ async def loop_event(
             )
             continue
 
-        if daily_trades >= 1:
-            console.print("⛔ [red]已达到当日 3 笔交易上限，停止开仓。[/red]")
+        if daily_trades >= config.thresholds.daily_trades:
+            console.print(f"⛔ [red]已达到当日 {config.thresholds.daily_trades} 笔交易上限，停止开仓。[/red]")
             continue
 
         if open_positions_count >= 1:
-            console.print("⛔ [red]持仓数已达上限 3，暂停加仓。[/red]")
+            console.print("⛔ [red]持仓数已达上限 1，暂停加仓。[/red]")
             continue
 
         if _has_open_position_for_market(positions_rows, market_id):
