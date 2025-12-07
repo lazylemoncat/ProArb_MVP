@@ -63,7 +63,7 @@ def _load_positions(csv_path: str = "data/positions.csv") -> list[dict]:
 
 
 def _count_daily_trades(rows: list[dict], day: date) -> int:
-    """统计指定日期内已执行的真实交易数量，用于每日最多 3 笔的仓位管理规则。"""
+    """统计指定日期内已执行的真实交易数量，用于每日最多 1 笔的仓位管理规则。"""
     count = 0
     for row in rows:
         ts = row.get("entry_timestamp") or ""
@@ -495,11 +495,11 @@ async def loop_event(
             )
             continue
 
-        if daily_trades >= 3:
+        if daily_trades >= 1:
             console.print("⛔ [red]已达到当日 3 笔交易上限，停止开仓。[/red]")
             continue
 
-        if open_positions_count >= 3:
+        if open_positions_count >= 1:
             console.print("⛔ [red]持仓数已达上限 3，暂停加仓。[/red]")
             continue
 
