@@ -68,7 +68,8 @@ def load_config(config_path: str = os.getenv("CONFIG_PATH", "config.yaml")):
         min_net_ev=get_value_from_dict(row_config['thresholds'], 'min_net_ev'),
         min_roi_pct=get_value_from_dict(row_config['thresholds'], 'min_roi_pct'),
         dry_trade=get_value_from_dict(row_config['thresholds'], 'dry_trade'),
-        day_off=get_value_from_dict(row_config['thresholds'], 'day_off')
+        day_off=get_value_from_dict(row_config['thresholds'], 'day_off'),
+        daily_trades=get_value_from_dict(row_config['thresholds'], 'daily_trades')
     )
 
     events_config = [
