@@ -386,9 +386,9 @@ async def get_positions():
             spot_usd = _get_deribit_spot_usd(currency) if currency else 0.0
             if contracts:
                 if strategy == 1:
-                    deribit_value = (price_k2 - price_k1) * contracts
-                elif strategy == 2:
                     deribit_value = (price_k1 - price_k2) * contracts
+                elif strategy == 2:
+                    deribit_value = (price_k2 - price_k1) * contracts
 
             deribit_value_usd = deribit_value * spot_usd
             deribit_unrealized_pnl = deribit_value_usd - dr_entry_cost
