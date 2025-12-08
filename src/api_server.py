@@ -401,7 +401,7 @@ async def get_positions():
                     deribit_value = spread_value
 
             deribit_value_usd = deribit_value * spot_usd
-            deribit_unrealized_pnl = deribit_value_usd - dr_entry_cost
+            deribit_unrealized_pnl = deribit_value_usd + dr_entry_cost
             unrealized_pnl_usd = (current_value - pm_entry_cost) + deribit_unrealized_pnl
             current_ev_usd = current_value + deribit_value_usd
 
