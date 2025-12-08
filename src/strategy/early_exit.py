@@ -272,7 +272,7 @@ def analyze_early_exit(
 def _check_liquidity(
     position: Position,
     available_liquidity_tokens: float,
-    min_liquidity_multiplier: float = 2.0,
+    min_liquidity_multiplier: float = 1.0,
 ) -> RiskCheckResult:
     """
     PRD 中的“流动性检查”：
@@ -380,7 +380,7 @@ def make_exit_decision(
         risk_checks.append(time_check)
 
     # 4.2 流动性检查
-    min_liq_mult = float(early_exit_cfg.get("min_liquidity_multiplier", 2.0))
+    min_liq_mult = float(early_exit_cfg.get("min_liquidity_multiplier", 1.0))
     liq_check = _check_liquidity(
         position=position,
         available_liquidity_tokens=available_liquidity_tokens,

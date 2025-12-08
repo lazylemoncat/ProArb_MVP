@@ -9,6 +9,13 @@ mode:
 # ----------------------------------------------------------------------------
 # FILTERS — used BEFORE calling EV engine
 # ----------------------------------------------------------------------------
+record_signal_filter:
+  time_window_seconds: 300        # 通知和记录的时间间隔
+  roi_relative_pct_change: 3      # ROI 相对变化百分比
+  net_ev_absolute_pct_change: 1.5 # 净 EV 绝对变化百分比
+  pm_price_pct_change: 2          # PM 价格变化百分比
+  deribit_price_pct_change: 3     # Deribit 期权价格变化百分比
+
 filters:
 
   # Minimum profitability thresholds  
