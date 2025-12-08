@@ -1,4 +1,5 @@
 mode:
+  # Deprecated
   dry_run: true            # execute endpoint always returns DRY_RUN
   # Deprecated
   allow_execute: true      # set false to disable trading completely
@@ -37,7 +38,9 @@ filters:
 risk_limits:
 
   sizing:
+    # Deprecated
     default_investment_usd: 1000
+    # Deprecated
     max_investment_usd: 2000       # hard cap for any single trade
     max_daily_total_usd: 20000     # optional (MVP ignored if not used)
 
@@ -59,13 +62,14 @@ risk_limits:
 execution:
 
   polymarket:
-    enabled: false                 # future use
+    enabled: true                 # future use
     max_spend_usdc: 2000
 
   deribit:
-    enabled: false                 # future use
-    post_only: true
+    enabled: true                 # future use
+    post_only: false
     reduce_only: false
+    max_spend_usdc: 2000
 
 
 # ----------------------------------------------------------------------------
@@ -83,7 +87,9 @@ alerts:
     # Which messages to send
     send_opportunities: true
     send_trade_executions: true
+    # Deprecated
     send_errors: true
+    # Deprecated
     send_recoveries: true
 
     # Retry logic for sending messages
@@ -128,6 +134,7 @@ early_exit:
 # ----------------------------------------------------------------------------
 # SECURITY — matches POST /trade/sim and /trade/execute
 # ----------------------------------------------------------------------------
+# Deprecated
 auth:
   api_key_env: "Trading_api_key"
   allowed_ips: 104.248.192.200

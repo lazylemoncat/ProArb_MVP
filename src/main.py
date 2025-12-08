@@ -412,6 +412,35 @@ def build_events_for_date(target_date: date) -> List[dict]:
     return expanded_events
 
 
+async def send_opportunity(
+        alert_bot, 
+        previous_snapshot, 
+        market_title: str, 
+        net_ev: float, 
+        strategy: int,
+        prob_diff: float,
+        pm_price: float,
+        deribit_price: float,
+        inv_base_usd: float,
+        validation_errors: list[str]
+    ):
+    now = datetime.now(timezone.utc)
+    if previous_snapshot is None or (now - previous_snapshot.recorded_at).total_seconds() >= 300:
+        try:
+            now_ts = datetime.now(timezone.utc)
+
+            await alert_bot.publish((
+                    f"BTC > ${market_title} | EV: +${round(net_ev, 3)}\n"
+                    f"策略{strategy}, 概率差{round(prob_diff, 3)}\n"
+                    f"PM ${pm_price}, Deribit ${round(deribit_price, 3)}\n"
+                    f"建议投资${inv_base_usd}\n"
+                    f"validation_errors: {validation_errors}"
+                    f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+                ))
+        except Exception as exc:
+            logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
+
+
 async def loop_event(
     data: dict,
     investments: Iterable[float],
@@ -529,7 +558,7 @@ async def loop_event(
             roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
             roi_str = f"{roi_pct:.2f}%"
 
-            validation_errors = []
+            validation_errors: list[str] = []
             contracts_strategy2 = float(result.contracts_strategy2)
             theoretical_contracts_strategy2 = contracts_strategy2
             if contract_rounding_band > 0:
@@ -550,6 +579,7 @@ async def loop_event(
                     )
 
             signal_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
+            
             previous_snapshot = signal_state.get(signal_key)
             should_record_signal, details = _should_record_signal(
                 previous_snapshot,
@@ -595,6 +625,20 @@ async def loop_event(
                 validation_errors.append(
                     f"未满足进场概率优势 (|Δprob|={prob_edge_pct:.4f}, 净EV=${net_ev:.2f})"
                 )
+            
+            if net_ev > 0 and should_record_signal:
+                # 发送套利机会到 Alert Bot
+                await send_opportunity(
+                    alert_bot, 
+                    previous_snapshot, 
+                    market_title, 
+                    net_ev, strategy, 
+                    prob_diff, 
+                    pm_price, 
+                    deribit_price, 
+                    inv_base_usd,
+                    validation_errors
+                )
 
             if validation_errors:
                 skip_reasons.extend(validation_errors)
@@ -605,7 +649,7 @@ async def loop_event(
                     skip_reasons=skip_reasons,
                 )
                 console.print(
-                    "⏸️ [yellow]未满足所有交易条件，已跳过通知/下单：[/yellow] "
+                    "⏸️ [yellow]未满足所有交易条件，已跳过下单：[/yellow] "
                     + "；".join(validation_errors)
                 )
                 continue
@@ -627,21 +671,6 @@ async def loop_event(
                 f"IM={float(result.im_usd_strategy2):.2f}"
             )
 
-            # 发送套利机会到 Alert Bot
-            now = datetime.now(timezone.utc)
-            if previous_snapshot is None or (now - previous_snapshot.recorded_at).total_seconds() >= 300:
-                try:
-                    now_ts = datetime.now(timezone.utc)
-
-                    await alert_bot.publish((
-                            f"BTC > ${market_title} | EV: +${round(net_ev, 3)}\n"
-                            f"策略{strategy}, 概率差{round(prob_diff, 3)}\n"
-                            f"PM ${pm_price}, Deribit ${round(deribit_price, 3)}\n"
-                            f"建议投资${inv_base_usd}\n"
-                            f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
-                        ))
-                except Exception as exc:
-                    logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
 
             # 写入本次检测结果
             save_result_csv(csv_row, csv_path=output_csv)

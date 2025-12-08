@@ -179,7 +179,7 @@ def _portfolio_payoff_at_price_strategy2(S_T: float, input_data, strategy_out):
         raise ValueError("pm_no_avg_open 必须大于 0，请确保传入有效的平均成交价")
 
     shares_no = Inv / no_price
-    if S_T <= Kpoly:
+    if S_T < Kpoly:
         # 事件不发生：NO = 1，我们收到$1每股
         pnl_pm = shares_no - Inv
     else:
