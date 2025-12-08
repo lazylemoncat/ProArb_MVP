@@ -475,15 +475,27 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         # 策略2：买牛市价差（long K1, short K2）
         # 买入 K1 支付权利金，卖出 K2 收到权利金
         # 净支出 = K1_ask - K2_bid（通常为正，支付钱）
+        # 但如果市场倒挂，可能是收入（负数）
         premium_per_contract = (k1_price_btc - k2_price_btc) * spot_price
         deribit_premium = premium_per_contract * contracts
-        # 支付钱，所以是正成本
+        # 重要：这里不是从API直接获取，而是基于opportunities.csv理论价格计算
+        # 如果未来使用Deribit API的实际cashflow，需要转换视角：
+        # API cashflow: 我们买入=Deribit收到=正数，我们卖出=Deribit付出=负数
+        # 我们的视角: 我们买入=支出=正数，我们卖出=收入=负数
         dr_entry_cost = deribit_premium
+        # DEBUG: 初始值
+        print(f"[DEBUG-COST-1] Initial dr_entry_cost = {dr_entry_cost}")
+        print(f"[DEBUG-COST-1] strategy = {strategy}")
+        print(f"[DEBUG-COST-1] deribit_premium = {deribit_premium}")
 
     # 加上 Deribit 交易费用（open_cost_strategy 包含 Deribit 费用 + PM Gas，需要减去 PM Gas）
     open_cost_strategy = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0)
     deribit_open_fee = open_cost_strategy - pm_gas_fee  # 减去 PM 的 Gas 费
     dr_entry_cost += deribit_open_fee
+    # DEBUG: 添加费用后
+    print(f"[DEBUG-COST-2] After fees, dr_entry_cost = {dr_entry_cost}")
+    print(f"[DEBUG-COST-2] open_cost_strategy{strategy} = {open_cost_strategy}")
+    print(f"[DEBUG-COST-2] deribit_open_fee = {deribit_open_fee}")
 
     # 计算 PM token 数量
     pm_tokens = investment_usd / limit_price if limit_price > 0 else 0.0
@@ -534,6 +546,11 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         "exit_pnl": "",
         "exit_reason": "",
     }
+
+    # DEBUG: 保存前检查
+    print(f"[DEBUG-COST-3] About to save dr_entry_cost = {dr_entry_cost}")
+    print(f"[DEBUG-COST-3] position_data['dr_entry_cost'] = {position_data['dr_entry_cost']}")
+    print(f"[DEBUG-COST-3] Market ID: {market_id}")
 
     save_position_to_csv(position_data)
 
