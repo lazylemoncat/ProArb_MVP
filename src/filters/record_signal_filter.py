@@ -38,11 +38,11 @@ class SignalSnapshot:
 
 @dataclass
 class Record_signal_filter:
-    time_window_seconds: int # 距离上次记录时间间隔
-    roi_relative_pct_change: float # ROI 相对变化百分比
-    net_ev_absolute_pct_change: float # 净 EV 绝对变化
-    pm_price_pct_change: float # PM 价格变化百分比
-    deribit_price_pct_change: float # Deribit 期权价格变化百分比
+    time_window_seconds: int            # 距离上次记录时间间隔
+    roi_relative_pct_change: float      # ROI 相对变化百分比
+    net_ev_absolute_pct_change: float   # 净 EV 绝对变化百分比
+    pm_price_pct_change: float          # PM 价格变化百分比
+    deribit_price_pct_change: float     # Deribit 期权价格变化百分比
 
 def check_time_condition(previous_snapshot: SignalSnapshot, record_signal_filter: Record_signal_filter) -> Tuple[bool, str]:
     """

@@ -13,7 +13,7 @@ thresholds:
   min_pm_price: 0.01              # PM价格 < 0.01 拒绝
   max_pm_price: 0.99              # PM价格 > 0.99 拒绝
   min_net_ev: 0.0                 # 只接受正EV
-  min_roi_pct: 0.0                # 只接受正ROI
+  min_roi_pct: 1.0                # 只接受正ROI
   day_off: 1                      # 目标日期与今日的偏移（单位：天），例如今天 12/2、day_off=1 => 监控 12/3 市场
   daily_trades: 1                 # 每天最多交易的次数
 

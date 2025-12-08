@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..telegram.TG_bot import TG_bot
-from ..utils.dataloader import load_all_configs, Env_config, Config, TradingConfig
+from ..utils.dataloader import load_all_configs, Env_config, Config, Trading_config
 from ..utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file, save_position_to_csv
 
 # trading executors (async)
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 
-def _get_config() -> Tuple[Env_config, Config, TradingConfig]:
+def _get_config() -> Tuple[Env_config, Config, Trading_config]:
     env, config, trading_config = load_all_configs()
     return env, config, trading_config
 

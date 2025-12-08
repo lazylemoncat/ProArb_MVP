@@ -22,6 +22,14 @@ class ModeConfig:
     log_trades: bool
 
 @dataclass
+class Record_signal_filter:
+    time_window_seconds: int            # 距离上次记录时间间隔
+    roi_relative_pct_change: float      # ROI 相对变化百分比
+    net_ev_absolute_pct_change: float   # 净 EV 绝对变化百分比
+    pm_price_pct_change: float          # PM 价格变化百分比
+    deribit_price_pct_change: float     # Deribit 期权价格变化百分比
+
+@dataclass
 class EvFilterConfig:
     min_ev_usd_1000: float
     min_ev_pct: float
@@ -129,8 +137,9 @@ class EarlyExitConfig:
 
 
 @dataclass
-class TradingConfig:
+class Trading_config:
     mode: ModeConfig
+    record_signal_filter: Record_signal_filter
     filters: FiltersConfig
     risk_limits: RiskLimitsConfig
     execution: ExecutionConfig
@@ -144,13 +153,21 @@ def read_trading_config(config_path: str):
         config_data = yaml.safe_load(f)
     return config_data
 
-def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "trading_config.yaml")) -> TradingConfig:
+def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "trading_config.yaml")) -> Trading_config:
     config_data = read_trading_config(config_path)
 
     mode_config = ModeConfig(
         dry_run=get_value_from_dict(config_data['mode'], 'dry_run'),
         allow_execute=get_value_from_dict(config_data['mode'], 'allow_execute'),
         log_trades=get_value_from_dict(config_data['mode'], 'log_trades')
+    )
+
+    record_signal_filter = Record_signal_filter(
+        time_window_seconds=get_value_from_dict(config_data['record_signal_filter'], "time_window_seconds"),
+        roi_relative_pct_change=get_value_from_dict(config_data['record_signal_filter'], "roi_relative_pct_change"),
+        net_ev_absolute_pct_change=get_value_from_dict(config_data['record_signal_filter'], "net_ev_absolute_pct_change"),
+        pm_price_pct_change=get_value_from_dict(config_data['record_signal_filter'], "pm_price_pct_change"),
+        deribit_price_pct_change=get_value_from_dict(config_data['record_signal_filter'], "deribit_price_pct_change"),
     )
 
     ev_filter = EvFilterConfig(
@@ -251,8 +268,9 @@ def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "tra
         send_notifications=early_exit_data.get('send_notifications', True),
     )
 
-    return TradingConfig(
+    return Trading_config(
         mode=mode_config,
+        record_signal_filter=record_signal_filter,
         filters=filters_config,
         risk_limits=risk_limits_config,
         execution=execution_config,

@@ -3,6 +3,6 @@
 使用 Env_config, Config, TradingConfig 规范化管理
 """
 
-from .dataloader import load_all_configs, Env_config, Config, TradingConfig
+from .dataloader import load_all_configs, Env_config, Config, Trading_config
 
-__all__ = ["load_all_configs", "Env_config", "Config", "TradingConfig"]
+__all__ = ["load_all_configs", "Env_config", "Config", "Trading_config"]

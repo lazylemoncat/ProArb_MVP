@@ -40,7 +40,7 @@ from .services.trade_service import (
     simulate_trade,
 )
 from .telegram.TG_bot import TG_bot
-from .utils.dataloader import load_all_configs, Env_config, Config, TradingConfig 
+from .utils.dataloader import load_all_configs, Env_config, Config, Trading_config 
 
 
 def _round_floats(value: Any, precision: int = 6) -> Any:
@@ -70,7 +70,7 @@ router = APIRouter()
 
 
 
-def _get_config() -> Tuple[Env_config, Config, TradingConfig]:
+def _get_config() -> Tuple[Env_config, Config, Trading_config]:
     env, config, trading_config = load_all_configs()
     return env, config, trading_config
 
@@ -384,6 +384,7 @@ async def get_positions():
             # Deribit 期权报价以币本位计价，需折算为 USD
             currency = (inst_k1 or inst_k2).split("-")[0].upper() if (inst_k1 or inst_k2) else ""
             spot_usd = _get_deribit_spot_usd(currency) if currency else 0.0
+            spread_value = 0
             if contracts:
                 # 计算持仓价值（注意方向）
                 # 价差市场价值 = (K1价格 - K2价格) × 合约数
@@ -420,6 +421,9 @@ async def get_positions():
                 "deribit_unrealized_pnl_usd": deribit_unrealized_pnl,
                 "unrealized_pnl_usd": unrealized_pnl_usd,
                 "current_ev_usd": current_ev_usd,
+                "spot_usd": spot_usd,
+                "dr_entry_cost": dr_entry_cost,
+                "spread_value": spread_value
             }
 
             positions.append(position)

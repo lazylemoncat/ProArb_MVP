@@ -2,12 +2,12 @@ import asyncio
 import csv
 import logging
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from rich.console import Console
 from rich.panel import Panel
 
@@ -15,10 +15,12 @@ from src.telegram.TG_bot import TG_bot
 from src.utils.dataloader.config_loader import Config, ThresholdsConfig
 
 from .fetch_data.polymarket_client import PolymarketClient
-from .strategy.investment_runner import InvestmentResult, evaluate_investment
+from .filters.filters import SignalSnapshot, should_record_signal, Record_signal_filter
 from .services.trade_service import TradeApiError, execute_trade
-from .utils.auth import ensure_signing_ready
-from .utils.dataloader import Env_config, load_all_configs
+from .strategy.early_exit import is_in_early_exit_window
+from .strategy.early_exit_executor import run_early_exit_check
+from .strategy.investment_runner import evaluate_investment
+from .utils.dataloader import Env_config, load_all_configs, Trading_config
 from .utils.init_markets import init_markets
 from .utils.market_context import (
     DeribitMarketContext,
@@ -33,8 +35,6 @@ from .utils.save_result import (
     rewrite_csv_with_header,
     save_result_csv,
 )
-from .strategy.early_exit_executor import run_early_exit_check
-from .strategy.early_exit import is_in_early_exit_window
 
 app = FastAPI()
 
@@ -124,86 +124,6 @@ def _fmt_market_title(asset: str, k_poly: float) -> str:
     except Exception:
         return f"{asset.upper()} > {k_poly}"
 
-
-@dataclass
-class SignalSnapshot:
-    recorded_at: datetime
-    net_ev: float
-    roi_pct: float
-    pm_price: float
-    deribit_price: float
-    strategy: int
-
-
-def _should_record_signal(
-    previous: SignalSnapshot | None,
-    *,
-    net_ev: float,
-    roi_pct: float,
-    pm_price: float,
-    deribit_price: float,
-    strategy: int,
-    investment: float,
-    expiration_timestamp_ms: float,
-) -> Tuple[bool, str]:
-    """根据多维度条件判断是否需要记录/推送信号。"""
-
-    now = datetime.now(timezone.utc)
-    seconds_to_expiry = expiration_timestamp_ms / 1000.0 - now.timestamp()
-
-    # 时间窗口：默认 5 分钟
-    time_window_seconds = 300
-
-    if previous is None:
-        return True, ""
-
-    time_condition = (now - previous.recorded_at).total_seconds() >= time_window_seconds
-
-    ev_change_condition = (
-        abs(roi_pct - previous.roi_pct) >= 3.0
-        and abs(net_ev - previous.net_ev) >= investment * 0.015
-    )
-
-    sign_change_condition = (
-        (previous.net_ev < 0 <= net_ev)
-        or (previous.net_ev > 0 >= net_ev)
-        or (strategy != previous.strategy)
-    )
-
-    pm_base = previous.pm_price if previous.pm_price != 0 else 1e-8
-    deribit_base = previous.deribit_price if previous.deribit_price != 0 else 1e-8
-
-    market_change_condition = (
-        abs(pm_price - previous.pm_price) / pm_base >= 0.02
-        or abs(deribit_price - previous.deribit_price) / deribit_base >= 0.03
-    )
-
-    details: str = ""
-    if not ev_change_condition:
-        details += ((
-            f"ev 变化维度不能同时满足： abs(新ROI - 旧ROI) = {abs(roi_pct - previous.roi_pct)}"
-            f"abs(新net_ev - 旧net_ev) = {abs(net_ev - previous.net_ev)}"
-        ))
-    if not sign_change_condition:
-        details += ((
-            f"状态切换维度不满足: ev从负转正: {(previous.net_ev < 0 <= net_ev)}"
-            f"ev从正转负: {(previous.net_ev > 0 >= net_ev)}"
-            f"策略切换: {(strategy != previous.strategy)}, 当前策略: {strategy}"
-        ))
-    if not market_change_condition:
-        details += ((
-            f"市场关键变化不满足: PM 价格变化: {round(abs(pm_price - previous.pm_price) / pm_base, 3)}"
-            f"Deribit 期权价格变化: {round(abs(deribit_price - previous.deribit_price) / deribit_base, 3)}"
-        ))
-
-
-    return time_condition and any(
-        [
-            ev_change_condition,
-            sign_change_condition,
-            market_change_condition,
-        ]
-    ), details
 
 
 def rotate_event_title_date(template_title: str, target_date: date) -> str:
@@ -453,6 +373,7 @@ async def loop_event(
     thresholds: ThresholdsConfig,
     opp_state: dict,
     signal_state: dict[str, SignalSnapshot],
+    record_signal_filter: Record_signal_filter
 ) -> None:
     market_id = data["polymarket"]["market_id"]
     # 机会提醒阈值：用你 config.yaml 的 ev_spread_min 作为“概率优势”最小值（例如 0.05 = 5%）
@@ -476,8 +397,8 @@ async def loop_event(
 
     # 验证CSV表头是否正确（使用当前 ResultsCsvHeader 长度）；如果不匹配则在不丢数据的前提下重写
     try:
-        from pathlib import Path
         import csv
+        from pathlib import Path
 
         csv_path = Path(output_csv)
         expected_columns = len(RESULTS_CSV_HEADER.as_list())
@@ -579,18 +500,26 @@ async def loop_event(
                     )
 
             signal_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
-            
-            previous_snapshot = signal_state.get(signal_key)
-            should_record_signal, details = _should_record_signal(
-                previous_snapshot,
+
+            now_snapshot = SignalSnapshot(
+                recorded_at=datetime.now(timezone.utc),
                 net_ev=net_ev,
                 roi_pct=roi_pct,
                 pm_price=pm_price,
                 deribit_price=deribit_price,
                 strategy=int(strategy),
-                investment=inv_base_usd,
-                expiration_timestamp_ms=deribit_ctx.k1_expiration_timestamp,
             )
+            previous_snapshot = signal_state.get(signal_key)
+            if previous_snapshot is None:
+                record_signal = True
+                details = ""
+            else:
+                record_signal, details = should_record_signal(
+                    now_snapshot, 
+                    previous_snapshot, 
+                    inv_base_usd, 
+                    record_signal_filter
+                )
 
             prob_edge_pct = abs(prob_diff) / 100.0
             meets_opportunity_gate = prob_edge_pct >= RULE_MIN_PROB_EDGE and net_ev > 0
@@ -626,18 +555,29 @@ async def loop_event(
                     f"未满足进场概率优势 (|Δprob|={prob_edge_pct:.4f}, 净EV=${net_ev:.2f})"
                 )
             
-            if net_ev > 0 and should_record_signal:
+            if record_signal:
                 # 发送套利机会到 Alert Bot
                 await send_opportunity(
                     alert_bot, 
                     previous_snapshot, 
                     market_title, 
-                    net_ev, strategy, 
+                    net_ev, 
+                    strategy, 
                     prob_diff, 
                     pm_price, 
                     deribit_price, 
                     inv_base_usd,
                     validation_errors
+                )
+                signal_state[signal_key] = now_snapshot
+                # 写入本次检测结果
+                save_result_csv(csv_row, csv_path=output_csv)
+                # 控制台输出
+                console.print(
+                    f"{market_title}"
+                    f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
+                    f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
+                    f"IM={float(result.im_usd_strategy2):.2f}"
                 )
 
             if validation_errors:
@@ -654,36 +594,15 @@ async def loop_event(
                 )
                 continue
 
-            signal_state[signal_key] = SignalSnapshot(
-                recorded_at=datetime.now(timezone.utc),
-                net_ev=net_ev,
-                roi_pct=roi_pct,
-                pm_price=pm_price,
-                deribit_price=deribit_price,
-                strategy=int(strategy),
-            )
-
-            # 控制台输出
-            console.print(
-                f"{market_title}"
-                f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
-                f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
-                f"IM={float(result.im_usd_strategy2):.2f}"
-            )
-
-
-            # 写入本次检测结果
-            save_result_csv(csv_row, csv_path=output_csv)
-
 
             try:
-                if should_record_signal:
+                if record_signal:
                     trade_result, status, tx_id, message = await execute_trade(
                         csv_path=output_csv,
                         market_id=market_id,
                         investment_usd=inv_base_usd,
                         dry_run=dry_trade_mode,
-                        should_record_signal=should_record_signal
+                        should_record_signal=record_signal
                     )
                     console.print(
                         f"✅ 自动交易{ ' (dry-run)' if dry_trade_mode else ''} 成功: status={status}, tx_id={tx_id}, "
@@ -723,7 +642,7 @@ async def loop_event(
             raise
 
 
-async def run_monitor(config: Config, env_config: Env_config) -> None:
+async def run_monitor(config: Config, env_config: Env_config, trading_config: Trading_config) -> None:
     """
     根据配置启动监控循环（方案二：自动按日期轮换事件）。
 
@@ -755,6 +674,14 @@ async def run_monitor(config: Config, env_config: Env_config) -> None:
     trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
 
     ensure_csv_file(raw_output_csv, header=RESULTS_CSV_HEADER)
+
+    record_signal_filter = Record_signal_filter(
+        time_window_seconds=trading_config.record_signal_filter.time_window_seconds,
+        roi_relative_pct_change=trading_config.record_signal_filter.roi_relative_pct_change,
+        net_ev_absolute_pct_change=trading_config.record_signal_filter.net_ev_absolute_pct_change,
+        pm_price_pct_change=trading_config.record_signal_filter.pm_price_pct_change,
+        deribit_price_pct_change=trading_config.record_signal_filter.deribit_price_pct_change
+    )
 
     while True:
         now_utc = datetime.now(timezone.utc)
@@ -824,6 +751,7 @@ async def run_monitor(config: Config, env_config: Env_config) -> None:
                         thresholds=thresholds,
                         opp_state=opp_state,
                         signal_state=signal_state,
+                        record_signal_filter=record_signal_filter
                     )
                 except Exception as e:
                     title = data.get("polymarket", {}).get("market_title", "UNKNOWN")
@@ -869,7 +797,7 @@ async def run_monitor(config: Config, env_config: Env_config) -> None:
 
 async def main(config_path: str = "config.yaml") -> None:
     env, config, trading_config = load_all_configs()
-    await run_monitor(config, env)
+    await run_monitor(config, env, trading_config)
 
 
 if __name__ == "__main__":
