@@ -419,7 +419,18 @@ async def evaluate_investment(
     deribit_ctx: DeribitMarketContext,
     poly_ctx: PolymarketState,
 ) -> Tuple[InvestmentResult, int]:
-    """对单笔投资进行完整的 Slippage、保证金、EV 等测算。"""
+    """对单笔投资进行完整的 Slippage、保证金、EV 等测算。
+
+    注意：现在默认使用精细中点法进行 gross EV 计算。
+
+    Args:
+        inv_base_usd: 基础投资金额
+        deribit_ctx: Deribit 市场上下文
+        poly_ctx: Polymarket 状态
+
+    Returns:
+        (投资结果, 选择的策略编号)
+    """
 
     # === 1. Polymarket slippage 估计 ===
     try:
