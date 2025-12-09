@@ -255,6 +255,19 @@ def rewrite_csv_with_header(
             os.fsync(f.fileno())
 
 
+
+    # DEBUG: 检查 dr_entry_cost
+    if 'dr_entry_cost' in row:
+        print(f"[DEBUG-CALL] save_position_to_csv called with dr_entry_cost = {row['dr_entry_cost']}")
+        # 保存到文件
+        with open(f"/tmp/save_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "w") as f:
+            import json
+            json.dump({
+                'timestamp': str(datetime.now()),
+                'dr_entry_cost': row.get('dr_entry_cost'),
+                'market_id': row.get('market_id'),
+                'all_data': row
+            }, f, indent=2)
 def save_position_to_csv(row: Dict[str, Any], csv_path: str = "data/positions.csv") -> None:
     """Append a single position row to ``positions.csv`` with a stable header."""
     ensure_csv_file(csv_path, header=POSITIONS_CSV_HEADER)
