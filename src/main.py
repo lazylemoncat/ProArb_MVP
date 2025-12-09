@@ -42,12 +42,10 @@ console = Console()
 logging.basicConfig(
     level="INFO",
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    filename="proarb.log",  # 指定日志文件
+    filemode="a"  # 'a'表示追加模式，'w'表示覆盖模式
 )
 logger = logging.getLogger(__name__)
-
-def _iso_utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
 
 def _load_positions(csv_path: str = "data/positions.csv") -> list[dict]:
     path = Path(csv_path)
