@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 from fastapi import FastAPI
-from rich.console import Console
 from rich.panel import Panel
 
 from src.telegram.TG_bot import TG_bot
@@ -38,7 +37,6 @@ from .utils.save_result import (
 
 app = FastAPI()
 
-console = Console()
 logging.basicConfig(
     level="INFO",
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
@@ -292,15 +290,9 @@ def build_events_for_date(target_date: date) -> List[dict]:
         try:
             strike_markets = discover_strike_markets_for_event(rotated_title)
         except Exception as exc:
-            console.print(
-                f"[red]❌ 自动发现 Polymarket 市场失败: event_title={rotated_title!r}, 错误: {exc}[/red]"
-            )
             continue
 
         if not strike_markets:
-            console.print(
-                f"[yellow]⚠️ Polymarket 事件 {rotated_title!r} 未找到任何 strike 市场，跳过。[/yellow]"
-            )
             continue
 
         for sm in strike_markets:
@@ -402,9 +394,6 @@ async def loop_event(
                 reader = csv.reader(f)
                 header = next(reader, [])
                 if header and len(header) != expected_columns:
-                    console.print(
-                        f"[yellow]⚠️  检测到旧的CSV格式 ({len(header)}列)，重建为新格式 ({expected_columns}列) 并保留已有数据...[/yellow]"
-                    )
                     rewrite_csv_with_header(output_csv, RESULTS_CSV_HEADER)
     except Exception:
         pass
@@ -423,7 +412,6 @@ async def loop_event(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     table = make_summary_table(deribit_ctx, poly_ctx, timestamp=timestamp)
-    console.print(table)
 
     positions_rows = _load_positions()
     today = datetime.now(timezone.utc).date()
@@ -435,23 +423,15 @@ async def loop_event(
         inv_base_usd = float(inv)
 
         if abs(inv_base_usd - RULE_REQUIRED_INVESTMENT) > 1e-6:
-            console.print(
-                f"⏸️ [yellow]跳过非规则手数 {inv_base_usd:.0f}（仅允许运行 {RULE_REQUIRED_INVESTMENT:.0f}u）[/yellow]"
-            )
             continue
 
         if daily_trades >= config.thresholds.daily_trades:
-            console.print(f"⛔ [red]已达到当日 {config.thresholds.daily_trades} 笔交易上限，停止开仓。[/red]")
             continue
 
         if open_positions_count >= 1:
-            console.print("⛔ [red]持仓数已达上限 1，暂停加仓。[/red]")
             continue
 
         if _has_open_position_for_market(positions_rows, market_id):
-            console.print(
-                f"⏸️ [yellow]{market_id} 已有持仓，规则禁止重复开仓，等待平仓后再试。[/yellow]"
-            )
             continue
 
         try:
@@ -566,13 +546,6 @@ async def loop_event(
                 signal_state[signal_key] = now_snapshot
                 # 写入本次检测结果
                 save_result_csv(csv_row, csv_path=output_csv)
-                # 控制台输出
-                console.print(
-                    f"{market_title}"
-                    f"💰 {inv_base_usd:.0f} | net_ev=${net_ev:.2f} | "
-                    f"PM={pm_price:.4f} | DR={deribit_price:.4f} | prob_diff={prob_diff:.2f}% | "
-                    f"IM={float(result.im_usd_strategy2):.2f}"
-                )
 
             if validation_errors:
                 skip_reasons.extend(validation_errors)
@@ -581,10 +554,6 @@ async def loop_event(
                     raw_csv_path=raw_output_csv,
                     net_ev=net_ev,
                     skip_reasons=skip_reasons,
-                )
-                console.print(
-                    "⏸️ [yellow]未满足所有交易条件，已跳过下单：[/yellow] "
-                    + "；".join(validation_errors)
                 )
                 continue
 
@@ -598,27 +567,20 @@ async def loop_event(
                         dry_run=dry_trade_mode,
                         should_record_signal=record_signal
                     )
-                    console.print(
-                        f"✅ 自动交易{ ' (dry-run)' if dry_trade_mode else ''} 成功: status={status}, tx_id={tx_id}, "
-                        f"direction={trade_result.direction}, contracts={trade_result.contracts:.4f}, net_ev=${trade_result.net_profit_usd:.2f}"
-                    )
                     if status != "DRY_RUN":
                         daily_trades += 1
                         if status == "EXECUTED":
                             open_positions_count += 1
                 else:
-                    console.print(details)
                     skip_reasons.append(details)
             except TradeApiError as exc:
                 skip_reasons.append(f"交易执行失败: {exc.message}, {exc.error_code}")
-                console.print(f"❌ 交易执行失败 ({market_id}, 投资={inv_base_usd}): {exc.message} | 详情: {exc.details}, {exc.error_code}")
             except asyncio.CancelledError:
                 skip_reasons.append("交易被取消")
                 raise
             except Exception as exc:
                 skip_reasons.append(f"交易执行异常: {exc}")
                 logger.exception("交易执行异常: %s", exc)
-                console.print(f"❌ 交易执行异常 ({market_id}, 投资={inv_base_usd}): {exc}")
                 raise
             finally:
                 _record_raw_result(
@@ -632,7 +594,6 @@ async def loop_event(
             raise
         except Exception as exc:
             logger.exception("投资引擎异常: %s", exc)
-            console.print(f"❌ 处理 {inv_base_usd:.0f} USD 投资时出错: {exc}")
             raise
 
 
@@ -685,28 +646,13 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
         realized_pnl = _cumulative_realized_pnl(positions_rows)
         if realized_pnl <= -100 and not risk_review_triggered:
             risk_review_triggered = True
-            console.print(
-                "⚠️ [red]累计亏损已超过 100u，请立即人工复盘（不自动停止）。[/red]"
-            )
 
         if current_target_date is None or target_date != current_target_date:
             current_target_date = target_date
 
-            console.print(
-                Panel.fit(
-                    "[bold cyan]Deribit x Polymarket Arbitrage Monitor[/bold cyan]\n"
-                    f"[green]Target date (T+{day_off}): {target_date.isoformat()}[/green]",
-                    border_style="bright_cyan",
-                )
-            )
-
             events = build_events_for_date(target_date)
 
             if not events:
-                console.print(
-                    "[red]当前配置无法生成任何事件（可能是 config.yaml 的 events 为空，"
-                    "或者自动发现 Polymarket strike 失败），请检查配置。[/red]"
-                )
                 instruments_map = {}
             else:
                 _config = asdict(config)
@@ -721,16 +667,12 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
                         e for e in events if e["polymarket"]["market_title"] not in skipped_set
                     ]
                     for title in skipped_titles:
-                        console.print(
-                            f"[yellow]⚠️ Deribit 合约到期日不匹配目标日期，已跳过: {title}[/yellow]"
-                        )
+                        pass
 
-            console.print("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")
+            logger.print("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")
 
         if not events:
-            console.print(
-                "[yellow]当前没有可用事件（可能是配置为空或刚刚切日），等待下一次检查...[/yellow]"
-            )
+            pass
         else:
             for data in events:
                 try:
@@ -749,7 +691,6 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
                     )
                 except Exception as e:
                     title = data.get("polymarket", {}).get("market_title", "UNKNOWN")
-                    console.print(f"❌ [red]处理 {title} 时出错: {e}[/red]")
 
         # ======== 提前平仓检查 ========
         # 在每个监控周期内检查是否有需要提前平仓的持仓
@@ -760,7 +701,6 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
             if True:
                 in_window, window_reason = is_in_early_exit_window()
                 if in_window:
-                    console.print(f"\n🔍 [cyan]检查提前平仓: {window_reason}[/cyan]")
                     dry_run = early_exit_cfg.get("dry_run", True)
                     exit_results = await run_early_exit_check(
                         early_exit_cfg=early_exit_cfg,
@@ -771,19 +711,14 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
                         for result in exit_results:
                             status_emoji = "✅" if result.success else "❌"
                             pnl_emoji = "🟢" if result.exit_pnl >= 0 else "🔴"
-                            console.print(
-                                f"  {status_emoji} trade_id={result.trade_id} | "
-                                f"{pnl_emoji} pnl=${result.exit_pnl:.2f} | "
-                                f"exit_price={result.exit_price:.4f}"
-                            )
                     else:
-                        console.print("  [dim]没有需要提前平仓的持仓[/dim]")
+                        pass
                 else:
-                    console.print(f"\n⏸️ [dim]提前平仓: {window_reason}[/dim]")
+                    pass
         except Exception as exc:
-            console.print(f"❌ [red]提前平仓检查失败: {exc}[/red]")
+            pass
 
-        console.print(
+        logger.info(
             f"\n[dim]⏳ 等待 {check_interval} 秒后重连 Deribit/Polymarket 数据流...[/dim]\n"
         )
         await asyncio.sleep(check_interval)
