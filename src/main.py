@@ -334,7 +334,6 @@ def build_events_for_date(target_date: date) -> List[dict]:
 
 async def send_opportunity(
         alert_bot, 
-        previous_snapshot, 
         market_title: str, 
         net_ev: float, 
         strategy: int,
@@ -344,21 +343,19 @@ async def send_opportunity(
         inv_base_usd: float,
         validation_errors: list[str]
     ):
-    now = datetime.now(timezone.utc)
-    if previous_snapshot is None or (now - previous_snapshot.recorded_at).total_seconds() >= 300:
-        try:
-            now_ts = datetime.now(timezone.utc)
+    try:
+        now_ts = datetime.now(timezone.utc)
 
-            await alert_bot.publish((
-                    f"BTC > ${market_title} | EV: +${round(net_ev, 3)}\n"
-                    f"策略{strategy}, 概率差{round(prob_diff, 3)}\n"
-                    f"PM ${pm_price}, Deribit ${round(deribit_price, 3)}\n"
-                    f"建议投资${inv_base_usd}\n"
-                    f"validation_errors: {validation_errors}"
-                    f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
-                ))
-        except Exception as exc:
-            logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
+        await alert_bot.publish((
+                f"BTC > ${market_title} | EV: +${round(net_ev, 3)}\n"
+                f"策略{strategy}, 概率差{round(prob_diff, 3)}\n"
+                f"PM ${pm_price}, Deribit ${round(deribit_price, 3)}\n"
+                f"建议投资${inv_base_usd}\n"
+                f"validation_errors: {validation_errors}"
+                f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+            ))
+    except Exception as exc:
+        logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
 
 
 async def loop_event(
@@ -559,7 +556,6 @@ async def loop_event(
                 # 发送套利机会到 Alert Bot
                 await send_opportunity(
                     alert_bot, 
-                    previous_snapshot, 
                     market_title, 
                     net_ev, 
                     strategy, 
