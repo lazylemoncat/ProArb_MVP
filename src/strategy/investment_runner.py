@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Tuple
 
-from ..fetch_data.polymarket_client import PolymarketClient
+from ..fetch_data.polymarket_client import PolymarketClient, Insufficient_liquidity
 from .early_exit import make_exit_decision
 from .models import ExitDecision, OptionPosition, Position
 from .strategy import (
@@ -472,6 +472,8 @@ async def evaluate_investment(
         pm_no_avg_close = float(pm_no_close.avg_price)
         pm_no_slip_close = float(pm_no_close.slippage_pct) / 100.0
 
+    except Insufficient_liquidity as e:
+        raise Insufficient_liquidity(e)
     except Exception as exc:
         # 保留底层错误信息，便于定位（例如流动性不足/盘口为空）
         raise RuntimeError("Polymarket slippage calculation failed: ", exc) from exc

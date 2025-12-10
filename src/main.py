@@ -13,13 +13,23 @@ from rich.panel import Panel
 from src.telegram.TG_bot import TG_bot
 from src.utils.dataloader.config_loader import Config, ThresholdsConfig
 
-from .fetch_data.polymarket_client import PolymarketClient
-from .filters.filters import SignalSnapshot, should_record_signal, Record_signal_filter
+from .fetch_data.polymarket_client import (
+    Insufficient_liquidity,
+    PolymarketClient,
+)
+from .filters.filters import (
+    Record_signal_filter,
+    SignalSnapshot,
+    Trade_filter,
+    Trade_filter_input,
+    check_should_record_signal,
+    check_should_trade_signal,
+)
 from .services.trade_service import TradeApiError, execute_trade
 from .strategy.early_exit import is_in_early_exit_window
 from .strategy.early_exit_executor import run_early_exit_check
 from .strategy.investment_runner import evaluate_investment
-from .utils.dataloader import Env_config, load_all_configs, Trading_config
+from .utils.dataloader import Env_config, Trading_config, load_all_configs
 from .utils.init_markets import init_markets
 from .utils.market_context import (
     DeribitMarketContext,
@@ -45,36 +55,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def _load_positions(csv_path: str = "data/positions.csv") -> list[dict]:
-    path = Path(csv_path)
-    if not path.exists():
-        return []
-
-    try:
-        with path.open("r", newline="", encoding="utf-8") as f:
-            return list(csv.DictReader(f))
-    except Exception:
-        return []
-
-
-def _count_daily_trades(rows: list[dict], day: date) -> int:
-    """统计指定日期内已执行的真实交易数量，用于每日最多 1 笔的仓位管理规则。"""
-    count = 0
-    for row in rows:
-        ts = row.get("entry_timestamp") or ""
-        try:
-            ts_date = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
-        except Exception:
-            continue
-        if ts_date == day and str(row.get("status") or "").upper() != "DRY_RUN":
-            count += 1
-    return count
-
-
-def _count_open_positions(rows: list[dict]) -> int:
-    """计算当前 CSV 中仍为 OPEN 的记录数量，对应最大持仓数 3 的限制。"""
-    return sum(1 for row in rows if str(row.get("status") or "").upper() == "OPEN")
-
 
 def _record_raw_result(
     csv_row: Dict[str, Any], *, raw_csv_path: str, net_ev: float, skip_reasons: List[str]
@@ -88,29 +68,6 @@ def _record_raw_result(
     raw_row["skip_reasons"] = ";".join(skip_reasons)
     save_result_csv(raw_row, csv_path=raw_csv_path)
 
-
-def _has_open_position_for_market(rows: list[dict], market_id: str) -> bool:
-    """检查某市场是否已有未平仓头寸，落实“同一市场不加仓”规则。"""
-    market_id = str(market_id)
-    for row in rows:
-        if (
-            str(row.get("status") or "").upper() == "OPEN"
-            and str(row.get("market_id") or "") == market_id
-        ):
-            return True
-    return False
-
-
-def _cumulative_realized_pnl(rows: list[dict]) -> float:
-    """汇总已结算盈亏，用于触发累计亏损 >100u 的人工复盘提示。"""
-    pnl = 0.0
-    for row in rows:
-        try:
-            val = float(row.get("exit_pnl") or 0.0)
-        except (TypeError, ValueError):
-            continue
-        pnl += val
-    return pnl
 
 
 def _fmt_market_title(asset: str, k_poly: float) -> str:
@@ -360,24 +317,14 @@ async def loop_event(
     thresholds: ThresholdsConfig,
     opp_state: dict,
     signal_state: dict[str, SignalSnapshot],
-    record_signal_filter: Record_signal_filter
+    record_signal_filter: Record_signal_filter,
+    trade_filter: Trade_filter
 ) -> None:
     market_id = data["polymarket"]["market_id"]
     # 机会提醒阈值：用你 config.yaml 的 ev_spread_min 作为“概率优势”最小值（例如 0.05 = 5%）
-    prob_edge_min = float(thresholds.ev_spread_min)
-    net_ev_min = float(thresholds.notify_net_ev_min)  # 可选：不配就默认 0
-    min_contract_size = float(thresholds.min_contract_size)
     contract_rounding_band = float(thresholds.contract_rounding_band)
-    min_pm_price = float(thresholds.min_pm_price)
-    max_pm_price = float(thresholds.max_pm_price)
     dry_trade_mode = bool(thresholds.dry_trade)
 
-    RULE_REQUIRED_INVESTMENT = 200.0
-    RULE_MIN_PROB_EDGE = 0.01  # 1%
-    RULE_MIN_ROI_PCT = 1.0
-    RULE_STOP_DERIBIT_ROI_PCT = 2.0
-
-    start_ts = datetime.now(timezone.utc)
 
     # 确保数据目录/CSV 文件存在
     ensure_csv_file(output_csv, header=RESULTS_CSV_HEADER)
@@ -413,25 +360,12 @@ async def loop_event(
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     table = make_summary_table(deribit_ctx, poly_ctx, timestamp=timestamp)
 
-    positions_rows = _load_positions()
-    today = datetime.now(timezone.utc).date()
-    daily_trades = _count_daily_trades(positions_rows, today)
-    open_positions_count = _count_open_positions(positions_rows)
     env, config, trading_config = load_all_configs()
 
     for inv in investments:
         inv_base_usd = float(inv)
 
-        if abs(inv_base_usd - RULE_REQUIRED_INVESTMENT) > 1e-6:
-            continue
-
-        if daily_trades >= config.thresholds.daily_trades:
-            continue
-
-        if open_positions_count >= 1:
-            continue
-
-        if _has_open_position_for_market(positions_rows, market_id):
+        if abs(inv_base_usd - 200) > 1e-6:
             continue
 
         try:
@@ -440,39 +374,38 @@ async def loop_event(
                 deribit_ctx=deribit_ctx,
                 poly_ctx=poly_ctx,
             )
+        except Insufficient_liquidity:
+            raise
+        except Exception as e:
+            logger.exception("投资引擎异常: %s", e)
+            raise
 
+        try:
             strategy = 2
             net_ev = float(result.net_ev_strategy2)
             pm_price = float(poly_ctx.no_price)
             deribit_price = float(1.0 - deribit_ctx.deribit_prob)
             prob_diff = (deribit_price - pm_price) * 100.0
 
-            data_lag_seconds = (datetime.now(timezone.utc) - start_ts).total_seconds()
-
             dr_net_spend = max(0.0, float(result.open_cost_strategy2) - inv_base_usd)
             denom = inv_base_usd + dr_net_spend
             roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
-            roi_str = f"{roi_pct:.2f}%"
+            prob_edge_pct = abs(prob_diff) / 100.0
+            theoretical_contracts_strategy2 = float(result.contracts_strategy2)
+
+            trade_filter_input = Trade_filter_input(
+                inv_usd=inv_base_usd,
+                market_id=market_id,
+                contract_amount=float(result.contracts_strategy2),
+                pm_price=pm_price,
+                net_ev=net_ev,
+                roi_pct=roi_pct,
+                prob_edge_pct=prob_edge_pct
+            )
+            trade_signal = check_should_trade_signal(trade_filter_input, trade_filter)
+            result.contracts_strategy2 = trade_filter_input.contract_amount
 
             validation_errors: list[str] = []
-            contracts_strategy2 = float(result.contracts_strategy2)
-            theoretical_contracts_strategy2 = contracts_strategy2
-            if contract_rounding_band > 0:
-                rounded_contracts = round(contracts_strategy2 * 10) / 10.0
-                rounding_tolerance = rounded_contracts * contract_rounding_band * 0.1
-                lower_bound = rounded_contracts - rounding_tolerance
-                upper_bound = rounded_contracts + rounding_tolerance
-
-                if lower_bound <= contracts_strategy2 <= upper_bound:
-                    contracts_strategy2 = rounded_contracts
-                    result.contracts_strategy2 = contracts_strategy2
-                else:
-                    validation_errors.append(
-                        (
-                            f"合约数 {contracts_strategy2:.4f} 不在允许的 "
-                            f"{rounded_contracts:.1f} ± {rounding_tolerance:.2f} 范围内"
-                        )
-                    )
 
             signal_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
 
@@ -489,15 +422,12 @@ async def loop_event(
                 record_signal = True
                 details = ""
             else:
-                record_signal, details = should_record_signal(
+                record_signal, details = check_should_record_signal(
                     now_snapshot, 
                     previous_snapshot, 
                     inv_base_usd, 
-                    record_signal_filter
+                    record_signal_filter,
                 )
-
-            prob_edge_pct = abs(prob_diff) / 100.0
-            meets_opportunity_gate = prob_edge_pct >= RULE_MIN_PROB_EDGE and net_ev > 0
 
             market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
 
@@ -506,29 +436,6 @@ async def loop_event(
             skip_reasons: List[str] = []
             skip_reasons.extend(result.contract_validation_notes)
 
-            if contracts_strategy2 < min_contract_size:
-                validation_errors.append(
-                    f"合约数 {contracts_strategy2:.4f} 小于最小合约单位 {min_contract_size}"
-                )
-            if pm_price < min_pm_price:
-                validation_errors.append(
-                    f"PM 价格 {pm_price:.4f} 低于最小阈值 {min_pm_price}"
-                )
-            if pm_price > max_pm_price:
-                validation_errors.append(
-                    f"PM 价格 {pm_price:.4f} 高于最大阈值 {max_pm_price}"
-                )
-            if net_ev <= 0:
-                validation_errors.append("净EV 不大于 0")
-            if roi_pct < RULE_MIN_ROI_PCT:
-                validation_errors.append(
-                    f"ROI {roi_pct:.2f}% 低于规则阈值 {RULE_MIN_ROI_PCT:.2f}%"
-                )
-
-            if not meets_opportunity_gate:
-                validation_errors.append(
-                    f"未满足进场概率优势 (|Δprob|={prob_edge_pct:.4f}, 净EV=${net_ev:.2f})"
-                )
             
             if record_signal:
                 # 发送套利机会到 Alert Bot
@@ -559,7 +466,9 @@ async def loop_event(
 
 
             try:
-                if record_signal:
+                # TODO 检查交易信号
+                if trade_signal:
+                    await trading_bot.publish(f"{market_id} 正在进行交易")
                     trade_result, status, tx_id, message = await execute_trade(
                         csv_path=output_csv,
                         market_id=market_id,
@@ -567,10 +476,6 @@ async def loop_event(
                         dry_run=dry_trade_mode,
                         should_record_signal=record_signal
                     )
-                    if status != "DRY_RUN":
-                        daily_trades += 1
-                        if status == "EXECUTED":
-                            open_positions_count += 1
                 else:
                     skip_reasons.append(details)
             except TradeApiError as exc:
@@ -638,14 +543,23 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
         deribit_price_pct_change=trading_config.record_signal_filter.deribit_price_pct_change
     )
 
+    trade_filter = Trade_filter(
+        inv_usd_limit=trading_config.trade_filter.inv_usd_limit,
+        daily_trade_limit=trading_config.trade_filter.daily_trade_limit,
+        open_positions_limit=trading_config.trade_filter.open_positions_limit,
+        allow_repeat_open_position=trading_config.trade_filter.allow_repeat_open_position,
+        min_contract_amount=trading_config.trade_filter.min_contract_amount,
+        contract_rounding_band=trading_config.trade_filter.contract_rounding_band,
+        min_pm_price=trading_config.trade_filter.min_pm_price,
+        max_pm_price=trading_config.trade_filter.max_pm_price,
+        min_net_ev=trading_config.trade_filter.min_net_ev,
+        min_roi_pct=trading_config.trade_filter.min_roi_pct,
+        min_prob_edge_pct=trading_config.trade_filter.min_prob_edge_pct
+    )
+
     while True:
         now_utc = datetime.now(timezone.utc)
         target_date = now_utc.date() + timedelta(days=day_off)
-
-        positions_rows = _load_positions()
-        realized_pnl = _cumulative_realized_pnl(positions_rows)
-        if realized_pnl <= -100 and not risk_review_triggered:
-            risk_review_triggered = True
 
         if current_target_date is None or target_date != current_target_date:
             current_target_date = target_date
@@ -669,7 +583,7 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
                     for title in skipped_titles:
                         pass
 
-            logger.print("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")
+            logger.info("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")
 
         if not events:
             pass
@@ -687,7 +601,8 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
                         thresholds=thresholds,
                         opp_state=opp_state,
                         signal_state=signal_state,
-                        record_signal_filter=record_signal_filter
+                        record_signal_filter=record_signal_filter,
+                        trade_filter=trade_filter
                     )
                 except Exception as e:
                     title = data.get("polymarket", {}).get("market_title", "UNKNOWN")
@@ -707,12 +622,6 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
                         dry_run=dry_run,
                         csv_path="data/positions.csv",
                     )
-                    if exit_results:
-                        for result in exit_results:
-                            status_emoji = "✅" if result.success else "❌"
-                            pnl_emoji = "🟢" if result.exit_pnl >= 0 else "🔴"
-                    else:
-                        pass
                 else:
                     pass
         except Exception as exc:

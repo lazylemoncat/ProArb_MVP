@@ -3,7 +3,7 @@
     若当日已交易达到规定 1 笔上限, 跳过交易
     若总持仓数已达到规定 3 个, 跳过交易
     若该 pm 市场已有持仓, 规则禁止重复开仓, 跳过交易
-    若 pm 订单簿深度不足以完全吃下给定 amount, 跳过交易
+    若 pm 订单簿深度不足以完全吃下给定 amount, 跳过交易 # Insufficient_liquidity
     若合约数量不能达到 deribit 的最小 0.1 合约, 跳过交易
     若合约数量的调整幅度大于 30%, 跳过交易
     若合约数量小于配置文件的规定数量 0.1, 跳过交易
@@ -13,6 +13,64 @@
     ROI 低于规定 1.0 时, 跳过交易
     概率差小于规定 0.01 时, 跳过交易
 """
+import csv
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+
+@dataclass
+class Trade_filter_input:
+    inv_usd: float
+    market_id: str
+    contract_amount: float
+    pm_price: float
+    net_ev: float
+    roi_pct: float
+    prob_edge_pct: float
+
+@dataclass
+class Trade_filter:
+    inv_usd_limit: float                # 交易资金上限
+    daily_trade_limit: int              # 每日交易次数上限
+    open_positions_limit: int           # 总共持仓上限
+    allow_repeat_open_position: bool    # 允许对已有持仓进行交易
+    min_contract_amount: int            # 最小交易合约数量
+    contract_rounding_band: int         # 合约数调整范围系数；1 表示允许在目标合约数的 ±10% 内四舍五入到最接近的 0.1
+    min_pm_price: float                 # 最小允许 pm 的价格
+    max_pm_price: float                 # 最大允许 pm 的价格
+    min_net_ev: float                   # 最小允许净利润
+    min_roi_pct: float                  # 最小允许 roi
+    min_prob_edge_pct: float            # 最小允许概率差
+
+def _load_positions(csv_path: str = "data/positions.csv") -> list[dict]:
+    path = Path(csv_path)
+    if not path.exists():
+        return []
+
+    try:
+        with path.open("r", newline="", encoding="utf-8") as f:
+            return list(csv.DictReader(f))
+    except Exception:
+        return []
+    
+def _count_daily_trades(rows: list[dict], day: date) -> int:
+    """统计指定日期内已执行的真实交易数量，用于每日最多 1 笔的仓位管理规则。"""
+    count = 0
+    for row in rows:
+        ts = row.get("entry_timestamp") or ""
+        try:
+            ts_date = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+        except Exception:
+            continue
+        if ts_date == day and str(row.get("status") or "").upper() != "DRY_RUN":
+            count += 1
+    return count
+
+
+def _count_open_positions(rows: list[dict]) -> int:
+    """计算当前 CSV 中仍为 OPEN 的记录数量，对应最大持仓数 3 的限制。"""
+    return sum(1 for row in rows if str(row.get("status") or "").upper() == "OPEN")
 
 def _has_open_position_for_market(rows: list[dict], market_id: str) -> bool:
     """检查某市场是否已有未平仓头寸，落实“同一市场不加仓”规则。"""
@@ -25,19 +83,87 @@ def _has_open_position_for_market(rows: list[dict], market_id: str) -> bool:
             return True
     return False
 
-def check_required_config():
-    if abs(inv_base_usd - RULE_REQUIRED_INVESTMENT) > 1e-6:
-        console.print(
-            f"⏸️ [yellow]跳过非规则手数 {inv_base_usd:.0f}(仅允许运行 {RULE_REQUIRED_INVESTMENT:.0f}u)[/yellow]"
-        )
-    if daily_trades >= config.thresholds.daily_trades:
-        console.print(f"⛔ [red]已达到当日 {config.thresholds.daily_trades} 笔交易上限，停止开仓。[/red]")
-        continue
-    if open_positions_count >= 3:
-        console.print("⛔ [red]持仓数已达上限 1，暂停加仓。[/red]")
-        continue
-    if _has_open_position_for_market(positions_rows, market_id):
-        console.print(
-            f"⏸️ [yellow]{market_id} 已有持仓，规则禁止重复开仓，等待平仓后再试。[/yellow]"
-        )
-        continue
+def check_inv_condition(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    # 若 pm 交易资金大于规定数, 跳过交易
+    if trade_filter_input.inv_usd >= trade_filter.inv_usd_limit:
+        return False
+    return True
+
+def check_daily_trades_condition(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    # 若当日已交易达到规定上限, 跳过交易
+    positions_rows = _load_positions()
+    today = datetime.now(timezone.utc).date()
+    daily_trades = _count_daily_trades(positions_rows, today)
+    if daily_trades >=trade_filter. daily_trade_limit:
+        return False
+    return True
+
+def check_open_positions_counts(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    # 若总持仓数已达到规定数, 跳过交易
+    positions_rows = _load_positions()
+    count_open_positions = _count_open_positions(positions_rows)
+    if count_open_positions >= trade_filter.open_positions_limit:
+        return False
+    return True
+
+def check_repeat_open_position(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    if trade_filter.allow_repeat_open_position:
+        return True
+    
+    positions_rows = _load_positions()
+    if _has_open_position_for_market(positions_rows, trade_filter_input.market_id):
+        return False
+    return True
+
+def check_contract_amount(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    # 若合约数量不能达到 deribit 的最小 0.1 合约, 跳过交易
+    # 若合约数量小于配置文件的规定数量, 跳过交易
+    if trade_filter_input.contract_amount < 0.1:
+        return False
+    if trade_filter_input.contract_amount < trade_filter. min_contract_amount:
+        return False
+    return True
+
+def check_adjust_contract_amount(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    if trade_filter.contract_rounding_band <= 0:
+        return True
+    raw_contract_amount = trade_filter_input.contract_amount
+    rounded_contracts = round(trade_filter_input.contract_amount * 10) / 10.0
+    rounding_tolerance = rounded_contracts * trade_filter.contract_rounding_band * 0.1
+    lower_bound = rounded_contracts - rounding_tolerance
+    upper_bound = rounded_contracts + rounding_tolerance
+
+    if lower_bound <= raw_contract_amount <= upper_bound:
+        raw_contract_amount = rounded_contracts
+        trade_filter_input.contract_amount = raw_contract_amount
+    else:
+        return False
+        # validation_errors.append(
+        #     (
+        #         f"合约数 {raw_contract_amount:.4f} 不在允许的 "
+        #         f"{rounded_contracts:.1f} ± {rounding_tolerance:.2f} 范围内"
+        #     )
+        # )
+    return True
+
+def check_pm_price(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    if trade_filter_input.pm_price < trade_filter.min_pm_price:
+        return False
+    if trade_filter_input.pm_price > trade_filter.max_pm_price:
+        return False
+    return True
+
+def check_net_ev(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    if trade_filter_input.net_ev <= trade_filter.min_net_ev:
+        return False
+    return True
+
+def check_roi_pct(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    if trade_filter_input.roi_pct <= trade_filter.min_roi_pct:
+        return False
+    return True
+
+def check_prob_edge_pct(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    if trade_filter_input.prob_edge_pct < trade_filter.min_prob_edge_pct:
+        return False
+    return True

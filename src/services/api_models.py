@@ -117,7 +117,7 @@ class DBSnapshotResponse(BaseModel):
     market_id: str
     asset: str
     expiry_date: Optional[str] = None
-    days_to_expiry: Optional[int] = None
+    days_to_expiry: Optional[float] = None
 
     strikes: DeribitStrikes
     spot_price: SpotPrice
@@ -162,7 +162,7 @@ class Opportunity(BaseModel):
     asset: str
     strike: int
     expiry_date: Optional[str] = None
-    days_to_expiry: Optional[int] = None
+    days_to_expiry: Optional[float] = None
     ev_metrics: EVMetrics
     market_data: EVMarketData
 

@@ -20,6 +20,11 @@ class Polymarket_Slippage:
     mid_price: Optional[float] = None
     spread: Optional[float] = None
 
+class Insufficient_liquidity(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+        self.message = message
+
 def _simulate_fill(
     book: list[tuple[float, float]],
     amount: float,
@@ -85,11 +90,11 @@ def _simulate_fill(
 
         # 如果还有剩余份额，说明订单簿深度不够，无法“完整吃下”
         if remaining_shares > 1e-9:
-            raise ValueError("Insufficient liquidity to fully execute given shares amount")
+            raise Insufficient_liquidity("Insufficient liquidity to fully execute given shares amount")
 
     if total_size == 0:
         # 理论上如果 amount > 0 且上面检查通过，不会走到这
-        raise ValueError("Insufficient liquidity to execute any size")
+        raise Insufficient_liquidity("Insufficient liquidity to execute any size")
 
     avg_price = total_cost / total_size
     if side == "buy":
@@ -123,12 +128,15 @@ async def get_polymarket_slippage(
         side=side,
     )
 
-    avg_price, total_size, total_cost, slippage_pct = _simulate_fill(
-        book=book,
-        amount=amount,
-        side=side,
-        amount_type=amount_type,
-    )
+    try:
+        avg_price, total_size, total_cost, slippage_pct = _simulate_fill(
+            book=book,
+            amount=amount,
+            side=side,
+            amount_type=amount_type,
+        )
+    except Insufficient_liquidity as e:
+        raise Insufficient_liquidity(e)
 
     # === 额外获取盘口信息（best_ask / best_bid / mid / spread）===
     # 当前方向最佳价

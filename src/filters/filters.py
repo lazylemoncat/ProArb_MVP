@@ -1,17 +1,33 @@
-from .record_signal_filter import (
-    SignalSnapshot, 
-    Record_signal_filter, 
-    check_time_condition, 
-    check_ev_change_condition, 
-    check_sign_change_condition, 
-    check_market_change_condition
+from filters.trade_filter import (
+    Trade_filter,
+    Trade_filter_input,
+    check_adjust_contract_amount,
+    check_contract_amount,
+    check_daily_trades_condition,
+    check_inv_condition,
+    check_net_ev,
+    check_open_positions_counts,
+    check_pm_price,
+    check_prob_edge_pct,
+    check_repeat_open_position,
+    check_roi_pct,
 )
 
-def should_record_signal(
+from .record_signal_filter import (
+    Record_signal_filter,
+    SignalSnapshot,
+    check_ev_change_condition,
+    check_market_change_condition,
+    check_sign_change_condition,
+    check_time_condition,
+)
+
+
+def check_should_record_signal(
     now_snapshot: SignalSnapshot, 
     previous_snapshot: SignalSnapshot,
     investment_usd: float,
-    record_signal_filter: Record_signal_filter
+    record_signal_filter: Record_signal_filter,
 ):
     """
     发送 alert 信号和记入数据库的条件:
@@ -54,3 +70,36 @@ def should_record_signal(
             market_change_condition,
         ]
     ), details
+
+def check_should_trade_signal(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    inv_condition = check_inv_condition(trade_filter_input, trade_filter)
+    daily_trades_condition = check_daily_trades_condition(trade_filter_input, trade_filter)
+    positions_counts_conditions = check_open_positions_counts(trade_filter_input, trade_filter)
+    repeat_open_condition = check_repeat_open_position(
+        trade_filter_input,
+        trade_filter, 
+    )
+    contract_amount_condition = check_contract_amount(trade_filter_input, trade_filter)
+    adjust_contract_amount_condition = check_adjust_contract_amount(
+        trade_filter_input,
+        trade_filter
+    )
+    pm_price_condition = check_pm_price(trade_filter_input, trade_filter)
+    net_ev_condition = check_net_ev(trade_filter_input, trade_filter)
+    roi_condition = check_roi_pct(trade_filter_input, trade_filter)
+    prob_edge_pct_condition = check_prob_edge_pct(trade_filter_input, trade_filter)
+
+    return all(
+        [
+            inv_condition,
+            daily_trades_condition,
+            positions_counts_conditions,
+            repeat_open_condition,
+            contract_amount_condition,
+            adjust_contract_amount_condition,
+            pm_price_condition,
+            net_ev_condition,
+            roi_condition,
+            prob_edge_pct_condition
+        ]
+    )

@@ -30,6 +30,20 @@ class Record_signal_filter:
     deribit_price_pct_change: float     # Deribit 期权价格变化百分比
 
 @dataclass
+class Trade_filter:
+    inv_usd_limit: float                # 交易资金上限
+    daily_trade_limit: int              # 每日交易次数上限
+    open_positions_limit: int           # 总共持仓上限
+    allow_repeat_open_position: bool    # 允许对已有持仓进行交易
+    min_contract_amount: int            # 最小交易合约数量
+    contract_rounding_band: int         # 合约数调整范围系数；1 表示允许在目标合约数的 ±10% 内四舍五入到最接近的 0.1
+    min_pm_price: float                 # 最小允许 pm 的价格
+    max_pm_price: float                 # 最大允许 pm 的价格
+    min_net_ev: float                   # 最小允许净利润
+    min_roi_pct: float                  # 最小允许 roi
+    min_prob_edge_pct: float            # 最小允许概率差
+
+@dataclass
 class EvFilterConfig:
     min_ev_usd_1000: float
     min_ev_pct: float
@@ -140,6 +154,7 @@ class EarlyExitConfig:
 class Trading_config:
     mode: ModeConfig
     record_signal_filter: Record_signal_filter
+    trade_filter: Trade_filter
     filters: FiltersConfig
     risk_limits: RiskLimitsConfig
     execution: ExecutionConfig
@@ -168,6 +183,20 @@ def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "tra
         net_ev_absolute_pct_change=get_value_from_dict(config_data['record_signal_filter'], "net_ev_absolute_pct_change"),
         pm_price_pct_change=get_value_from_dict(config_data['record_signal_filter'], "pm_price_pct_change"),
         deribit_price_pct_change=get_value_from_dict(config_data['record_signal_filter'], "deribit_price_pct_change"),
+    )
+
+    trade_filter = Trade_filter(
+        inv_usd_limit=get_value_from_dict(config_data['trade_signal_filter'], "inv_usd_limit"),
+        daily_trade_limit=get_value_from_dict(config_data['trade_signal_filter'], "daily_trade_limit"),
+        open_positions_limit=get_value_from_dict(config_data['trade_signal_filter'], "open_positions_limit"),
+        allow_repeat_open_position=get_value_from_dict(config_data['trade_signal_filter'], "allow_repeat_open_position"),
+        min_contract_amount=get_value_from_dict(config_data['trade_signal_filter'], "min_contract_amount"),
+        contract_rounding_band=get_value_from_dict(config_data['trade_signal_filter'], "contract_rounding_band"),
+        min_pm_price=get_value_from_dict(config_data['trade_signal_filter'], "min_pm_price"),
+        max_pm_price=get_value_from_dict(config_data['trade_signal_filter'], "max_pm_price"),
+        min_net_ev=get_value_from_dict(config_data['trade_signal_filter'], "min_net_ev"),
+        min_roi_pct=get_value_from_dict(config_data['trade_signal_filter'], "min_roi_pct"),
+        min_prob_edge_pct=get_value_from_dict(config_data['trade_signal_filter'], "min_prob_edge_pct"),
     )
 
     ev_filter = EvFilterConfig(
@@ -271,6 +300,7 @@ def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "tra
     return Trading_config(
         mode=mode_config,
         record_signal_filter=record_signal_filter,
+        trade_filter=trade_filter,
         filters=filters_config,
         risk_limits=risk_limits_config,
         execution=execution_config,

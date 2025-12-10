@@ -7,6 +7,9 @@ class TG_bot:
         self.notifier = TelegramNotifier(token=token, chat_id=chat_id)
 
     async def publish(self, msg: str):
-        success, msg_id = await self.notifier.send_message(text=msg)
-        return success, msg_id
+        try:
+            success, msg_id = await self.notifier.send_message(text=msg, parse_mode="")
+            return success, msg_id
+        except:
+            raise
 
