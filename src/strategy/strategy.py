@@ -170,6 +170,122 @@ def _portfolio_payoff_at_price_strategy2(S_T: float, input_data, strategy_out):
     return pnl_pm, pnl_dr, total
 
 
+def _cal_probability_strategy2_style(spot_price: float, k_price: float, drift_term: float, sigma_T: float) -> float:
+    """按照 strategy2.py 中的逻辑计算 Black-Scholes 区间概率。"""
+    ln_price_ratio = round(math.log(spot_price / k_price), 6)
+    d1 = round((ln_price_ratio + drift_term) / sigma_T, 6)
+    d2 = round(d1 - sigma_T, 6)
+    probability = round(_norm_cdf(d2), 4)
+    return probability
+
+
+def _calculate_interval_probabilities(
+    spot_price: float,
+    k1_price: float,
+    k_poly_price: float,
+    k2_price: float,
+    days_to_expiry: float,
+    sigma: float,
+    is_dst: bool = False,
+    r: float = 0.05,
+):
+    """复用 strategy2.py 的区间概率算法。"""
+    T = round(((8 / 24 if is_dst else 9 / 24) + days_to_expiry) / 365, 6)
+    sigma_T = round(sigma * math.sqrt(T), 6)
+    sigma_squared_divide_2 = round(math.pow(sigma, 2) / 2, 6)
+    drift_term = round((r + sigma_squared_divide_2) * T, 6)
+
+    probability_above_k1 = _cal_probability_strategy2_style(spot_price, k1_price, drift_term, sigma_T)
+    probability_above_k_poly = _cal_probability_strategy2_style(spot_price, k_poly_price, drift_term, sigma_T)
+    probability_above_k2 = _cal_probability_strategy2_style(spot_price, k2_price, drift_term, sigma_T)
+
+    prob_less_k1 = round(1 - probability_above_k1, 4)
+    prob_less_k_poly_more_k1 = round(probability_above_k1 - probability_above_k_poly, 4)
+    prob_less_k2_more_k_poly = round(probability_above_k_poly - probability_above_k2, 4)
+    prob_more_k2 = probability_above_k2
+
+    return prob_less_k1, prob_less_k_poly_more_k1, prob_less_k2_more_k_poly, prob_more_k2
+
+
+def _calculate_pm_max_ev(inv_usd: float, pm_price: float) -> float:
+    pm_max_ev = round(inv_usd * (1 / pm_price - 1), 2)
+    return pm_max_ev
+
+
+def _calculate_pm_ev(inv_usd: float, pm_price: float) -> float:
+    shares = inv_usd / pm_price
+    pm_ev = round(shares - inv_usd, 2)
+    return pm_ev
+
+
+def _calculate_db_ev(k1_price: float, k2_price: float, contract_amount: float, pm_cost: float) -> float:
+    db_value = (k2_price - k1_price) * contract_amount
+    option_cost = pm_cost * contract_amount
+    db_ev = round(db_value - option_cost, 2)
+    return db_ev
+
+
+def _calculate_gross_ev_with_new_algorithm(strategy_id: int, input_data: CalculationInput):
+    """使用 strategy2.py 的新算法计算毛收益。"""
+    inv_usd = input_data.Inv_Base
+    pm_price = input_data.pm_yes_avg_open if strategy_id == 1 else input_data.pm_no_avg_open
+
+    if pm_price <= 0:
+        raise ValueError("PM 平均成交价必须大于 0，请检查输入数据")
+
+    # 期权价格选择与 strategy2.py 对齐：策略1使用 Bid/Ask 收益端，策略2使用 Ask/Bid 成本端
+    if strategy_id == 1:
+        k1_price = input_data.Call_K1_Bid
+        k2_price = input_data.Call_K2_Ask
+    else:
+        k1_price = input_data.Call_K1_Ask
+        k2_price = input_data.Call_K2_Bid
+
+    pm_max_ev = _calculate_pm_max_ev(inv_usd, pm_price)
+    pm_cost = k1_price - k2_price
+    contract_amount = pm_max_ev / pm_cost if pm_cost != 0 else 0.0
+
+    (
+        prob_less_k1,
+        prob_less_k_poly_more_k1,
+        prob_less_k2_more_k_poly,
+        prob_more_k2,
+    ) = _calculate_interval_probabilities(
+        spot_price=input_data.S,
+        k1_price=input_data.K1,
+        k_poly_price=input_data.K_poly,
+        k2_price=input_data.K2,
+        days_to_expiry=input_data.days_to_expiry,
+        sigma=input_data.sigma,
+    )
+
+    pm_ev = _calculate_pm_ev(inv_usd, pm_price)
+
+    db1_ev = _calculate_db_ev(input_data.K1, input_data.K1, contract_amount, pm_cost)
+    db2_ev = _calculate_db_ev(input_data.K1, (input_data.K_poly + input_data.K1) / 2, contract_amount, pm_cost)
+    db3_ev = _calculate_db_ev(input_data.K1, (input_data.K_poly + input_data.K2) / 2, contract_amount, pm_cost)
+    db4_ev = _calculate_db_ev(input_data.K1, input_data.K2, contract_amount, pm_cost)
+
+    pm_expected_ev = (
+        prob_less_k1 * pm_ev
+        + prob_less_k_poly_more_k1 * pm_ev
+        + prob_less_k2_more_k_poly * (-inv_usd)
+        + prob_more_k2 * (-inv_usd)
+    )
+    db_expected_ev = (
+        prob_less_k1 * db1_ev
+        + prob_less_k_poly_more_k1 * db2_ev
+        + prob_less_k2_more_k_poly * db3_ev
+        + prob_more_k2 * db4_ev
+    )
+
+    pm_expected_ev = round(pm_expected_ev, 2)
+    db_expected_ev = round(db_expected_ev, 2)
+    gross_ev = round(pm_expected_ev + db_expected_ev, 2)
+
+    return pm_expected_ev, db_expected_ev, gross_ev
+
+
 def _integrate_ev_over_grid(
     input_data,
     strategy_out,
@@ -984,14 +1100,13 @@ def calculate_expected_pnl_strategy1(input_data, probs, strategy_out):
     使用精细中点法计算策略一的毛收益
     注意：返回的是毛收益，不包含成本。成本将在 investment_runner 中统一计算和扣除。
     """
-    E_deribit, E_poly, gross_ev = _integrate_ev_over_grid(
+    pm_expected_ev, db_expected_ev, gross_ev = _calculate_gross_ev_with_new_algorithm(
+        strategy_id=1,
         input_data=input_data,
-        strategy_out=strategy_out,
-        payoff_func=_portfolio_payoff_at_price_strategy1,
     )
     return ExpectedPnlOutput(
-        E_Deribit_PnL=E_deribit,
-        E_Poly_PnL=E_poly,
+        E_Deribit_PnL=db_expected_ev,
+        E_Poly_PnL=pm_expected_ev,
         Total_Expected=gross_ev,  # 这里是毛收益，不是净收益
     )
 
@@ -1001,14 +1116,13 @@ def calculate_expected_pnl_strategy2(input_data, probs, strategy_out):
     使用精细中点法计算策略二的毛收益
     注意：返回的是毛收益，不包含成本。成本将在 investment_runner 中统一计算和扣除。
     """
-    E_deribit, E_poly, gross_ev = _integrate_ev_over_grid(
+    pm_expected_ev, db_expected_ev, gross_ev = _calculate_gross_ev_with_new_algorithm(
+        strategy_id=2,
         input_data=input_data,
-        strategy_out=strategy_out,
-        payoff_func=_portfolio_payoff_at_price_strategy2,
     )
     return ExpectedPnlOutput(
-        E_Deribit_PnL=E_deribit,
-        E_Poly_PnL=E_poly,
+        E_Deribit_PnL=db_expected_ev,
+        E_Poly_PnL=pm_expected_ev,
         Total_Expected=gross_ev,  # 这里是毛收益，不是净收益
     )
 
