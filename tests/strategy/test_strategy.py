@@ -106,7 +106,7 @@ def cal_pm_ev(strategy_input: Strategy_input):
     pm_ev = round(shares - strategy_input.inv_usd, 2)
     return pm_ev
 
-def cal_db_ev(k1_price: float, k2_price: float, contract_amount: float, pm_cost: float):
+def cal_db_ev(k1_price, k2_price, contract_amount, pm_cost):
     db_value = (k2_price - k1_price) * contract_amount
     option_cost = pm_cost * contract_amount
 
@@ -154,15 +154,13 @@ def strategy(strategy_input: Strategy_input):
     pm_expected_ev = round(pm_expected_ev, 2)
     db_expected_ev = round(db_expected_ev, 2)
     gross_ev = round(pm_expected_ev + db_expected_ev, 2)
-    # print(f"pm_expected_ev: {pm_expected_ev}, db_expected_ev: {db_expected_ev}, gross_ev: {gross_ev}")
-    # assert pm_expected_ev == -0.26
-    # assert db_expected_ev == 6.36
-    # assert gross_ev == 6.1
+    print(f"pm_expected_ev: {pm_expected_ev}, db_expected_ev: {db_expected_ev}, gross_ev: {gross_ev}")
+    assert pm_expected_ev == -0.26
+    assert db_expected_ev == 6.36
+    assert gross_ev == 6.1
     return gross_ev
 
 if __name__ == "__main__":
-    import datetime
-    print(datetime.datetime.now().dst())
     # 输入参数
     strategy_input = Strategy_input(
         inv_usd = 200,

@@ -466,7 +466,6 @@ async def loop_event(
 
 
             try:
-                # TODO 检查交易信号
                 if trade_signal:
                     await trading_bot.publish(f"{market_id} 正在进行交易")
                     trade_result, status, tx_id, message = await execute_trade(
