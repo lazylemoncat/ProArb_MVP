@@ -130,4 +130,3 @@ async def execute_trade(
     except Exception as e:
         logger.error(e)
         raise e
-    print("发送消息完毕")

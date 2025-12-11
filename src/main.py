@@ -1,16 +1,12 @@
 import asyncio
 import logging
-import re
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List
 
 from src.utils.dataloader.config_loader import Config, ThresholdsConfig
 
-from .fetch_data.polymarket_client import (
-    Insufficient_liquidity,
-    PolymarketClient,
-)
+from .fetch_data.polymarket_client import Insufficient_liquidity
 from .filters.filters import (
     Record_signal_filter,
     SignalSnapshot,
@@ -19,12 +15,14 @@ from .filters.filters import (
     check_should_record_signal,
     check_should_trade_signal,
 )
-# from .services.trade_service import TradeApiError, execute_trade
+from .services.execute_trade import execute_trade
 from .strategy.early_exit import is_in_early_exit_window
 from .strategy.early_exit_executor import run_early_exit_check
 from .strategy.investment_runner import evaluate_investment
 from .utils.dataloader import Env_config, Trading_config, load_all_configs
+from .utils.get_bot import TG_bot, get_bot
 from .utils.init_markets import init_markets
+from .utils.loop_event import build_events_for_date
 from .utils.market_context import (
     DeribitMarketContext,
     PolymarketState,
@@ -38,15 +36,11 @@ from .utils.save_result import (
     rewrite_csv_with_header,
     save_result_csv,
 )
-from .utils.get_bot import get_bot, TG_bot
-from .services.execute_trade import execute_trade
-from .utils.loop_event import build_events_for_date
 
-# TODO 将日志输出到服务器根目录
 logging.basicConfig(
     level="INFO",
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    filename="proarb.log",  # 指定日志文件
+    filename="data/proarb.log",  # 指定日志文件
     filemode="a"  # 'a'表示追加模式，'w'表示覆盖模式
 )
 logger = logging.getLogger(__name__)
@@ -288,16 +282,15 @@ async def loop_event(
                     skip_reasons.append(trade_details)
             # except TradeApiError as exc:
             #     skip_reasons.append(f"交易执行失败: {exc.message}, {exc.error_code}")
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 skip_reasons.append("交易被取消")
+                logger.error(exc)
                 raise
             except Exception as exc:
                 skip_reasons.append(f"交易执行异常: {exc}")
                 logger.exception("交易执行异常: %s", exc)
                 raise
             finally:
-                if exc:
-                    print(exc)
                 _record_raw_result(
                     csv_row,
                     raw_csv_path=raw_output_csv,
@@ -371,7 +364,7 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
         if current_target_date is None or target_date != current_target_date:
             current_target_date = target_date
 
-            events = build_events_for_date(target_date)
+            events = build_events_for_date(target_date, config)
 
             if not events:
                 instruments_map = {}
@@ -390,7 +383,7 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
                     for title in skipped_titles:
                         pass
 
-            logger.info("\n🚀 [bold yellow]开始实时套利监控...[/bold yellow]\n")
+            logger.info("开始实时套利监控...")
 
         if not events:
             pass

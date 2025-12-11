@@ -306,7 +306,7 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
                 os.fsync(f.fileno())
             return
 
-        with path.open("r+", newline="", encoding="utf-8") as f:
+        with path.open("r", newline="", encoding="utf-8") as f:
             reader = csv.reader(f)
             existing_header = [h for h in next(reader, []) if h]
             if not existing_header:
@@ -317,24 +317,25 @@ def save_result_csv(row: Dict[str, Any], csv_path: str = "data/results.csv") -> 
                 if k not in new_header:
                     new_header.append(k)
 
+            existing_rows: List[Dict[str, Any]] = []
             if new_header != existing_header:
                 f.seek(0)
                 existing_rows = list(csv.DictReader(f))
 
-                tmp_path = path.with_suffix(".tmp")
-                with tmp_path.open("w", newline="", encoding="utf-8") as tmp_f:
-                    writer = csv.DictWriter(tmp_f, fieldnames=new_header)
-                    writer.writeheader()
-                    for r in existing_rows:
-                        writer.writerow(r)
-                    writer.writerow(row)
-                    tmp_f.flush()
-                    os.fsync(tmp_f.fileno())
+        if new_header != existing_header:
+            tmp_path = path.with_suffix(".tmp")
+            with tmp_path.open("w", newline="", encoding="utf-8") as tmp_f:
+                writer = csv.DictWriter(tmp_f, fieldnames=new_header)
+                writer.writeheader()
+                for r in existing_rows:
+                    writer.writerow(r)
+                writer.writerow(row)
+                tmp_f.flush()
+                os.fsync(tmp_f.fileno())
+            tmp_path.replace(path)
+            return
 
-                tmp_path.replace(path)
-                return
-
-            f.seek(0, os.SEEK_END)
+        with path.open("a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=existing_header)
             writer.writerow(row)
             f.flush()

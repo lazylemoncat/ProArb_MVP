@@ -25,7 +25,7 @@ from .record_signal_filter import (
 
 def check_should_record_signal(
     now_snapshot: SignalSnapshot, 
-    previous_snapshot: SignalSnapshot,
+    previous_snapshot: SignalSnapshot | None,
     investment_usd: float,
     record_signal_filter: Record_signal_filter,
 ) -> tuple[bool, str, bool]:
@@ -43,11 +43,17 @@ def check_should_record_signal(
     """
     details: str = ""
     
-    if now_snapshot.net_ev <= 0:
-        return False, "net_ev <= 0"
+    if previous_snapshot is None:
+        time_condition = True
+    else:
+        time_condition, temp_details = check_time_condition(previous_snapshot, record_signal_filter)
+        details += temp_details
 
-    time_condition, temp_details = check_time_condition(previous_snapshot, record_signal_filter)
-    details += temp_details
+    if now_snapshot.net_ev <= 0:
+        return False, "net_ev <= 0", time_condition
+    elif previous_snapshot is None:
+        return True, "", True
+
 
     ev_change_condition, temp_details = check_ev_change_condition(
         now_snapshot, 
