@@ -11,17 +11,14 @@ from typing import Any, Dict, Optional, Tuple
 
 import aiohttp
 
-from src.utils.dataloader import load_all_configs
-
 
 class TelegramNotifier:
     logger = logging.getLogger(__name__)
 
     def __init__(self, token: Optional[str] = None, chat_id: Optional[str] = None):
-        env_config, _, _ = load_all_configs()
 
-        self.token = token or env_config.TELEGRAM_TOKEN
-        self.chat_id = chat_id or env_config.TELEGRAM_CHAT_ID
+        self.token = token
+        self.chat_id = chat_id
         # 验证必要参数否则抛出异常
         if not self.token or not self.chat_id:
             raise ValueError("TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID 未配置")

@@ -4,3 +4,4 @@ docs/todo.md
 .env
 .env.dev
 /data
+dev.env

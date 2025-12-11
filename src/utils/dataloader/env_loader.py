@@ -6,8 +6,6 @@ import os
 
 from ._get_value import get_value_from_env
 
-dotenv.load_dotenv()
-
 
 @dataclass
 class Env_config:
@@ -60,7 +58,8 @@ def _get_optional_env(key: str, default: str | float | bool | None = None):
         return value
 
 
-def load_env_config():
+def load_env_config(dotenv_path: str=".env"):
+    dotenv.load_dotenv(dotenv_path)
     return Env_config(
         deribit_client_secret=str(get_value_from_env("deribit_client_secret")),
         deribit_user_id=str(get_value_from_env("deribit_user_id")),

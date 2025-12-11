@@ -17,7 +17,6 @@ from ..strategy.probability_engine import bs_probability_gt
 @dataclass
 class DeribitMarketContext:
     """聚合 Deribit 相关的行情与参数，方便后续计算和输出。"""
-
     title: str
     asset: str
 
@@ -29,7 +28,6 @@ class DeribitMarketContext:
     k1_strike: float
     k2_strike: float
     K_poly: float
-
     # BTC 计价
     k1_bid_btc: float
     k1_ask_btc: float
@@ -37,7 +35,6 @@ class DeribitMarketContext:
     k2_ask_btc: float
     k1_mid_btc: float
     k2_mid_btc: float
-
     # USD 计价
     k1_bid_usd: float
     k1_ask_usd: float
@@ -45,14 +42,12 @@ class DeribitMarketContext:
     k2_ask_usd: float
     k1_mid_usd: float
     k2_mid_usd: float
-
     # 波动率 / 手续费
     k1_iv: float
     k2_iv: float
     k1_fee_approx: float
     k2_fee_approx: float
     mark_iv: float
-
     # 时间与概率
     k1_expiration_timestamp: float
     T: float
@@ -63,9 +58,9 @@ class DeribitMarketContext:
 @dataclass
 class PolymarketState:
     """Polymarket 市场的快照。"""
-
     event_title: str
     market_title: str
+
     event_id: str
     market_id: str
 

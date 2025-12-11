@@ -85,48 +85,66 @@ def _has_open_position_for_market(rows: list[dict], market_id: str) -> bool:
 
 def check_inv_condition(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
     # 若 pm 交易资金大于规定数, 跳过交易
-    if trade_filter_input.inv_usd >= trade_filter.inv_usd_limit:
-        return False
-    return True
+    details: str = ""
+
+    if trade_filter_input.inv_usd > trade_filter.inv_usd_limit:
+        details += f"资金{trade_filter_input.inv_usd} 超过限制: {trade_filter.inv_usd_limit}"
+        return False, details
+    return True, details
 
 def check_daily_trades_condition(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
     # 若当日已交易达到规定上限, 跳过交易
+    details: str = ""
+
     positions_rows = _load_positions()
     today = datetime.now(timezone.utc).date()
     daily_trades = _count_daily_trades(positions_rows, today)
-    if daily_trades >=trade_filter. daily_trade_limit:
-        return False
-    return True
+    if daily_trades >= trade_filter.daily_trade_limit:
+        details += f"当日交易次数已达上限: {trade_filter.daily_trade_limit}"
+        return False, details
+    return True, details
 
 def check_open_positions_counts(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
     # 若总持仓数已达到规定数, 跳过交易
+    details: str = ""
+
     positions_rows = _load_positions()
     count_open_positions = _count_open_positions(positions_rows)
     if count_open_positions >= trade_filter.open_positions_limit:
-        return False
-    return True
+        details += f"目前持仓数量 {count_open_positions} 个, 达到规定 {trade_filter.open_positions_limit} 个上限"
+        return False, details
+    return True, details
 
 def check_repeat_open_position(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    details: str = ""
+
     if trade_filter.allow_repeat_open_position:
-        return True
+        return True, details
     
     positions_rows = _load_positions()
     if _has_open_position_for_market(positions_rows, trade_filter_input.market_id):
-        return False
-    return True
+        details += f"{trade_filter_input.market_id} 已有持仓且规则不允许重复开仓"
+        return False, details
+    return True, details
 
 def check_contract_amount(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
     # 若合约数量不能达到 deribit 的最小 0.1 合约, 跳过交易
     # 若合约数量小于配置文件的规定数量, 跳过交易
+    details: str = ""
+
     if trade_filter_input.contract_amount < 0.1:
-        return False
-    if trade_filter_input.contract_amount < trade_filter. min_contract_amount:
-        return False
-    return True
+        details += f"合约数量 {trade_filter_input.contract_amount} 小于 deribit 要求的 0.1 合约"
+        return False, details
+    if trade_filter_input.contract_amount < trade_filter.min_contract_amount:
+        details += f"合约数量 {trade_filter_input.contract_amount} 小于规定要求的 {trade_filter.min_contract_amount} 合约"
+        return False, details
+    return True, details
 
 def check_adjust_contract_amount(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    details: str = ""
+
     if trade_filter.contract_rounding_band <= 0:
-        return True
+        return True, details
     raw_contract_amount = trade_filter_input.contract_amount
     rounded_contracts = round(trade_filter_input.contract_amount * 10) / 10.0
     rounding_tolerance = rounded_contracts * trade_filter.contract_rounding_band * 0.1
@@ -137,33 +155,41 @@ def check_adjust_contract_amount(trade_filter_input: Trade_filter_input, trade_f
         raw_contract_amount = rounded_contracts
         trade_filter_input.contract_amount = raw_contract_amount
     else:
-        return False
-        # validation_errors.append(
-        #     (
-        #         f"合约数 {raw_contract_amount:.4f} 不在允许的 "
-        #         f"{rounded_contracts:.1f} ± {rounding_tolerance:.2f} 范围内"
-        #     )
-        # )
-    return True
+        details += f"合约数 {raw_contract_amount:.4f} 不在允许的 {rounded_contracts:.1f} ± {rounding_tolerance:.2f} 范围内"
+        return False, details
+    return True, details
 
 def check_pm_price(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    details: str = ""
+
     if trade_filter_input.pm_price < trade_filter.min_pm_price:
-        return False
+        details += f"pm_price {trade_filter_input.pm_price} 小于规定要求的 {trade_filter.min_pm_price}"
+        return False, details
     if trade_filter_input.pm_price > trade_filter.max_pm_price:
-        return False
-    return True
+        details += f"pm_price {trade_filter_input.pm_price} 大于规定要求的 {trade_filter.max_pm_price}"
+        return False, details
+    return True, details
 
 def check_net_ev(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    details: str = ""
+
     if trade_filter_input.net_ev <= trade_filter.min_net_ev:
-        return False
-    return True
+        details += f"net_ev {trade_filter_input.net_ev} 小于等于规定的 {trade_filter.min_net_ev}"
+        return False, details
+    return True, details
 
 def check_roi_pct(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    details: str = ""
+
     if trade_filter_input.roi_pct <= trade_filter.min_roi_pct:
-        return False
-    return True
+        details += f"roi {trade_filter_input.roi_pct} 小于等于规定的 {trade_filter.min_roi_pct}"
+        return False, details
+    return True, details
 
 def check_prob_edge_pct(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
+    details: str = ""
+
     if trade_filter_input.prob_edge_pct < trade_filter.min_prob_edge_pct:
-        return False
-    return True
+        details += f"概率差 {trade_filter_input.prob_edge_pct} 小于规定的 {trade_filter.min_prob_edge_pct}"
+        return False, details
+    return True, details

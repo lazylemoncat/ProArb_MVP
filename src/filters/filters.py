@@ -1,4 +1,4 @@
-from filters.trade_filter import (
+from .trade_filter import (
     Trade_filter,
     Trade_filter_input,
     check_adjust_contract_amount,
@@ -28,7 +28,7 @@ def check_should_record_signal(
     previous_snapshot: SignalSnapshot,
     investment_usd: float,
     record_signal_filter: Record_signal_filter,
-):
+) -> tuple[bool, str, bool]:
     """
     发送 alert 信号和记入数据库的条件:
 
@@ -69,25 +69,46 @@ def check_should_record_signal(
             sign_change_condition,
             market_change_condition,
         ]
-    ), details
+    ), details, time_condition
 
 def check_should_trade_signal(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
-    inv_condition = check_inv_condition(trade_filter_input, trade_filter)
-    daily_trades_condition = check_daily_trades_condition(trade_filter_input, trade_filter)
-    positions_counts_conditions = check_open_positions_counts(trade_filter_input, trade_filter)
-    repeat_open_condition = check_repeat_open_position(
+    details: str = ""
+    
+    inv_condition, temp_details = check_inv_condition(trade_filter_input, trade_filter)
+    details += temp_details
+
+    daily_trades_condition, temp_details = check_daily_trades_condition(trade_filter_input, trade_filter)
+    details += temp_details
+
+    positions_counts_conditions, temp_details = check_open_positions_counts(trade_filter_input, trade_filter)
+    details += temp_details
+
+    repeat_open_condition, temp_details = check_repeat_open_position(
         trade_filter_input,
         trade_filter, 
     )
-    contract_amount_condition = check_contract_amount(trade_filter_input, trade_filter)
-    adjust_contract_amount_condition = check_adjust_contract_amount(
+    details += temp_details
+
+    contract_amount_condition, temp_details = check_contract_amount(trade_filter_input, trade_filter)
+    details += temp_details
+
+    adjust_contract_amount_condition, temp_details = check_adjust_contract_amount(
         trade_filter_input,
         trade_filter
     )
-    pm_price_condition = check_pm_price(trade_filter_input, trade_filter)
-    net_ev_condition = check_net_ev(trade_filter_input, trade_filter)
-    roi_condition = check_roi_pct(trade_filter_input, trade_filter)
-    prob_edge_pct_condition = check_prob_edge_pct(trade_filter_input, trade_filter)
+    details += temp_details
+
+    pm_price_condition, temp_details = check_pm_price(trade_filter_input, trade_filter)
+    details += temp_details
+
+    net_ev_condition, temp_details = check_net_ev(trade_filter_input, trade_filter)
+    details += temp_details
+
+    roi_condition, temp_details = check_roi_pct(trade_filter_input, trade_filter)
+    details += temp_details
+
+    prob_edge_pct_condition, temp_details = check_prob_edge_pct(trade_filter_input, trade_filter)
+    details += temp_details
 
     return all(
         [
@@ -102,4 +123,4 @@ def check_should_trade_signal(trade_filter_input: Trade_filter_input, trade_filt
             roi_condition,
             prob_edge_pct_condition
         ]
-    )
+    ), details

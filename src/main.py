@@ -1,16 +1,10 @@
 import asyncio
-import csv
 import logging
 import re
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-from fastapi import FastAPI
-from rich.panel import Panel
-
-from src.telegram.TG_bot import TG_bot
 from src.utils.dataloader.config_loader import Config, ThresholdsConfig
 
 from .fetch_data.polymarket_client import (
@@ -44,9 +38,9 @@ from .utils.save_result import (
     rewrite_csv_with_header,
     save_result_csv,
 )
+from .utils.get_bot import get_bot, TG_bot
 
-app = FastAPI()
-
+# TODO 将日志输出到服务器根目录
 logging.basicConfig(
     level="INFO",
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
@@ -55,7 +49,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
+# TODO 加入到 CsvHandler
 def _record_raw_result(
     csv_row: Dict[str, Any], *, raw_csv_path: str, net_ev: float, skip_reasons: List[str]
 ) -> None:
@@ -78,7 +72,7 @@ def _fmt_market_title(asset: str, k_poly: float) -> str:
         return f"{asset.upper()} > {k_poly}"
 
 
-
+# TODO 加入到 utils
 def rotate_event_title_date(template_title: str, target_date: date) -> str:
     """
     将 config.yaml 中的硬编码标题，例如：
@@ -105,7 +99,7 @@ def rotate_event_title_date(template_title: str, target_date: date) -> str:
 
     return f"{prefix}{month_name} {day_str}{suffix}"
 
-
+# TODO 加入到 PolymarketClient
 def parse_strike_from_text(text: str) -> float | None:
     """
     从 Polymarket 的 question / groupItemTitle / 其它文本中解析数字行权价。
@@ -127,10 +121,10 @@ def parse_strike_from_text(text: str) -> float | None:
     except ValueError:
         return None
 
-
+# TODO 加入到 PolymarketClient
 def discover_strike_markets_for_event(event_title: str) -> List[Dict[str, Any]]:
     """
-    使用 Polymarket API 自动发现某个事件下的所有 strike（市场标题）。
+    使用 Polymarket API 自动发现某个事件下的所有 strike (市场标题)
 
     返回值：
     [
@@ -177,7 +171,7 @@ def discover_strike_markets_for_event(event_title: str) -> List[Dict[str, Any]]:
     results.sort(key=lambda x: x["strike"])
     return results
 
-
+# TODO 加入到 utils
 def build_events_for_date(target_date: date) -> List[dict]:
     """
     基于 config['events'] 中的“模板事件”，为指定的 target_date 生成真正要跑的事件列表。
@@ -288,17 +282,19 @@ async def send_opportunity(
         pm_price: float,
         deribit_price: float,
         inv_base_usd: float,
-        validation_errors: list[str]
+        validation_errors: list[str],
+        trade_details: str
     ):
     try:
         now_ts = datetime.now(timezone.utc)
 
         await alert_bot.publish((
-                f"BTC > ${market_title} | EV: +${round(net_ev, 3)}\n"
+                f"{market_title} | EV: +${round(net_ev, 3)}\n"
                 f"策略{strategy}, 概率差{round(prob_diff, 3)}\n"
                 f"PM ${pm_price}, Deribit ${round(deribit_price, 3)}\n"
                 f"建议投资${inv_base_usd}\n"
-                f"validation_errors: {validation_errors}"
+                f"validation_errors: {validation_errors}\n"
+                f"不交易原因: {trade_details}\n"
                 f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
             ))
     except Exception as exc:
@@ -402,7 +398,7 @@ async def loop_event(
                 roi_pct=roi_pct,
                 prob_edge_pct=prob_edge_pct
             )
-            trade_signal = check_should_trade_signal(trade_filter_input, trade_filter)
+            trade_signal, trade_details = check_should_trade_signal(trade_filter_input, trade_filter)
             result.contracts_strategy2 = trade_filter_input.contract_amount
 
             validation_errors: list[str] = []
@@ -418,11 +414,12 @@ async def loop_event(
                 strategy=int(strategy),
             )
             previous_snapshot = signal_state.get(signal_key)
-            if previous_snapshot is None:
+            if previous_snapshot is None and net_ev > 0:
                 record_signal = True
+                time_condition = True
                 details = ""
             else:
-                record_signal, details = check_should_record_signal(
+                record_signal, details, time_condition = check_should_record_signal(
                     now_snapshot, 
                     previous_snapshot, 
                     inv_base_usd, 
@@ -448,7 +445,8 @@ async def loop_event(
                     pm_price, 
                     deribit_price, 
                     inv_base_usd,
-                    validation_errors
+                    validation_errors,
+                    trade_details
                 )
                 signal_state[signal_key] = now_snapshot
                 # 写入本次检测结果
@@ -466,7 +464,7 @@ async def loop_event(
 
 
             try:
-                if trade_signal:
+                if trade_signal and time_condition:
                     await trading_bot.publish(f"{market_id} 正在进行交易")
                     trade_result, status, tx_id, message = await execute_trade(
                         csv_path=output_csv,
@@ -476,7 +474,7 @@ async def loop_event(
                         should_record_signal=record_signal
                     )
                 else:
-                    skip_reasons.append(details)
+                    skip_reasons.append(trade_details)
             except TradeApiError as exc:
                 skip_reasons.append(f"交易执行失败: {exc.message}, {exc.error_code}")
             except asyncio.CancelledError:
@@ -521,16 +519,13 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
 
     opp_state: dict = {}
     signal_state: dict[str, SignalSnapshot] = {}
-    risk_review_triggered = False
 
     current_target_date: date | None = None
     events: List[dict] = []
     instruments_map: dict = {}
-    alert_token = str(env_config.TELEGRAM_BOT_TOKEN_ALERT)
-    trading_token = str(env_config.TELEGRAM_BOT_TOKEN_TRADING)
-    chat_id = str(env_config.TELEGRAM_CHAT_ID)
-    alert_bot = TG_bot(name="alert", token=alert_token, chat_id=chat_id)
-    trading_bot = TG_bot(name="trading", token=trading_token, chat_id=chat_id)
+    
+    alert_bot = get_bot(name="alert", env_config=env_config)
+    trading_bot = get_bot(name="trading", env_config=env_config)
 
     ensure_csv_file(raw_output_csv, header=RESULTS_CSV_HEADER)
 
