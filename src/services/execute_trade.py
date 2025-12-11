@@ -1,6 +1,8 @@
 import logging
 from datetime import datetime, timezone
 
+from ..filters.filters import Trade_filter_input, check_should_trade_signal, Trade_filter
+
 from ..fetch_data.polymarket_client import PolymarketClient
 from ..strategy.strategy2 import Strategy_input, strategy
 from ..telegram.TG_bot import TG_bot
@@ -12,6 +14,29 @@ from ..utils.market_context import DeribitMarketContext, PolymarketState
 
 logger = logging.getLogger(__name__)
 
+async def send_opportunity(
+        alert_bot, 
+        market_title: str, 
+        net_ev: float, 
+        strategy: int,
+        prob_diff: float,
+        pm_price: float,
+        deribit_price: float,
+        inv_base_usd: float,
+    ):
+    try:
+        now_ts = datetime.now(timezone.utc)
+
+        await alert_bot.publish((
+                f"{market_title} | EV: +${round(net_ev, 3)}\n"
+                f"策略{strategy}, 概率差{round(prob_diff, 3)}\n"
+                f"PM ${pm_price}, Deribit ${round(deribit_price, 3)}\n"
+                f"建议投资${inv_base_usd}\n"
+                f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+            ))
+    except Exception as exc:
+        logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
+
 async def execute_trade(
     trade_signal: bool, 
     dry_run: bool,
@@ -21,7 +46,12 @@ async def execute_trade(
     deribit_ctx: DeribitMarketContext,
     strategy_choosed: int,
     env_config: Env_config,
-    trading_bot: TG_bot
+    trading_bot: TG_bot,
+    alert_bot: TG_bot,
+    prob_diff: float,
+    deribit_price: float,
+    roi_pct: float,
+    trade_filter: Trade_filter
 ):
     # 参数验证
     if not trade_signal:
@@ -86,7 +116,35 @@ async def execute_trade(
     )
     gross_ev = strategy(strategy_input)
     net_ev = gross_ev - fee_total - slippage
+    if net_ev <= 0:
+        return False
+    await send_opportunity(
+        alert_bot, 
+        poly_ctx.market_title, 
+        net_ev, 
+        strategy_choosed, 
+        prob_diff, 
+        limit_price, 
+        deribit_price, 
+        inv_usd,
+    )
+    prob_diff = (deribit_price - limit_price) * 100.0
+    prob_edge_pct = abs(prob_diff) / 100.0
+    trade_filter_input = Trade_filter_input(
+        inv_usd=inv_usd,
+        market_id=poly_ctx.market_id,
+        contract_amount=contract_amount,
+        pm_price=limit_price,
+        net_ev=net_ev,
+        roi_pct=roi_pct,
+        prob_edge_pct=prob_edge_pct
+    )
+    trade_signal, trade_details = check_should_trade_signal(trade_filter_input, trade_filter)
+    if not trade_signal:
+        logger.info(trade_details)
+        return False
     # 交易
+    await trading_bot.publish(f"{poly_ctx.market_id} 正在进行交易")
     if not dry_run:
         deribit_cfg = DeribitUserCfg(
             user_id=env_config.deribit_user_id,

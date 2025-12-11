@@ -230,18 +230,18 @@ async def loop_event(
             
             if record_signal:
                 # 发送套利机会到 Alert Bot
-                await send_opportunity(
-                    alert_bot, 
-                    market_title, 
-                    net_ev, 
-                    strategy, 
-                    prob_diff, 
-                    pm_price, 
-                    deribit_price, 
-                    inv_base_usd,
-                    validation_errors,
-                    trade_details
-                )
+                # await send_opportunity(
+                #     alert_bot, 
+                #     market_title, 
+                #     net_ev, 
+                #     strategy, 
+                #     prob_diff, 
+                #     pm_price, 
+                #     deribit_price, 
+                #     inv_base_usd,
+                #     validation_errors,
+                #     trade_details
+                # )
                 signal_state[signal_key] = now_snapshot
                 # 写入本次检测结果
                 save_result_csv(csv_row, csv_path=output_csv)
@@ -259,7 +259,7 @@ async def loop_event(
 
             try:
                 if trade_signal and time_condition:
-                    await trading_bot.publish(f"{market_id} 正在进行交易")
+                    # await trading_bot.publish(f"{market_id} 正在进行交易")
                     await execute_trade(
                         trade_signal=trade_signal,
                         dry_run=dry_trade_mode,
@@ -269,7 +269,12 @@ async def loop_event(
                         deribit_ctx=deribit_ctx,
                         strategy_choosed=strategy,
                         env_config=env,
-                        trading_bot=trading_bot
+                        trading_bot=trading_bot,
+                        alert_bot=alert_bot,
+                        prob_diff=prob_diff,
+                        deribit_price=deribit_price,
+                        roi_pct=roi_pct,
+                        trade_filter=trade_filter
                     )
                     # trade_result, status, tx_id, message = await execute_trade(
                     #     csv_path=output_csv,
