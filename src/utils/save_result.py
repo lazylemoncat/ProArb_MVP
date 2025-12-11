@@ -258,7 +258,7 @@ def rewrite_csv_with_header(
 
     # DEBUG: 检查 dr_entry_cost
     if 'dr_entry_cost' in row:
-        print(f"[DEBUG-CALL] save_position_to_csv called with dr_entry_cost = {row['dr_entry_cost']}")
+        # print(f"[DEBUG-CALL] save_position_to_csv called with dr_entry_cost = {row['dr_entry_cost']}")
         # 保存到文件
         with open(f"/tmp/save_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "w") as f:
             import json

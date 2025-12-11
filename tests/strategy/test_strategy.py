@@ -25,19 +25,6 @@ def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
-# inv_usd = 200
-# strategy = 2
-# spot_price = 92630.39
-# k1_price = 95000
-# k2_price = 97000
-# k_poly_price = 96000
-# days_to_expiry = 0.951 # 以 deribit 为准
-# sigma = 0.6071
-# pm_price = 0.84
-# is_DST = False # 是否为夏令时
-# k1_ask_btc = 0.0038
-# k2_bid_btc = 0.0009
-
 # 期权价格转换
 def transform_price(strategy_input: Strategy_input):
     """
@@ -106,7 +93,7 @@ def cal_pm_ev(strategy_input: Strategy_input):
     pm_ev = round(shares - strategy_input.inv_usd, 2)
     return pm_ev
 
-def cal_db_ev(k1_price, k2_price, contract_amount, pm_cost):
+def cal_db_ev(k1_price: float, k2_price: float, contract_amount: float, pm_cost: float):
     db_value = (k2_price - k1_price) * contract_amount
     option_cost = pm_cost * contract_amount
 
@@ -116,6 +103,8 @@ def cal_db_ev(k1_price, k2_price, contract_amount, pm_cost):
 def strategy(strategy_input: Strategy_input):
     # 期权价格转换
     k1_ask_usd, k2_bid_usd = transform_price(strategy_input)
+    assert k1_ask_usd == 352
+    assert k2_bid_usd == 83.37
     # 合约数量计算
     pm_max_ev = cal_pm_max_ev(strategy_input)
     pm_cost = cal_pm_cost(k1_ask_usd, k2_bid_usd)
@@ -154,14 +143,13 @@ def strategy(strategy_input: Strategy_input):
     pm_expected_ev = round(pm_expected_ev, 2)
     db_expected_ev = round(db_expected_ev, 2)
     gross_ev = round(pm_expected_ev + db_expected_ev, 2)
-    print(f"pm_expected_ev: {pm_expected_ev}, db_expected_ev: {db_expected_ev}, gross_ev: {gross_ev}")
+    # print(f"pm_expected_ev: {pm_expected_ev}, db_expected_ev: {db_expected_ev}, gross_ev: {gross_ev}")
     assert pm_expected_ev == -0.26
     assert db_expected_ev == 6.36
     assert gross_ev == 6.1
     return gross_ev
 
-if __name__ == "__main__":
-    # 输入参数
+def test_strategy():
     strategy_input = Strategy_input(
         inv_usd = 200,
         strategy = 2,
@@ -171,12 +159,12 @@ if __name__ == "__main__":
         k_poly_price = 96000,
         days_to_expiry = 0.951, # 以 deribit 为准
         sigma = 0.6071,
-        pm_yes_price= 0,
+        pm_yes_price= 0.16,
         pm_no_price = 0.84,
         is_DST = False, # 是否为夏令时
         k1_ask_btc = 0.0038,
-        k1_bid_btc = 0,
-        k2_ask_btc = 0,
+        k1_bid_btc = 0.0036,
+        k2_ask_btc = 0.0010,
         k2_bid_btc = 0.0009,
     )
     strategy(strategy_input)

@@ -1,0 +1,133 @@
+import logging
+from datetime import datetime, timezone
+
+from ..fetch_data.polymarket_client import PolymarketClient
+from ..strategy.strategy2 import Strategy_input, strategy
+from ..telegram.TG_bot import TG_bot
+from ..trading.deribit_trade import DeribitUserCfg
+from ..trading.deribit_trade_client import Deribit_trade_client
+from ..trading.polymarket_trade_client import Polymarket_trade_client
+from ..utils.dataloader import Env_config
+from ..utils.market_context import DeribitMarketContext, PolymarketState
+
+logger = logging.getLogger(__name__)
+
+async def execute_trade(
+    trade_signal: bool, 
+    dry_run: bool,
+    inv_usd: float,
+    contract_amount: float,
+    poly_ctx: PolymarketState, 
+    deribit_ctx: DeribitMarketContext,
+    strategy_choosed: int,
+    env_config: Env_config,
+    trading_bot: TG_bot
+):
+    # 参数验证
+    if not trade_signal:
+        return False
+    
+    if inv_usd <= 0:
+        assert False
+    
+    if strategy_choosed == 1:
+        token_id = poly_ctx.yes_token_id
+        pm_open = await PolymarketClient.get_polymarket_slippage(
+            token_id,
+            inv_usd,
+            side="buy",
+            amount_type="usd",
+        )
+        pm_avg_open = pm_open.avg_price
+        slippage_pct = pm_open.slippage_pct
+        
+    elif strategy_choosed == 2:
+        token_id = poly_ctx.no_token_id
+        pm_open = await PolymarketClient.get_polymarket_slippage(
+            token_id,
+            inv_usd,
+            side="buy",
+            amount_type="usd",
+        )
+        pm_avg_open = pm_open.avg_price
+        slippage_pct = pm_open.slippage_pct
+    else:
+        assert False
+
+    if contract_amount < 0.1:
+        assert False
+    
+    # 获取实际成交价格
+    limit_price = pm_avg_open
+    # 获取 db 手续费, pm 没有手续费
+    db_fee = 0.003 * float(deribit_ctx.spot) * contract_amount
+    k1_fee = 0.125 * (deribit_ctx.k1_ask_usd if strategy_choosed == 2 else deribit_ctx.k1_bid_usd) * contract_amount
+    k2_fee = 0.125 * (deribit_ctx.k2_bid_usd if strategy_choosed == 2 else deribit_ctx.k2_ask_usd) * contract_amount
+    fee_total = max(min(db_fee, k1_fee), min(db_fee, k2_fee))
+    # 获取滑点
+    slippage = inv_usd * slippage_pct
+    # 获取净利润
+    strategy_input = Strategy_input(
+        inv_usd=inv_usd,
+        strategy=strategy_choosed,
+        spot_price=deribit_ctx.spot,
+        k1_price=deribit_ctx.k1_strike,
+        k2_price=deribit_ctx.k2_strike,
+        k_poly_price=deribit_ctx.K_poly,
+        days_to_expiry=deribit_ctx.T,
+        sigma=deribit_ctx.mark_iv / 100.0,
+        pm_yes_price=poly_ctx.yes_price,
+        pm_no_price=poly_ctx.no_price,
+        is_DST=datetime.now().dst() is not None,
+        k1_ask_btc=deribit_ctx.k1_ask_btc,
+        k1_bid_btc=deribit_ctx.k1_bid_btc,
+        k2_ask_btc=deribit_ctx.k2_ask_btc,
+        k2_bid_btc=deribit_ctx.k2_bid_btc
+    )
+    gross_ev = strategy(strategy_input)
+    net_ev = gross_ev - fee_total - slippage
+    # 交易
+    if not dry_run:
+        deribit_cfg = DeribitUserCfg(
+            user_id=env_config.deribit_user_id,
+            client_id=env_config.deribit_client_id,
+            client_secret=str(env_config.deribit_client_secret),
+        )
+        try:
+            pm_resp, pm_order_id = Polymarket_trade_client.place_buy_by_investment(
+                token_id=token_id, investment_usd=inv_usd, limit_price=limit_price
+            )
+        except Exception:
+            logger.error(f"pm 交易失败, market_id: {poly_ctx.market_id}")
+            raise Exception
+        try:
+            sps, db_order_ids, executed_contracts = await Deribit_trade_client.execute_vertical_spread(
+                deribit_cfg,
+                contracts=contract_amount,
+                inst_k1=deribit_ctx.inst_k1,
+                inst_k2=deribit_ctx.inst_k2,
+                strategy=strategy_choosed,
+            )
+        except Exception:
+            logger.error(f"db 交易失败, market_id: {poly_ctx.market_id}")
+            raise Exception
+    # 通知
+    try:
+        await trading_bot.publish((
+            "交易已执行\n"
+            "类型： 开仓\n"
+            f"策略{strategy_choosed}\n"
+            f"模拟:{dry_run}\n"
+            f"市场: {poly_ctx.market_title} {poly_ctx.event_title}, market id: {poly_ctx.market_id}\n"
+            f"PM: 买入 {"YES" if strategy_choosed == 1 else "NO"} ${float(limit_price)}({inv_usd})\n"
+            f"Deribit: {"卖出牛差" if strategy_choosed == 1 else "买入牛差"} {float(deribit_ctx.k1_strike)}-{float(deribit_ctx.k2_strike)}({float(contract_amount)})\n"
+            f"手续费: ${round(float(fee_total), 3)}, 滑点:{float(inv_usd * slippage_pct)}\n"
+            # 固定 gas 费 0.1
+            # f"开仓成本{round(float(fee_total), 3) + 0.1}, 保证金:{round(float(result.im_usd), 3)}\n"
+            f"预期净收益:{round(float(net_ev), 3)}\n"
+            f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+        ))
+    except Exception as e:
+        logger.error(e)
+        raise e
+    print("发送消息完毕")

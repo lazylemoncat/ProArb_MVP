@@ -190,8 +190,8 @@ class InvestmentResult:
         }
 
         # DEBUG: Print the keys to see what we're returning
-        print(f"🔍 [DEBUG CSV] Total keys: {len(result.keys())}")
-        print(f"🔍 [DEBUG CSV] Last 10 keys: {list(result.keys())[-10:]}")
+        # print(f"🔍 [DEBUG CSV] Total keys: {len(result.keys())}")
+        # print(f"🔍 [DEBUG CSV] Last 10 keys: {list(result.keys())[-10:]}")
         return result
 
 
@@ -679,21 +679,21 @@ async def evaluate_investment(
         pm_slip_open = pm_no_slip_open
         pm_slip_close = pm_no_slip_close
 
-    print(f"\n📊 策略比较:")
-    print(f"  策略1（买YES + 卖牛差）:")
-    print(f"    合约数: {contracts_strategy1:.6f}")
-    print(f"    毛收益: ${gross_ev_strategy1:.2f}")
-    print(f"    总成本: ${costs_strategy1.total_cost:.2f}")
-    print(f"    净EV: ${net_ev_strategy1:.2f}")
-    print(f"  策略2（买NO + 买牛差）:")
-    print(f"    合约数: {contracts_strategy2:.6f}")
-    print(f"    毛收益: ${gross_ev_strategy2:.2f}")
-    print(f"    总成本: ${costs_strategy2.total_cost:.2f}")
-    print(f"    净EV: ${net_ev_strategy2:.2f}")
-    print(f"\n✅ 最优选择: 策略{optimal_strategy} ({strategy_name})")
-    print(f"   选择原因: {strategy_choice_reason}")
-    print(f"   预期净收益: ${optimal_net_ev:.2f}")
-    print(f"   ROI: {(optimal_net_ev / (inv_base_usd + optimal_costs.im_usd) * 100):.2f}%")
+    # print(f"\n📊 策略比较:")
+    # print(f"  策略1（买YES + 卖牛差）:")
+    # print(f"    合约数: {contracts_strategy1:.6f}")
+    # print(f"    毛收益: ${gross_ev_strategy1:.2f}")
+    # print(f"    总成本: ${costs_strategy1.total_cost:.2f}")
+    # print(f"    净EV: ${net_ev_strategy1:.2f}")
+    # print(f"  策略2（买NO + 买牛差）:")
+    # print(f"    合约数: {contracts_strategy2:.6f}")
+    # print(f"    毛收益: ${gross_ev_strategy2:.2f}")
+    # print(f"    总成本: ${costs_strategy2.total_cost:.2f}")
+    # print(f"    净EV: ${net_ev_strategy2:.2f}")
+    # print(f"\n✅ 最优选择: 策略{optimal_strategy} ({strategy_name})")
+    # print(f"   选择原因: {strategy_choice_reason}")
+    # print(f"   预期净收益: ${optimal_net_ev:.2f}")
+    # print(f"   ROI: {(optimal_net_ev / (inv_base_usd + optimal_costs.im_usd) * 100):.2f}%")
 
 
     # === 8. 构造返回结果 ===

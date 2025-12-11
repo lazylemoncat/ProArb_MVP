@@ -25,25 +25,12 @@ def _norm_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
-# inv_usd = 200
-# strategy = 2
-# spot_price = 92630.39
-# k1_price = 95000
-# k2_price = 97000
-# k_poly_price = 96000
-# days_to_expiry = 0.951 # 以 deribit 为准
-# sigma = 0.6071
-# pm_price = 0.84
-# is_DST = False # 是否为夏令时
-# k1_ask_btc = 0.0038
-# k2_bid_btc = 0.0009
-
 # 期权价格转换
 def transform_price(strategy_input: Strategy_input):
     """
     期权价格转换
     """
-    if strategy == 1:
+    if strategy_input.strategy == 1:
         k1_price_btc = strategy_input.k1_bid_btc
         k2_price_btc = strategy_input.k2_ask_btc
     else:
@@ -55,7 +42,7 @@ def transform_price(strategy_input: Strategy_input):
 
 # 合约数量计算
 def cal_pm_max_ev(strategy_input: Strategy_input):
-    if strategy == 1:
+    if strategy_input.strategy == 1:
         pm_price = strategy_input.pm_yes_price
     else:
         pm_price = strategy_input.pm_no_price
@@ -80,7 +67,9 @@ def cal_probability(spot_price, k_price, drift_term, sigma_T):
 
 def cal_Black_Scholes(is_DST, days_to_expiry, sigma, spot_price, k1_price, k_poly_price, k2_price, r=0.05):
     # 9/24 冬令九小时,夏令8小时
-    T = round(((8/24 if is_DST else 9/24) + days_to_expiry) / 365, 6)
+    T_db_pm_dealta = 8/24 if is_DST else 9/24 # Polymarket与deribit结算时间间隔
+    T = round((T_db_pm_dealta + days_to_expiry) / 365, 6)
+
     sigma_T = round(sigma * math.sqrt(T), 6)
     sigma_squared_divide_2 = round(math.pow(sigma, 2) / 2, 6)
     drift_term = round((r + sigma_squared_divide_2) * T, 6)
@@ -98,7 +87,7 @@ def cal_Black_Scholes(is_DST, days_to_expiry, sigma, spot_price, k1_price, k_pol
 
 # 各区间盈亏分析
 def cal_pm_ev(strategy_input: Strategy_input):
-    if strategy == 1:
+    if strategy_input.strategy == 1:
         pm_price = strategy_input.pm_yes_price
     else:
         pm_price = strategy_input.pm_no_price
@@ -112,6 +101,38 @@ def cal_db_ev(k1_price: float, k2_price: float, contract_amount: float, pm_cost:
 
     db_ev = round(db_value - option_cost, 2)
     return db_ev
+
+def cal_call_price(S: float, K: float, r: float, sigma: float, T: float) -> float:
+    sigma_T = sigma * math.sqrt(T)
+    sigma_sq_div2 = sigma**2 / 2
+    drift_term = (r + sigma_sq_div2) * T
+    d1 = (math.log(S / K) + drift_term) / sigma_T
+    d2 = d1 - sigma_T
+    call_price = S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
+    return call_price
+
+
+def cal_settlement_adjustment(
+    strategy_input: Strategy_input, contract_amount: float, r: float = 0.05
+) -> float:
+    T_db_pm_delta_days = 8 / 24 if strategy_input.is_DST else 9 / 24
+    T = T_db_pm_delta_days / 365
+
+    S = strategy_input.spot_price
+    K1 = strategy_input.k1_price
+    K2 = strategy_input.k2_price
+    sigma = strategy_input.sigma
+
+    C1 = cal_call_price(S, K1, r, sigma, T)
+    C2 = cal_call_price(S, K2, r, sigma, T)
+    spread_value = C1 - C2  # 每份牛市价差价值
+
+    if strategy_input.strategy == 2:
+        adjustment = -spread_value * contract_amount
+    else:
+        adjustment = spread_value * contract_amount
+
+    return round(adjustment, 2)
 
 def strategy(strategy_input: Strategy_input):
     # 期权价格转换
@@ -157,28 +178,36 @@ def strategy(strategy_input: Strategy_input):
     # print(f"pm_expected_ev: {pm_expected_ev}, db_expected_ev: {db_expected_ev}, gross_ev: {gross_ev}")
     # assert pm_expected_ev == -0.26
     # assert db_expected_ev == 6.36
-    # assert gross_ev == 6.1
-    return gross_ev
+    # assert gross_ev == 6.1 # not dst
+    # 第7步：结算时间修正
+    settlement_adjustment = cal_settlement_adjustment(
+        strategy_input, contract_amount
+    )
+    adjusted_gross_ev = round(gross_ev + settlement_adjustment, 2)
+    return adjusted_gross_ev
 
 if __name__ == "__main__":
     import datetime
-    print(datetime.datetime.now().dst())
+    if datetime.datetime.now().dst() is None:
+        is_DST = False
+    else:
+        is_DST = True
     # 输入参数
     strategy_input = Strategy_input(
         inv_usd = 200,
-        strategy = 2,
+        strategy = 1,
         spot_price = 92630.39,
         k1_price = 95000,
         k2_price = 97000,
         k_poly_price = 96000,
         days_to_expiry = 0.951, # 以 deribit 为准
         sigma = 0.6071,
-        pm_yes_price= 0,
+        pm_yes_price= 0.16,
         pm_no_price = 0.84,
-        is_DST = False, # 是否为夏令时
+        is_DST = is_DST, # 是否为夏令时
         k1_ask_btc = 0.0038,
-        k1_bid_btc = 0,
-        k2_ask_btc = 0,
+        k1_bid_btc = 0.0036,
+        k2_ask_btc = 0.0010,
         k2_bid_btc = 0.0009,
     )
-    strategy(strategy_input)
+    print(strategy(strategy_input))

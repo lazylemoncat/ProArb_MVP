@@ -19,12 +19,12 @@ class DeribitMarketContext:
     """聚合 Deribit 相关的行情与参数，方便后续计算和输出。"""
     title: str
     asset: str
-
+    # 现货价格
     spot: float
-
+    # 合约名称
     inst_k1: str
     inst_k2: str
-
+    # k1 k2 代表的价格
     k1_strike: float
     k2_strike: float
     K_poly: float
