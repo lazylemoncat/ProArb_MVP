@@ -536,7 +536,7 @@ async def evaluate_investment(
     calc_input_strategy1 = CalculationInput(
         S=deribit_ctx.spot,
         K=deribit_ctx.k1_strike,
-        T=deribit_ctx.T,
+        T=deribit_ctx.T + 9/24/365,  # 加上9小时（Polymarket比Deribit晚9小时到期）
         r=deribit_ctx.r,
         sigma=deribit_ctx.mark_iv / 100.0,
         K1=deribit_ctx.k1_strike,
@@ -574,7 +574,7 @@ async def evaluate_investment(
     calc_input_strategy2 = CalculationInput(
         S=deribit_ctx.spot,
         K=deribit_ctx.k1_strike,
-        T=deribit_ctx.T,
+        T=deribit_ctx.T + 9/24/365,  # 加上9小时（Polymarket比Deribit晚9小时到期）
         r=deribit_ctx.r,
         sigma=deribit_ctx.mark_iv / 100.0,
         K1=deribit_ctx.k1_strike,

@@ -18,38 +18,24 @@ from .probability_engine import bs_probability_gt
 
 def _build_fine_midpoint_grid(K1: float, K2: float, K_poly: float, step: float = 500) -> list[float]:
     """
-    构造精细中点价格网格（新的默认方法）
+    构造关键价格点网格
 
-    在K1到K2之间按步长生成精细的价格点，确保包含关键的K_poly价格。
-    相比原来的3-sigma粗网格，提供更精确的收益计算。
+    只返回关键价格点 [K1, K_poly, K2]，用于构建4个积分区间：
+    - 区间1: (-∞, K1]
+    - 区间2: (K1, K_poly]，代表价格点 = (K1 + K_poly) / 2
+    - 区间3: (K_poly, K2]，代表价格点 = (K_poly + K2) / 2
+    - 区间4: (K2, +∞)
 
     Args:
         K1: 低端行权价
         K2: 高端行权价
         K_poly: Polymarket阈值
-        step: 价格步长，默认500 USD
+        step: 价格步长（保留参数以兼容旧代码，但不使用）
 
     Returns:
-        精细中点价格网格列表
+        关键价格点列表 [K1, K_poly, K2]
     """
-    # 从K1到K2，按步长生成价格点
-    grid = []
-    price = K1
-    while price <= K2:
-        grid.append(price)
-        price += step
-
-    # 确保包含K_poly
-    if K_poly not in grid:
-        grid.append(K_poly)
-
-    # 确保包含K2
-    if K2 not in grid:
-        grid.append(K2)
-
-    grid.sort()
-
-    return grid
+    return [K1, K_poly, K2]
 
 
 def _portfolio_payoff_at_price_strategy1(S_T: float, input_data, strategy_out):
@@ -333,15 +319,8 @@ def _integrate_ev_over_grid(
     fine_grid = _build_fine_midpoint_grid(K1, K2, K_poly)
 
     # === 2. 识别关键价格点 ===
-    # 只计算K1, K_poly, K2的概率，其他点通过插值获得
-    key_price_points = []  # 存储关键价格值
-    key_price_indices = [] # 存储关键价格在网格中的索引
-
-    # 找到K1, K_poly, K2在网格中的位置
-    for i, price in enumerate(fine_grid):
-        if price == K1 or price == K_poly or price == K2:
-            key_price_points.append(price)
-            key_price_indices.append(i)
+    # 直接使用精细网格作为关键价格点
+    key_price_points = fine_grid
 
     # === 3. 计算关键价格点的概率 ===
     # 只对关键价格点计算P(S_T > K)，避免不必要的计算
@@ -392,9 +371,12 @@ def _integrate_ev_over_grid(
         prob = max(0.0, interval['prob'])
         total_prob += prob
 
+        # 使用区间中点作为代表性价格点（线性插值法）
+        price_point = interval['price_point']
+
         # 计算该代表性价格点的投资组合盈亏
         pnl_pm_i, pnl_dr_i, total_i = payoff_func(
-            interval['price_point'], input_data, strategy_out
+            price_point, input_data, strategy_out
         )
 
         E_pm += prob * pnl_pm_i
