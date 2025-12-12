@@ -104,7 +104,7 @@ async def execute_trade(
         k1_price=deribit_ctx.k1_strike,
         k2_price=deribit_ctx.k2_strike,
         k_poly_price=deribit_ctx.K_poly,
-        days_to_expiry=deribit_ctx.T,
+        days_to_expiry=deribit_ctx.days_to_expairy,
         sigma=deribit_ctx.mark_iv / 100.0,
         pm_yes_price=poly_ctx.yes_price,
         pm_no_price=poly_ctx.no_price,
