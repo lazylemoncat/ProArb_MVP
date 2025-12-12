@@ -81,7 +81,7 @@ ENDPOINT_BROADCAST_SECONDS = 3600
 logging.basicConfig(
     level="INFO",
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    filename="proarb.log",  # 指定日志文件
+    filename="data/proarb_server.log",  # 指定日志文件
     filemode="a"  # 'a'表示追加模式，'w'表示覆盖模式
 )
 logger = logging.getLogger(__name__)

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional
 
 from py_clob_client.client import ClobClient, PolyException
-from py_clob_client.clob_types import OrderArgs
+from py_clob_client.clob_types import OrderArgs, OrderType
 
 from ..utils.dataloader import Env_config, load_all_configs
 
@@ -63,7 +63,7 @@ class Polymarket_trade:
         )
         signed_order = client.create_order(order_args)
         try:
-            resp: dict = client.post_order(signed_order)
+            resp: dict = client.post_order(signed_order, orderType=OrderType.FAK)
         except PolyException as e:
             raise Exception(f"{e}")
         return resp

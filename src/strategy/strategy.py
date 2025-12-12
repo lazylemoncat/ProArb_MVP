@@ -6,11 +6,7 @@ from .models import (
     CalculationInput,
     ProbabilityOutput,
     StrategyOutput,
-    CostOutput,
     ExpectedPnlOutput,
-    AnnualizedMetrics,
-    RealizedPnlOutput,
-    UnrealizedPnlOutput,
     CalculationOutput,
     BSProbability,
     Greeks,
@@ -19,9 +15,6 @@ from .models import (
 )
 from .probability_engine import bs_probability_gt
 
-# ====== 全局变量：用于在 EV 计算中访问 Polymarket 价格 ======
-# 移除全局状态以避免异步竞争条件
-# PM_YES_PRICE_FOR_EV: float | None = None  # 已移除：会导致竞争条件
 
 def _build_fine_midpoint_grid(K1: float, K2: float, K_poly: float, step: float = 500) -> list[float]:
     """
@@ -43,18 +36,6 @@ def _build_fine_midpoint_grid(K1: float, K2: float, K_poly: float, step: float =
         关键价格点列表 [K1, K_poly, K2]
     """
     return [K1, K_poly, K2]
-
-
-
-def _risk_neutral_prob_gt_strike(S: float, K: float, T: float, r: float, sigma: float) -> float:
-    """
-    风险中性概率 P(S_T > K) = Φ(d2)，与 PRD/BS 公式一致。
-    """
-    if T <= 0 or sigma <= 0:
-        return 1.0 if S > K else 0.0
-
-    d2 = _calculate_d2_for_strike(S, K, T, r, sigma)
-    return _norm_cdf(d2)
 
 
 def _portfolio_payoff_at_price_strategy1(S_T: float, input_data, strategy_out):
@@ -173,6 +154,122 @@ def _portfolio_payoff_at_price_strategy2(S_T: float, input_data, strategy_out):
 
     total = pnl_pm + pnl_dr
     return pnl_pm, pnl_dr, total
+
+
+def _cal_probability_strategy2_style(spot_price: float, k_price: float, drift_term: float, sigma_T: float) -> float:
+    """按照 strategy2.py 中的逻辑计算 Black-Scholes 区间概率。"""
+    ln_price_ratio = round(math.log(spot_price / k_price), 6)
+    d1 = round((ln_price_ratio + drift_term) / sigma_T, 6)
+    d2 = round(d1 - sigma_T, 6)
+    probability = round(_norm_cdf(d2), 4)
+    return probability
+
+
+def _calculate_interval_probabilities(
+    spot_price: float,
+    k1_price: float,
+    k_poly_price: float,
+    k2_price: float,
+    days_to_expiry: float,
+    sigma: float,
+    is_dst: bool = False,
+    r: float = 0.05,
+):
+    """复用 strategy2.py 的区间概率算法。"""
+    T = round(((8 / 24 if is_dst else 9 / 24) + days_to_expiry) / 365, 6)
+    sigma_T = round(sigma * math.sqrt(T), 6)
+    sigma_squared_divide_2 = round(math.pow(sigma, 2) / 2, 6)
+    drift_term = round((r + sigma_squared_divide_2) * T, 6)
+
+    probability_above_k1 = _cal_probability_strategy2_style(spot_price, k1_price, drift_term, sigma_T)
+    probability_above_k_poly = _cal_probability_strategy2_style(spot_price, k_poly_price, drift_term, sigma_T)
+    probability_above_k2 = _cal_probability_strategy2_style(spot_price, k2_price, drift_term, sigma_T)
+
+    prob_less_k1 = round(1 - probability_above_k1, 4)
+    prob_less_k_poly_more_k1 = round(probability_above_k1 - probability_above_k_poly, 4)
+    prob_less_k2_more_k_poly = round(probability_above_k_poly - probability_above_k2, 4)
+    prob_more_k2 = probability_above_k2
+
+    return prob_less_k1, prob_less_k_poly_more_k1, prob_less_k2_more_k_poly, prob_more_k2
+
+
+def _calculate_pm_max_ev(inv_usd: float, pm_price: float) -> float:
+    pm_max_ev = round(inv_usd * (1 / pm_price - 1), 2)
+    return pm_max_ev
+
+
+def _calculate_pm_ev(inv_usd: float, pm_price: float) -> float:
+    shares = inv_usd / pm_price
+    pm_ev = round(shares - inv_usd, 2)
+    return pm_ev
+
+
+def _calculate_db_ev(k1_price: float, k2_price: float, contract_amount: float, pm_cost: float) -> float:
+    db_value = (k2_price - k1_price) * contract_amount
+    option_cost = pm_cost * contract_amount
+    db_ev = round(db_value - option_cost, 2)
+    return db_ev
+
+
+def _calculate_gross_ev_with_new_algorithm(strategy_id: int, input_data: CalculationInput):
+    """使用 strategy2.py 的新算法计算毛收益。"""
+    inv_usd = input_data.Inv_Base
+    pm_price = input_data.pm_yes_avg_open if strategy_id == 1 else input_data.pm_no_avg_open
+
+    if pm_price <= 0:
+        raise ValueError("PM 平均成交价必须大于 0，请检查输入数据")
+
+    # 期权价格选择与 strategy2.py 对齐：策略1使用 Bid/Ask 收益端，策略2使用 Ask/Bid 成本端
+    if strategy_id == 1:
+        k1_price = input_data.Call_K1_Bid
+        k2_price = input_data.Call_K2_Ask
+    else:
+        k1_price = input_data.Call_K1_Ask
+        k2_price = input_data.Call_K2_Bid
+
+    pm_max_ev = _calculate_pm_max_ev(inv_usd, pm_price)
+    pm_cost = k1_price - k2_price
+    contract_amount = pm_max_ev / pm_cost if pm_cost != 0 else 0.0
+
+    (
+        prob_less_k1,
+        prob_less_k_poly_more_k1,
+        prob_less_k2_more_k_poly,
+        prob_more_k2,
+    ) = _calculate_interval_probabilities(
+        spot_price=input_data.S,
+        k1_price=input_data.K1,
+        k_poly_price=input_data.K_poly,
+        k2_price=input_data.K2,
+        days_to_expiry=input_data.days_to_expiry,
+        sigma=input_data.sigma,
+    )
+
+    pm_ev = _calculate_pm_ev(inv_usd, pm_price)
+
+    db1_ev = _calculate_db_ev(input_data.K1, input_data.K1, contract_amount, pm_cost)
+    db2_ev = _calculate_db_ev(input_data.K1, (input_data.K_poly + input_data.K1) / 2, contract_amount, pm_cost)
+    db3_ev = _calculate_db_ev(input_data.K1, (input_data.K_poly + input_data.K2) / 2, contract_amount, pm_cost)
+    db4_ev = _calculate_db_ev(input_data.K1, input_data.K2, contract_amount, pm_cost)
+
+    pm_expected_ev = (
+        prob_less_k1 * pm_ev
+        + prob_less_k_poly_more_k1 * pm_ev
+        + prob_less_k2_more_k_poly * (-inv_usd)
+        + prob_more_k2 * (-inv_usd)
+    )
+    db_expected_ev = (
+        prob_less_k1 * db1_ev
+        + prob_less_k_poly_more_k1 * db2_ev
+        + prob_less_k2_more_k_poly * db3_ev
+        + prob_more_k2 * db4_ev
+    )
+
+    pm_expected_ev = round(pm_expected_ev, 2)
+    db_expected_ev = round(db_expected_ev, 2)
+    gross_ev = round(pm_expected_ev + db_expected_ev, 2)
+
+    return pm_expected_ev, db_expected_ev, gross_ev
 
 
 def _integrate_ev_over_grid(
@@ -635,45 +732,6 @@ def calculate_deribit_settlement_fee(
     cap_fee = 0.125 * expected_option_value * contracts
     return min(base_fee, cap_fee)
 
-def calculate_deribit_bull_spread_settlement_cost(
-    option1_value: float,
-    option2_value: float,
-    settlement_price: float,
-    contracts: float,
-    strategy: int
-) -> float:
-    """
-    计算 Deribit Bull Spread 组合的平仓总成本
-
-    ⚠️ 重要变更：不再使用 Deribit 组合折扣规则
-
-    新逻辑：
-    - 平仓费用 = K1结算费 + K2结算费
-    - 两条腿的费用都计入，不做折扣
-
-    Args:
-        option1_value: K1期权价值
-        option2_value: K2期权价值
-        settlement_price: 结算价格
-        contracts: 合约数量
-        strategy: 策略类型
-            - 1: 卖牛差（开仓：卖K1+买K2，平仓：买K1+卖K2）
-            - 2: 买牛差（开仓：买K1+卖K2，平仓：卖K1+买K2）
-
-    Returns:
-        平仓总费用（简单相加）
-    """
-    # 分别计算K1和K2的结算费
-    settlement_fee_k1 = calculate_deribit_settlement_fee(
-        settlement_price, option1_value, contracts
-    )
-    settlement_fee_k2 = calculate_deribit_settlement_fee(
-        settlement_price, option2_value, contracts
-    )
-
-    # 新逻辑：直接相加，不使用组合折扣
-    return settlement_fee_k1 + settlement_fee_k2
-
 # ==================== Black-Scholes Pricer（从 bs_pricer.py 整合）====================
 
 class BlackScholesPricer:
@@ -939,91 +997,6 @@ def calculate_probabilities(input_data: CalculationInput) -> ProbabilityOutput:
     return ProbabilityOutput(d1, d2, P_ST_gt_K,
                              P_interval1, P_interval2, P_interval3, P_interval4)
 
-def calculate_strategy1(input_data: CalculationInput) -> StrategyOutput:
-    """
-    [备用函数] 计算策略一头寸规模：PM buy YES + DR sell Bull Call Spread
-    基于二元期权收益复制的对冲方法，而非错误的Delta对冲
-
-    注意：当前主流程使用 investment_runner.py 计算合约数量，
-    这个函数保留用于测试和独立计算场景。
-    """
-
-    # PM端最大风险：如果事件不发生，损失全部投资
-    pm_max_loss = input_data.Inv_Base
-
-    # 使用传入的YES价格或默认值，避免全局变量
-    yes_price = getattr(input_data, 'pm_yes_price', None) or 0.6  # 默认测试值
-    pm_max_profit = input_data.Inv_Base * (1 / yes_price - 1) if yes_price > 0 else 0.0
-
-    # 计算需要的价差合约数量来复制二元期权收益
-    # 关键：在K_poly价格点，牛市价差的收益应该能覆盖PM端的二元跳跃
-    spread_width = input_data.K2 - input_data.K1  # 价差宽度
-
-    # 正确的收益复制方法：
-    # 二元期权在K_poly处从0跳变到1，我们需要价差在K_poly附近的收益变化来匹配这个跳跃
-    # 理论上：需要n份价差使得 n * spread_width ≈ PM端的美元风险敞口
-
-    if spread_width <= 0:
-        return StrategyOutput(Contracts=0, Income_Deribit=0)
-
-    # 方法1：基于PM端风险敞口计算需要的合约数
-    # 确保价差的最大收益能够覆盖PM端的最大损失
-    contracts_by_risk = pm_max_loss / spread_width
-
-    # 方法2：基于PM端最大盈利来计算（更保守的对冲）
-    # 确保价差的成本能够被PM端最大盈利覆盖
-    Income_Deribit = input_data.Call_K1_Bid - input_data.Call_K2_Ask  # 每份价差的净收入
-    contracts_by_profit = pm_max_profit / abs(Income_Deribit) if abs(Income_Deribit) > 0 else 0
-
-    # 选择更保守的合约数量（较小的值）
-    Contracts_Short = min(contracts_by_risk, contracts_by_profit)
-
-    # 如果价差收入为负（需要付出成本），则基于风险敞口��算
-    if Income_Deribit <= 0:
-        Contracts_Short = contracts_by_risk
-
-    return StrategyOutput(Contracts=Contracts_Short, Income_Deribit=Income_Deribit)
-
-def calculate_strategy2(input_data: CalculationInput) -> StrategyOutput:
-    """
-    [备用函数] 计算策略二头寸规模：PM buy NO + DR buy Bull Call Spread
-    基于二元期权收益复制的对冲方法
-
-    注意：当前主流程使用 investment_runner.py 计算合约数量，
-    这个函数保留用于测试和独立计算场景。
-    """
-
-    if input_data.Price_No_entry == 0:
-        return StrategyOutput(Contracts=0, Profit_Poly_Max=0, Cost_Deribit=0)
-
-    # PM端收益分析
-    # PM买NO：如果事件不发生（S_T <= K_poly），获得(1/Price_No_entry - 1)的收益率
-    Profit_Poly_Max = input_data.Inv_Base * (1 / input_data.Price_No_entry - 1)  # PM端最大盈利
-    pm_max_loss = input_data.Inv_Base  # PM端最大损失（如果事件发生）
-
-    # DR端牛市价差分析
-    spread_width = input_data.K2 - input_data.K1
-    Cost_Deribit = input_data.Call_K1_Ask - input_data.Call_K2_Bid  # 每份价差的净成本
-
-    if spread_width <= 0:
-        return StrategyOutput(Contracts=0, Profit_Poly_Max=Profit_Poly_Max, Cost_Deribit=Cost_Deribit)
-
-    # 基于收益复制的合约数量计算
-    # 策略2：PM买NO（赌事件不发生）+ DR买牛市价差
-    # 需要牛市价差的最大收益能够补偿PM端的最大损失
-    contracts_by_loss = pm_max_loss / spread_width
-
-    # 或者确保牛市价差的成本不超过PM端的预期收益
-    contracts_by_profit = Profit_Poly_Max / abs(Cost_Deribit) if abs(Cost_Deribit) > 0 else 0
-
-    # 选择合适的合约数量
-    Contracts_Long = min(contracts_by_loss, contracts_by_profit)
-
-    # 如果牛市价差成本过高，基于风险敞口调整
-    if Cost_Deribit <= 0:  # 如果价差实际上是收入，可以更激进
-        Contracts_Long = contracts_by_loss
-
-    return StrategyOutput(Contracts=Contracts_Long, Profit_Poly_Max=Profit_Poly_Max, Cost_Deribit=Cost_Deribit)
 
 def calculate_deribit_costs(
     input_data: CalculationInput,
@@ -1109,14 +1082,13 @@ def calculate_expected_pnl_strategy1(input_data, probs, strategy_out):
     使用精细中点法计算策略一的毛收益
     注意：返回的是毛收益，不包含成本。成本将在 investment_runner 中统一计算和扣除。
     """
-    E_deribit, E_poly, gross_ev = _integrate_ev_over_grid(
+    pm_expected_ev, db_expected_ev, gross_ev = _calculate_gross_ev_with_new_algorithm(
+        strategy_id=1,
         input_data=input_data,
-        strategy_out=strategy_out,
-        payoff_func=_portfolio_payoff_at_price_strategy1,
     )
     return ExpectedPnlOutput(
-        E_Deribit_PnL=E_deribit,
-        E_Poly_PnL=E_poly,
+        E_Deribit_PnL=db_expected_ev,
+        E_Poly_PnL=pm_expected_ev,
         Total_Expected=gross_ev,  # 这里是毛收益，不是净收益
     )
 
@@ -1126,74 +1098,16 @@ def calculate_expected_pnl_strategy2(input_data, probs, strategy_out):
     使用精细中点法计算策略二的毛收益
     注意：返回的是毛收益，不包含成本。成本将在 investment_runner 中统一计算和扣除。
     """
-    E_deribit, E_poly, gross_ev = _integrate_ev_over_grid(
+    pm_expected_ev, db_expected_ev, gross_ev = _calculate_gross_ev_with_new_algorithm(
+        strategy_id=2,
         input_data=input_data,
-        strategy_out=strategy_out,
-        payoff_func=_portfolio_payoff_at_price_strategy2,
     )
     return ExpectedPnlOutput(
-        E_Deribit_PnL=E_deribit,
-        E_Poly_PnL=E_poly,
+        E_Deribit_PnL=db_expected_ev,
+        E_Poly_PnL=pm_expected_ev,
         Total_Expected=gross_ev,  # 这里是毛收益，不是净收益
     )
 
-
-def calculate_annualized_metrics(
-    expected_pnl: ExpectedPnlOutput,
-    total_capital: float,
-    days_to_expiry: float,
-    risk_free_rate: float,
-    volatility: float
-) -> AnnualizedMetrics:
-    """
-    计算年化指标（新增）
-
-    Args:
-        expected_pnl: 预期盈亏
-        total_capital: 总锁定资本
-        days_to_expiry: 到期天数
-        risk_free_rate: 无风险利率（年化）
-        volatility: 波动率（年化）
-
-    Returns:
-        年化指标
-    """
-    if total_capital <= 0 or days_to_expiry <= 0:
-        return AnnualizedMetrics(0, 0, 0, 0, days_to_expiry)
-
-    # 资本回报率
-    roc = expected_pnl.Total_Expected / total_capital
-
-    # 年化因子
-    annualization_factor = 365.0 / days_to_expiry
-    annualized_roc = roc * annualization_factor
-
-    # 超额回报
-    excess_return = annualized_roc - risk_free_rate
-
-    # 夏普比率
-    if volatility > 0:
-        sharpe_ratio = excess_return / volatility
-    else:
-        sharpe_ratio = 0.0
-
-    return AnnualizedMetrics(
-        RoC=roc,
-        Annualized_RoC=annualized_roc,
-        Excess_Return=excess_return,
-        Sharpe_Ratio=sharpe_ratio,
-        Days_To_Expiry=days_to_expiry
-    )
-
-def calculate_realized_pnl(poly_pnl: float, deribit_pnl: float, realized_cost: float) -> RealizedPnlOutput:
-    """计算已实现盈亏"""
-    realized_total = poly_pnl + deribit_pnl - realized_cost
-    return RealizedPnlOutput(poly_pnl, deribit_pnl, realized_cost, realized_total)
-
-def calculate_unrealized_pnl(poly_pnl: float, deribit_pnl: float, future_cost: float) -> UnrealizedPnlOutput:
-    """计算未实现盈亏"""
-    unrealized_total = poly_pnl + deribit_pnl - future_cost
-    return UnrealizedPnlOutput(poly_pnl, deribit_pnl, future_cost, unrealized_total)
 
 def main_calculation(
     input_data: CalculationInput,
@@ -1298,199 +1212,3 @@ def main_calculation(
         deribit_costs_strategy1=deribit_costs_strategy1,  # 新增：只返回 Deribit 费用
         deribit_costs_strategy2=deribit_costs_strategy2,  # 新增：只返回 Deribit 费用
     )
-
-# ==================== 验证函数 ====================
-
-def validate_probabilities(probs: ProbabilityOutput) -> None:
-    """验证概率计算的正确性"""
-    total_prob = probs.P_interval1 + probs.P_interval2 + probs.P_interval3 + probs.P_interval4
-
-    if abs(total_prob - 1.0) > 1e-6:
-        print(f"⚠️  警告：区间概率之和不为1，实际为 {total_prob:.6f}")
-
-    if not (0 <= probs.P_ST_gt_K <= 1):
-        print(f"⚠️  警告：P(S_T > K) = {probs.P_ST_gt_K:.4f} 超出 [0,1] 范围")
-
-    print("✅ 概率验证通过")
-
-# ==================== 使用示例 ====================
-
-if __name__ == "__main__":
-    print("="*80)
-    print("完整策略计算引擎测试")
-    print("="*80)
-
-    # 创建输入参数
-    input_data = CalculationInput(
-        S=100000, K=103000, T=30/365, r=0.05, sigma=0.65,
-        K1=103000, K_poly=104000, K2=105000,
-        Inv_Base=1000, Call_K1_Bid=600, Call_K2_Ask=300,
-        Price_No_entry=0.5, Call_K1_Ask=620, Call_K2_Bid=290,
-        Price_Option1=610,
-        Price_Option2=295,
-        BTC_Price=100000,
-        Slippage_Rate=0.01,
-        Margin_Requirement=5000,  # 将被 PME 计算覆盖
-        Total_Investment=2000,
-        contracts=1.0,
-        days_to_expiry=30.0,
-        pme_params=PMEParams()
-    )
-
-    # 执行计算（不带 BS 筛选）
-    print("\n【测试 1: 基础计算（不带 BS 筛选）】")
-    result = main_calculation(input_data, use_pme_margin=True, calculate_annualized=True)
-
-    # 验证概率
-    validate_probabilities(result.probabilities)
-
-    # 打印结果
-    print("\n" + "="*80)
-    print("概率计算结果")
-    print("="*80)
-    print(f"d1: {result.probabilities.d1:.4f}, d2: {result.probabilities.d2:.4f}")
-    print(f"P(S_T > K): {result.probabilities.P_ST_gt_K:.4f}")
-    print(f"区间概率: [{result.probabilities.P_interval1:.4f}, {result.probabilities.P_interval2:.4f}, "
-          f"{result.probabilities.P_interval3:.4f}, {result.probabilities.P_interval4:.4f}]")
-    print(f"概率之和: {sum([result.probabilities.P_interval1, result.probabilities.P_interval2, result.probabilities.P_interval3, result.probabilities.P_interval4]):.6f}")
-
-    print("\n" + "="*80)
-    print("成本结果")
-    print("="*80)
-    print(f"开仓成本: ${result.costs.Open_Cost:.2f}")
-    print(f"持仓成本: ${result.costs.Holding_Cost:.2f}")
-    print(f"平仓成本: ${result.costs.Close_Cost:.2f}")
-    print(f"总成本: ${result.costs.Total_Cost:.2f}")
-    print(f"PME 保证金: ${result.costs.PME_Margin_USD:.2f}")
-    if result.costs.PME_Worst_Scenario:
-        print(f"最坏场景: 价格变动 {result.costs.PME_Worst_Scenario['price_move_pct']*100:.1f}%, "
-              f"波动率冲击 {result.costs.PME_Worst_Scenario['vol_shock']}")
-
-    print("\n" + "="*80)
-    print("策略一结果（做多 PM Yes + 做空 DR Bull Spread）")
-    print("="*80)
-    print(f"合约数: {result.strategy1.Contracts:.4f}")
-    print(f"Deribit 收入: ${result.strategy1.Income_Deribit:.2f}")
-    print("预期盈亏:")
-    print(f"  - Deribit: ${result.expected_pnl_strategy1.E_Deribit_PnL:.2f}")
-    print(f"  - Polymarket: ${result.expected_pnl_strategy1.E_Poly_PnL:.2f}")
-    print(f"  - 总预期: ${result.expected_pnl_strategy1.Total_Expected:.2f}")
-
-    if result.annualized_metrics_strategy1:
-        print("年化指标:")
-        print(f"  - RoC: {result.annualized_metrics_strategy1.RoC:.4%}")
-        print(f"  - 年化 RoC: {result.annualized_metrics_strategy1.Annualized_RoC:.4%}")
-        print(f"  - 夏普比率: {result.annualized_metrics_strategy1.Sharpe_Ratio:.4f}")
-
-    print("\n" + "="*80)
-    print("策略二结果（做空 PM No + 做多 DR Bull Spread）")
-    print("="*80)
-    print(f"合约数: {result.strategy2.Contracts:.4f}")
-    print(f"最大 PM 盈利: ${result.strategy2.Profit_Poly_Max:.2f}")
-    print(f"Deribit 成本: ${result.strategy2.Cost_Deribit:.2f}")
-    print("预期盈亏:")
-    print(f"  - Deribit: ${result.expected_pnl_strategy2.E_Deribit_PnL:.2f}")
-    print(f"  - Polymarket: ${result.expected_pnl_strategy2.E_Poly_PnL:.2f}")
-    print(f"  - 总预期: ${result.expected_pnl_strategy2.Total_Expected:.2f}")
-
-    if result.annualized_metrics_strategy2:
-        print(f"年化指标:")
-        print(f"  - RoC: {result.annualized_metrics_strategy2.RoC:.4%}")
-        print(f"  - 年化 RoC: {result.annualized_metrics_strategy2.Annualized_RoC:.4%}")
-        print(f"  - 夏普比率: {result.annualized_metrics_strategy2.Sharpe_Ratio:.4f}")
-
-    # ====================================================================
-    # 测试 2: BS 定价偏差检测
-    # ====================================================================
-    print("\n" + "="*80)
-    print("【测试 2: BS 定价偏差检测】")
-    print("="*80)
-
-    # 场景 A: PM 高估（BS=40.91%, PM=50%）
-    print("\n场景 A: PM 可能高估 (PM Yes 价格 = $0.50)")
-    result_bs_high = main_calculation(
-        input_data,
-        use_pme_margin=True,
-        calculate_annualized=True,
-        pm_yes_price=0.50,  # PM Yes token 价格
-        bs_edge_threshold=0.03  # 3% 阈值
-    )
-
-    if result_bs_high.bs_pricing_edge:
-        edge = result_bs_high.bs_pricing_edge
-        print(f"  BS 理论概率: {edge.bs_prob:.2%}")
-        print(f"  PM 隐含概率: {edge.pm_implied_prob:.2%}")
-        print(f"  定价偏差: {edge.edge_pct:+.2f}%")
-        print(f"  是否存在套利: {'✅ 是' if edge.has_edge else '❌ 否'}")
-        print(f"  交易信号: {edge.signal}")
-        print(f"  原因: {edge.reason}")
-
-    # 场景 B: PM 定价合理（BS=40.91%, PM=41%）
-    print("\n场景 B: PM 定价合理 (PM Yes 价格 = $0.41)")
-    result_bs_fair = main_calculation(
-        input_data,
-        use_pme_margin=True,
-        calculate_annualized=True,
-        pm_yes_price=0.41,
-        bs_edge_threshold=0.03
-    )
-
-    if result_bs_fair.bs_pricing_edge:
-        edge = result_bs_fair.bs_pricing_edge
-        print(f"  BS 理论概率: {edge.bs_prob:.2%}")
-        print(f"  PM 隐含概率: {edge.pm_implied_prob:.2%}")
-        print(f"  定价偏差: {edge.edge_pct:+.2f}%")
-        print(f"  是否存在套利: {'✅ 是' if edge.has_edge else '❌ 否'}")
-        print(f"  交易信号: {edge.signal}")
-        print(f"  原因: {edge.reason}")
-
-    # 场景 C: PM 低估（BS=40.91%, PM=35%）
-    print("\n场景 C: PM 可能低估 (PM Yes 价格 = $0.35)")
-    result_bs_low = main_calculation(
-        input_data,
-        use_pme_margin=True,
-        calculate_annualized=True,
-        pm_yes_price=0.35,
-        bs_edge_threshold=0.03
-    )
-
-    if result_bs_low.bs_pricing_edge:
-        edge = result_bs_low.bs_pricing_edge
-        print(f"  BS 理论概率: {edge.bs_prob:.2%}")
-        print(f"  PM 隐含概率: {edge.pm_implied_prob:.2%}")
-        print(f"  定价偏差: {edge.edge_pct:+.2f}%")
-        print(f"  是否存在套利: {'✅ 是' if edge.has_edge else '❌ 否'}")
-        print(f"  交易信号: {edge.signal}")
-        print(f"  原因: {edge.reason}")
-
-    # ====================================================================
-    # 测试 3: Greeks 计算
-    # ====================================================================
-    print("\n" + "="*80)
-    print("【测试 3: 期权 Greeks 计算】")
-    print("="*80)
-
-    result_greeks = main_calculation(
-        input_data,
-        use_pme_margin=True,
-        calculate_annualized=True,
-        calculate_greeks=True  # 启用 Greeks 计算
-    )
-
-    if result_greeks.greeks:
-        greeks = result_greeks.greeks
-        print(f"\n期权 Greeks (Strike = {input_data.intervals.K_poly:,.0f}):")
-        print(f"  Delta: {greeks.delta:.4f} (价格变动 $1 → 期权价格变动 ${greeks.delta:.2f})")
-        print(f"  Gamma: {greeks.gamma:.6f} (Delta 的变化率)")
-        print(f"  Vega: {greeks.vega:.2f} (波动率变动 1% → 期权价格变动 ${greeks.vega/100:.2f})")
-        print(f"  Theta: {greeks.theta:.2f} (每天时间衰减 ${greeks.theta/365:.2f})")
-
-    print("\n" + "="*80)
-    print("✅ 所有测试完成")
-    print("="*80)
-    print("\n💡 使用提示:")
-    print("  - 基础计算: main_calculation(input_data)")
-    print("  - BS 筛选: main_calculation(input_data, pm_yes_price=0.50)")
-    print("  - Greeks: main_calculation(input_data, calculate_greeks=True)")
-    print("  - 完整分析: main_calculation(input_data, pm_yes_price=0.50, calculate_greeks=True)")
-    print("="*80)

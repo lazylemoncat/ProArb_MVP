@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Tuple
 
-from ..fetch_data.polymarket_client import PolymarketClient
+from ..fetch_data.polymarket_client import PolymarketClient, Insufficient_liquidity
 from .early_exit import make_exit_decision
 from .models import ExitDecision, OptionPosition, Position
 from .strategy import (
@@ -190,8 +190,8 @@ class InvestmentResult:
         }
 
         # DEBUG: Print the keys to see what we're returning
-        print(f"🔍 [DEBUG CSV] Total keys: {len(result.keys())}")
-        print(f"🔍 [DEBUG CSV] Last 10 keys: {list(result.keys())[-10:]}")
+        # print(f"🔍 [DEBUG CSV] Total keys: {len(result.keys())}")
+        # print(f"🔍 [DEBUG CSV] Last 10 keys: {list(result.keys())[-10:]}")
         return result
 
 
@@ -472,6 +472,8 @@ async def evaluate_investment(
         pm_no_avg_close = float(pm_no_close.avg_price)
         pm_no_slip_close = float(pm_no_close.slippage_pct) / 100.0
 
+    except Insufficient_liquidity as e:
+        raise Insufficient_liquidity(e)
     except Exception as exc:
         # 保留底层错误信息，便于定位（例如流动性不足/盘口为空）
         raise RuntimeError("Polymarket slippage calculation failed: ", exc) from exc
@@ -677,21 +679,21 @@ async def evaluate_investment(
         pm_slip_open = pm_no_slip_open
         pm_slip_close = pm_no_slip_close
 
-    print(f"\n📊 策略比较:")
-    print(f"  策略1（买YES + 卖牛差）:")
-    print(f"    合约数: {contracts_strategy1:.6f}")
-    print(f"    毛收益: ${gross_ev_strategy1:.2f}")
-    print(f"    总成本: ${costs_strategy1.total_cost:.2f}")
-    print(f"    净EV: ${net_ev_strategy1:.2f}")
-    print(f"  策略2（买NO + 买牛差）:")
-    print(f"    合约数: {contracts_strategy2:.6f}")
-    print(f"    毛收益: ${gross_ev_strategy2:.2f}")
-    print(f"    总成本: ${costs_strategy2.total_cost:.2f}")
-    print(f"    净EV: ${net_ev_strategy2:.2f}")
-    print(f"\n✅ 最优选择: 策略{optimal_strategy} ({strategy_name})")
-    print(f"   选择原因: {strategy_choice_reason}")
-    print(f"   预期净收益: ${optimal_net_ev:.2f}")
-    print(f"   ROI: {(optimal_net_ev / (inv_base_usd + optimal_costs.im_usd) * 100):.2f}%")
+    # print(f"\n📊 策略比较:")
+    # print(f"  策略1（买YES + 卖牛差）:")
+    # print(f"    合约数: {contracts_strategy1:.6f}")
+    # print(f"    毛收益: ${gross_ev_strategy1:.2f}")
+    # print(f"    总成本: ${costs_strategy1.total_cost:.2f}")
+    # print(f"    净EV: ${net_ev_strategy1:.2f}")
+    # print(f"  策略2（买NO + 买牛差）:")
+    # print(f"    合约数: {contracts_strategy2:.6f}")
+    # print(f"    毛收益: ${gross_ev_strategy2:.2f}")
+    # print(f"    总成本: ${costs_strategy2.total_cost:.2f}")
+    # print(f"    净EV: ${net_ev_strategy2:.2f}")
+    # print(f"\n✅ 最优选择: 策略{optimal_strategy} ({strategy_name})")
+    # print(f"   选择原因: {strategy_choice_reason}")
+    # print(f"   预期净收益: ${optimal_net_ev:.2f}")
+    # print(f"   ROI: {(optimal_net_ev / (inv_base_usd + optimal_costs.im_usd) * 100):.2f}%")
 
 
     # === 8. 构造返回结果 ===

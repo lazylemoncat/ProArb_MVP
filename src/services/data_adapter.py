@@ -219,7 +219,7 @@ def load_db_snapshot(csv_path: str, market_id: Optional[str] = None) -> DBSnapsh
     expiry = _compute_expiry_date(row)
 
     dte = _safe_float(row.get("days_to_expiry"))
-    days_to_expiry = int(round(dte)) if dte is not None else None
+    days_to_expiry = float(round(dte)) if dte is not None else None
 
     spot = float(_safe_float(row.get("spot")) or 0.0)
 
@@ -343,7 +343,7 @@ def load_ev_snapshot(csv_path: str) -> EVResponse:
         strike = _safe_int(r.get("K_poly") or r.get("strike")) or 0
         expiry = _compute_expiry_date(r)
         dte = _safe_float(r.get("days_to_expiry"))
-        days_to_expiry = int(round(dte)) if dte is not None else None
+        days_to_expiry = float(round(dte)) if dte is not None else None
 
         inv = float(_safe_float(r.get("investment")) or 1000.0)
         net = float(_chosen_net_ev(r))

@@ -1,7 +1,7 @@
 import json
 from typing import Any, Literal, Tuple
 
-from .get_polymarket_slippage import Polymarket_Slippage, get_polymarket_slippage
+from .get_polymarket_slippage import Polymarket_Slippage, get_polymarket_slippage, Insufficient_liquidity
 
 from .polymarket_api import PolymarketAPI
 
@@ -156,4 +156,7 @@ class PolymarketClient:
         side: Literal["buy", "sell"] = "buy",
         amount_type: Literal["usd", "shares"] = "usd",
     ) -> Polymarket_Slippage:
-        return await get_polymarket_slippage(asset_id, amount, side, amount_type)
+        try:
+            return await get_polymarket_slippage(asset_id, amount, side, amount_type)
+        except Insufficient_liquidity as e:
+            raise Insufficient_liquidity(e)

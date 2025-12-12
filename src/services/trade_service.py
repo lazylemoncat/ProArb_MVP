@@ -292,8 +292,9 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
 
     strategy = _choose_strategy(row)
 
+    # 弃用
     # 进场执行规则：若 PM 成交后 ROI 低于 2%，放弃 DR 侧并回滚 PM
-    STOP_AFTER_PM_ROI = 2.0
+    STOP_AFTER_PM_ROI = 0
 
     # 需要 CSV 中包含用于下单的 token/instrument 字段
     _require_cols(
@@ -484,18 +485,18 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
         # 我们的视角: 我们买入=支出=正数，我们卖出=收入=负数
         dr_entry_cost = deribit_premium
         # DEBUG: 初始值
-        print(f"[DEBUG-COST-1] Initial dr_entry_cost = {dr_entry_cost}")
-        print(f"[DEBUG-COST-1] strategy = {strategy}")
-        print(f"[DEBUG-COST-1] deribit_premium = {deribit_premium}")
+        # print(f"[DEBUG-COST-1] Initial dr_entry_cost = {dr_entry_cost}")
+        # print(f"[DEBUG-COST-1] strategy = {strategy}")
+        # print(f"[DEBUG-COST-1] deribit_premium = {deribit_premium}")
 
     # 加上 Deribit 交易费用（open_cost_strategy 包含 Deribit 费用 + PM Gas，需要减去 PM Gas）
     open_cost_strategy = _safe_float(row.get(f"open_cost_strategy{strategy}"), default=0.0)
     deribit_open_fee = open_cost_strategy - pm_gas_fee  # 减去 PM 的 Gas 费
     dr_entry_cost += deribit_open_fee
     # DEBUG: 添加费用后
-    print(f"[DEBUG-COST-2] After fees, dr_entry_cost = {dr_entry_cost}")
-    print(f"[DEBUG-COST-2] open_cost_strategy{strategy} = {open_cost_strategy}")
-    print(f"[DEBUG-COST-2] deribit_open_fee = {deribit_open_fee}")
+    # print(f"[DEBUG-COST-2] After fees, dr_entry_cost = {dr_entry_cost}")
+    # print(f"[DEBUG-COST-2] open_cost_strategy{strategy} = {open_cost_strategy}")
+    # print(f"[DEBUG-COST-2] deribit_open_fee = {deribit_open_fee}")
 
     # 计算 PM token 数量
     pm_tokens = investment_usd / limit_price if limit_price > 0 else 0.0
@@ -548,9 +549,9 @@ async def execute_trade(*, csv_path: str, market_id: str, investment_usd: float,
     }
 
     # DEBUG: 保存前检查
-    print(f"[DEBUG-COST-3] About to save dr_entry_cost = {dr_entry_cost}")
-    print(f"[DEBUG-COST-3] position_data['dr_entry_cost'] = {position_data['dr_entry_cost']}")
-    print(f"[DEBUG-COST-3] Market ID: {market_id}")
+    # print(f"[DEBUG-COST-3] About to save dr_entry_cost = {dr_entry_cost}")
+    # print(f"[DEBUG-COST-3] position_data['dr_entry_cost'] = {position_data['dr_entry_cost']}")
+    # print(f"[DEBUG-COST-3] Market ID: {market_id}")
 
     save_position_to_csv(position_data)
 
