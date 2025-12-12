@@ -46,15 +46,15 @@ def cal_pm_max_ev(strategy_input: Strategy_input):
         pm_price = strategy_input.pm_yes_price
     else:
         pm_price = strategy_input.pm_no_price
-    pm_max_ev = round(strategy_input.inv_usd * (1 / pm_price - 1), 2)
+    pm_max_ev = round(strategy_input.inv_usd / pm_price, 2)
     return pm_max_ev
 
-def cal_pm_cost(k1_price_usd, k2_price_usd):
-    pm_cost = k1_price_usd - k2_price_usd
-    return pm_cost
+def cal_db_premium(k1_price_usd, k2_price_usd):
+    db_premium = k1_price_usd - k2_price_usd
+    return db_premium
 
-def cal_contract_amount(pm_max_ev, pm_cost):
-    theoretical_contract_amount = pm_max_ev / pm_cost
+def cal_contract_amount(pm_max_ev, price_delta):
+    theoretical_contract_amount = pm_max_ev / price_delta
     return theoretical_contract_amount
 
 # Black-Scholes概率计算
@@ -95,9 +95,9 @@ def cal_pm_ev(strategy_input: Strategy_input):
     pm_ev = round(shares - strategy_input.inv_usd, 2)
     return pm_ev
 
-def cal_db_ev(k1_price: float, k2_price: float, contract_amount: float, pm_cost: float):
+def cal_db_ev(k1_price: float, k2_price: float, contract_amount: float, db_premium: float):
     db_value = (k2_price - k1_price) * contract_amount
-    option_cost = pm_cost * contract_amount
+    option_cost = db_premium * contract_amount
 
     db_ev = round(db_value - option_cost, 2)
     return db_ev
@@ -137,11 +137,13 @@ def cal_settlement_adjustment(
 def strategy(strategy_input: Strategy_input):
     # 期权价格转换
     k1_ask_usd, k2_bid_usd = transform_price(strategy_input)
+    print(k1_ask_usd, k2_bid_usd)
     # 合约数量计算
     pm_max_ev = cal_pm_max_ev(strategy_input)
-    pm_cost = cal_pm_cost(k1_ask_usd, k2_bid_usd)
-    theoretical_contract_amount = cal_contract_amount(pm_max_ev, pm_cost)
-    contract_amount = round(pm_max_ev / pm_cost, 1)
+    db_premium = cal_db_premium(k1_ask_usd, k2_bid_usd)
+    theoretical_contract_amount = cal_contract_amount(pm_max_ev, (strategy_input.k2_price - strategy_input.k1_price))
+    contract_amount = round(theoretical_contract_amount, 1)
+    print(pm_max_ev, db_premium, contract_amount, (strategy_input.k2_price - strategy_input.k1_price), theoretical_contract_amount)
     # Black-Scholes概率计算
     prob_less_k1, prob_less_k_poly_more_k1, prob_less_k2_more_k_poly, prob_more_k2 = cal_Black_Scholes(
         strategy_input.is_DST, 
@@ -154,10 +156,10 @@ def strategy(strategy_input: Strategy_input):
     )
     pm_ev = cal_pm_ev(strategy_input)
 
-    db1_ev = cal_db_ev(strategy_input.k1_price, strategy_input.k1_price, contract_amount, pm_cost)
-    db2_ev = cal_db_ev(strategy_input.k1_price, ((strategy_input.k_poly_price + strategy_input.k1_price) / 2), contract_amount, pm_cost)
-    db3_ev = cal_db_ev(strategy_input.k1_price, ((strategy_input.k_poly_price + strategy_input.k2_price) / 2), contract_amount, pm_cost)
-    db4_ev = cal_db_ev(strategy_input.k1_price, strategy_input.k2_price, contract_amount, pm_cost)
+    db1_ev = cal_db_ev(strategy_input.k1_price, strategy_input.k1_price, contract_amount, db_premium)
+    db2_ev = cal_db_ev(strategy_input.k1_price, ((strategy_input.k_poly_price + strategy_input.k1_price) / 2), contract_amount, db_premium)
+    db3_ev = cal_db_ev(strategy_input.k1_price, ((strategy_input.k_poly_price + strategy_input.k2_price) / 2), contract_amount, db_premium)
+    db4_ev = cal_db_ev(strategy_input.k1_price, strategy_input.k2_price, contract_amount, db_premium)
 
     # 期望值计算
     pm_expected_ev = (
@@ -195,7 +197,7 @@ if __name__ == "__main__":
     # 输入参数
     strategy_input = Strategy_input(
         inv_usd = 200,
-        strategy = 1,
+        strategy = 2,
         spot_price = 92630.39,
         k1_price = 95000,
         k2_price = 97000,
