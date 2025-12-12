@@ -137,13 +137,11 @@ def cal_settlement_adjustment(
 def strategy(strategy_input: Strategy_input):
     # 期权价格转换
     k1_ask_usd, k2_bid_usd = transform_price(strategy_input)
-    print(k1_ask_usd, k2_bid_usd)
     # 合约数量计算
     pm_max_ev = cal_pm_max_ev(strategy_input)
     db_premium = cal_db_premium(k1_ask_usd, k2_bid_usd)
     theoretical_contract_amount = cal_contract_amount(pm_max_ev, (strategy_input.k2_price - strategy_input.k1_price))
     contract_amount = round(theoretical_contract_amount, 1)
-    print(pm_max_ev, db_premium, contract_amount, (strategy_input.k2_price - strategy_input.k1_price), theoretical_contract_amount)
     # Black-Scholes概率计算
     prob_less_k1, prob_less_k_poly_more_k1, prob_less_k2_more_k_poly, prob_more_k2 = cal_Black_Scholes(
         strategy_input.is_DST, 
@@ -202,7 +200,7 @@ if __name__ == "__main__":
         k1_price = 95000,
         k2_price = 97000,
         k_poly_price = 96000,
-        days_to_expiry = 0.951, # 以 deribit 为准
+        days_to_expiry = 0.951 * 365, # 以 deribit 为准
         sigma = 0.6071,
         pm_yes_price= 0.16,
         pm_no_price = 0.84,
@@ -212,4 +210,27 @@ if __name__ == "__main__":
         k2_ask_btc = 0.0010,
         k2_bid_btc = 0.0009,
     )
-    print(strategy(strategy_input))
+    gross_ev = strategy(strategy_input)
+    print(gross_ev)
+    # assert gross_ev == -1.74
+
+    # 输入参数
+    strategy_input = Strategy_input(
+        inv_usd = 200,
+        strategy = 2,
+        spot_price = 91325.46,
+        k1_price = 91000,
+        k2_price = 93000,
+        k_poly_price = 92000,
+        days_to_expiry = 0.509 * 365, # 以 deribit 为准
+        sigma = 0.3949,
+        pm_yes_price= 0.35,
+        pm_no_price = 0.65,
+        is_DST = is_DST, # 是否为夏令时
+        k1_ask_btc = 0.008,
+        k1_bid_btc = 0.007,
+        k2_ask_btc = 0.0011,
+        k2_bid_btc = 0.0008,
+    )
+    gross_ev = strategy(strategy_input)
+    print(gross_ev)

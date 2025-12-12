@@ -51,6 +51,7 @@ class DeribitMarketContext:
     # 时间与概率
     k1_expiration_timestamp: float
     T: float
+    days_to_expairy: float
     r: float
     deribit_prob: float
 
@@ -142,7 +143,7 @@ def build_deribit_context(
     if k1_exp_ts != k2_exp_ts:
         raise ValueError("k1_expiration_timestamp not equal")
 
-    # 年化到期时间 T
+    # 天化到期时间 T
     T = (k1_exp_ts - now_ms) / (365.0 * 24.0 * 60.0 * 60.0 * 1000.0)
     T = max(T, 0.0)
     r = 0.05
@@ -179,6 +180,7 @@ def build_deribit_context(
         mark_iv=mark_iv,
         k1_expiration_timestamp=k1_exp_ts,
         T=T,
+        days_to_expairy=T * 365,
         r=r,
         deribit_prob=deribit_prob,
     )
