@@ -4,8 +4,6 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List
 
-from src.utils.dataloader.config_loader import Config, ThresholdsConfig
-
 from .fetch_data.polymarket_client import Insufficient_liquidity
 from .filters.filters import (
     Record_signal_filter,
@@ -19,7 +17,13 @@ from .services.execute_trade import execute_trade
 from .strategy.early_exit import is_in_early_exit_window
 from .strategy.early_exit_executor import run_early_exit_check
 from .strategy.investment_runner import evaluate_investment
+from .strategy.strategy2 import (
+    Strategy_input,
+    StrategyOutput,
+    cal_strategy_result,
+)
 from .utils.dataloader import Env_config, Trading_config, load_all_configs
+from .utils.dataloader.config_loader import Config, ThresholdsConfig
 from .utils.get_bot import TG_bot, get_bot
 from .utils.init_markets import init_markets
 from .utils.loop_event import build_events_for_date
@@ -36,6 +40,7 @@ from .utils.save_result import (
     rewrite_csv_with_header,
     save_result_csv,
 )
+from .utils.CsvHandler import ResultColumns, CsvHandler
 
 logging.basicConfig(
     level="INFO",
@@ -159,11 +164,29 @@ async def loop_event(
             continue
 
         try:
-            result, _ = await evaluate_investment(
-                inv_base_usd=inv_base_usd,
-                deribit_ctx=deribit_ctx,
-                poly_ctx=poly_ctx,
+            # result, _ = await evaluate_investment(
+            #     inv_base_usd=inv_base_usd,
+            #     deribit_ctx=deribit_ctx,
+            #     poly_ctx=poly_ctx,
+            # )
+            strategy_input = Strategy_input(
+                inv_usd=inv,
+                strategy=2,
+                spot_price=deribit_ctx.spot,
+                k1_price=deribit_ctx.k1_strike,
+                k2_price=deribit_ctx.k2_strike,
+                k_poly_price=deribit_ctx.K_poly,
+                days_to_expiry=deribit_ctx.days_to_expairy,
+                sigma=deribit_ctx.mark_iv / 100.0,
+                pm_yes_price=poly_ctx.yes_price,
+                pm_no_price=poly_ctx.no_price,
+                is_DST=datetime.now().dst() is not None,
+                k1_ask_btc=deribit_ctx.k1_ask_btc,
+                k1_bid_btc=deribit_ctx.k1_bid_btc,
+                k2_ask_btc=deribit_ctx.k2_ask_btc,
+                k2_bid_btc=deribit_ctx.k2_bid_btc
             )
+            result = cal_strategy_result(strategy_input)
         except Insufficient_liquidity:
             raise
         except Exception as e:
@@ -172,28 +195,26 @@ async def loop_event(
 
         try:
             strategy = 2
-            net_ev = float(result.net_ev_strategy2)
+            net_ev = result.gross_ev
             pm_price = float(poly_ctx.no_price)
             deribit_price = float(1.0 - deribit_ctx.deribit_prob)
             prob_diff = (deribit_price - pm_price) * 100.0
 
-            dr_net_spend = max(0.0, float(result.open_cost_strategy2) - inv_base_usd)
-            denom = inv_base_usd + dr_net_spend
-            roi_pct = (net_ev / denom * 100.0) if denom > 0 else 0.0
+            roi_pct = result.roi_pct
             prob_edge_pct = abs(prob_diff) / 100.0
-            theoretical_contracts_strategy2 = float(result.contracts_strategy2)
+            theoretical_contracts_strategy2 = float(result.contract_amount)
 
             trade_filter_input = Trade_filter_input(
                 inv_usd=inv_base_usd,
                 market_id=market_id,
-                contract_amount=float(result.contracts_strategy2),
+                contract_amount=float(result.contract_amount),
                 pm_price=pm_price,
                 net_ev=net_ev,
                 roi_pct=roi_pct,
                 prob_edge_pct=prob_edge_pct
             )
             trade_signal, trade_details = check_should_trade_signal(trade_filter_input, trade_filter)
-            result.contracts_strategy2 = trade_filter_input.contract_amount
+            result.contract_amount = trade_filter_input.contract_amount
 
             validation_errors: list[str] = []
 
@@ -220,13 +241,11 @@ async def loop_event(
                     record_signal_filter,
                 )
 
-            market_title = _fmt_market_title(deribit_ctx.asset, deribit_ctx.K_poly)
+            row_dict = {**(asdict(strategy_input)), **(asdict(result))}
+            row_dict["contract_amount"] = theoretical_contracts_strategy2
+            row_dict["contracts_amount_final"] = result.contract_amount
 
-            csv_row = result.to_csv_row(timestamp, deribit_ctx, poly_ctx, strategy)
-            csv_row["contracts_strategy2_theoretical"] = theoretical_contracts_strategy2
             skip_reasons: List[str] = []
-            skip_reasons.extend(result.contract_validation_notes)
-
             
             if record_signal:
                 # 发送套利机会到 Alert Bot
@@ -244,16 +263,18 @@ async def loop_event(
                 # )
                 signal_state[signal_key] = now_snapshot
                 # 写入本次检测结果
-                save_result_csv(csv_row, csv_path=output_csv)
+                CsvHandler.save_to_result2(csv_path="data/results2.csv", row_dict=row_dict)
 
             if validation_errors:
                 skip_reasons.extend(validation_errors)
-                _record_raw_result(
-                    csv_row,
-                    raw_csv_path=raw_output_csv,
-                    net_ev=net_ev,
-                    skip_reasons=skip_reasons,
-                )
+                # 弃用
+                # _record_raw_result(
+                #     csv_row,
+                #     raw_csv_path=raw_output_csv,
+                #     net_ev=net_ev,
+                #     skip_reasons=skip_reasons,
+                # )
+                CsvHandler.save_to_result2(csv_path="data/results2.csv", row_dict=row_dict)
                 continue
 
 
@@ -264,7 +285,7 @@ async def loop_event(
                         trade_signal=trade_signal,
                         dry_run=dry_trade_mode,
                         inv_usd=inv,
-                        contract_amount=result.contracts_strategy2,
+                        contract_amount=result.contract_amount,
                         poly_ctx=poly_ctx,
                         deribit_ctx=deribit_ctx,
                         strategy_choosed=strategy,
@@ -296,12 +317,14 @@ async def loop_event(
                 logger.exception("交易执行异常: %s", exc)
                 raise
             finally:
-                _record_raw_result(
-                    csv_row,
-                    raw_csv_path=raw_output_csv,
-                    net_ev=net_ev,
-                    skip_reasons=skip_reasons,
-                )
+                # 弃用
+                # _record_raw_result(
+                #     csv_row,
+                #     raw_csv_path=raw_output_csv,
+                #     net_ev=net_ev,
+                #     skip_reasons=skip_reasons,
+                # )
+                pass
 
         except asyncio.CancelledError:
             raise

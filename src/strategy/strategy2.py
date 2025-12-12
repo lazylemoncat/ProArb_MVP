@@ -1,5 +1,9 @@
 import math
 from dataclasses import dataclass
+from typing import Literal
+
+import numpy as np
+
 
 @dataclass
 class Strategy_input:
@@ -18,6 +22,204 @@ class Strategy_input:
     k1_bid_btc: float
     k2_ask_btc: float
     k2_bid_btc: float
+
+@dataclass
+class StrategyOutput:
+    gross_ev: float
+    contract_amount: float
+    roi_pct: float
+
+@dataclass
+class OptionPosition:
+    """期权头寸信息"""
+    strike: float
+    direction: Literal["long", "short"]
+    contracts: float
+    current_price: float
+    implied_vol: float
+    option_type: Literal["call", "put"] = "call"
+
+@dataclass
+class PMEParams:
+    """PME 参数（简化版，用于独立计算）"""
+    short_term_vega_power: float = 0.30
+    long_term_vega_power: float = 0.50
+    vol_range_up: float = 0.60
+    vol_range_down: float = 0.50
+    min_vol_for_shock_up: float = 0.0
+    extended_dampener: float = 25000
+    price_range: float = 0.16
+
+def _build_price_scenarios(current_price: float, price_range: float = 0.16) -> list[dict[str, float | str]]:
+    """
+    构建风险矩阵价格场景
+
+    主表：-16% 至 +16%，步长 2%
+    扩展表：非线性分布 [-66%, -50%, -33%, +33%, +50%, +100%, +200%, +500%]
+    """
+    scenarios: list[dict[str, float | str]] = []
+
+    # 主表：-16% 至 +16%，步长 2%
+    main_table_moves = np.arange(-price_range, price_range + 0.02, 0.02)
+    for move in main_table_moves:
+        scenarios.append({
+            "price_move": float(move),
+            "simulated_price": float(current_price * (1 + move)),
+            "type": "main",
+        })
+
+    # 扩展表：非线性分布
+    extended_moves = [-0.66, -0.50, -0.33, 0.33, 0.50, 1.00, 2.00, 5.00]
+    for move in extended_moves:
+        scenarios.append({
+            "price_move": move,
+            "simulated_price": current_price * (1 + move),
+            "type": "extended",
+        })
+
+    return scenarios
+
+def _calculate_vega_power(days_to_expiry: float, pme_params: PMEParams) -> float:
+    """计算 vegaPower"""
+    if days_to_expiry < 30:
+        return pme_params.short_term_vega_power
+    else:
+        return pme_params.long_term_vega_power
+
+def _calculate_simulated_volatility(
+    strike_vol: float,
+    days_to_expiry: float,
+    vega_power: float,
+    vol_shock: Literal["up", "down", "unchanged"],
+    pme_params: PMEParams
+) -> float:
+    """计算模拟波动率"""
+    if vol_shock == "unchanged":
+        return strike_vol
+
+    time_factor = (30 / days_to_expiry) ** vega_power
+
+    if vol_shock == "up":
+        shocked_vol = strike_vol * (1 + time_factor * pme_params.vol_range_up)
+        return max(shocked_vol, pme_params.min_vol_for_shock_up)
+    else:  # down
+        shocked_vol = strike_vol * (1 - time_factor * pme_params.vol_range_down)
+        return max(shocked_vol, 0.0)
+
+def _calculate_position_pnl(
+    position: OptionPosition,
+    simulated_price: float,
+    simulated_vol: float,
+    current_index_price: float,
+) -> float:
+    """计算单个头寸在模拟场景下的 PnL(简化模型)"""
+
+    if position.option_type == "call":
+        intrinsic_current = max(current_index_price - position.strike, 0)
+        intrinsic_simulated = max(simulated_price - position.strike, 0)
+    else:  # put
+        intrinsic_current = max(position.strike - current_index_price, 0)
+        intrinsic_simulated = max(position.strike - simulated_price, 0)
+
+    intrinsic_change = intrinsic_simulated - intrinsic_current
+
+    # Vega 效应（简化：线性近似）
+    vol_change = simulated_vol - position.implied_vol
+    vega_effect = vol_change * position.current_price * 0.1
+
+    pnl_per_contract = intrinsic_change + vega_effect
+
+    multiplier = 1.0 if position.direction == "long" else -1.0
+
+    return pnl_per_contract * position.contracts * multiplier
+
+def _apply_extended_dampener(
+    simulated_pnl: float,
+    price_move: float,
+    pme_params: PMEParams
+) -> float:
+    """应用 ExtendedDampener 调整扩展表 PnL"""
+    price_move_abs = abs(price_move)
+    if price_move_abs == 0:
+        return simulated_pnl
+
+    price_range = pme_params.price_range
+    extended_dampener = pme_params.extended_dampener
+
+    ratio = max(price_move_abs / price_range, 1)
+    max_adjustment = (ratio - 1) * extended_dampener
+    adjustment = min(max_adjustment, abs(simulated_pnl))
+
+    if simulated_pnl < 0:
+        return simulated_pnl + adjustment
+    else:
+        return simulated_pnl - adjustment
+
+def calculate_pme_margin(
+    positions: list[OptionPosition],
+    current_index_price: float,
+    days_to_expiry: float,
+    pme_params: PMEParams
+):
+    """
+    计算 PME 初始保证金 (C_DR)
+
+    Args:
+        positions: 期权头寸列表
+        current_index_price: 当前标的指数价格
+        days_to_expiry: 到期天数
+        pme_params: PME 参数
+
+    Returns:
+        包含 C_DR 和详细场景分析的字典
+    """
+    price_scenarios = _build_price_scenarios(current_index_price, pme_params.price_range)
+    vega_power = _calculate_vega_power(days_to_expiry, pme_params)
+
+    scenario_results: list[dict[str, float | str]] = []
+
+    for scenario in price_scenarios:
+        price_move = float(scenario["price_move"])
+        scenario_type = scenario["type"]
+        simulated_price = float(scenario["simulated_price"])
+
+        for vol_shock in ("up", "down", "unchanged"):
+            sim_vol = _calculate_simulated_volatility(
+                positions[0].implied_vol,  # 简化：使用第一个头寸的 IV
+                days_to_expiry,
+                vega_power,
+                vol_shock,
+                pme_params
+            )
+
+            total_pnl = sum(
+                _calculate_position_pnl(pos, simulated_price, sim_vol, current_index_price)
+                for pos in positions
+            )
+
+            if scenario_type == "extended":
+                total_pnl = _apply_extended_dampener(total_pnl, price_move, pme_params)
+
+            scenario_results.append({
+                "price_move_pct": price_move,
+                "simulated_price": simulated_price,
+                "vol_shock": vol_shock,
+                "sim_vol": sim_vol,
+                "scenario_type": scenario_type,
+                "total_pnl": total_pnl,
+            })
+
+    pnl_list: list[float] = [float(r["total_pnl"]) for r in scenario_results]
+    worst_pnl = min(pnl_list) if pnl_list else 0.0
+    c_dr = abs(worst_pnl)
+    worst_scenario = min(scenario_results, key=lambda x: x["total_pnl"])
+
+    return {
+        "c_dr_usd": c_dr,
+        "worst_scenario": worst_scenario,
+        "all_scenarios": scenario_results,
+        "total_scenarios_count": len(scenario_results),
+    }
 
 
 def _norm_cdf(x: float) -> float:
@@ -134,14 +336,14 @@ def cal_settlement_adjustment(
 
     return round(adjustment, 2)
 
-def strategy(strategy_input: Strategy_input):
+def cal_strategy_result(strategy_input: Strategy_input) -> StrategyOutput:
     # 期权价格转换
     k1_ask_usd, k2_bid_usd = transform_price(strategy_input)
     # 合约数量计算
     pm_max_ev = cal_pm_max_ev(strategy_input)
     db_premium = cal_db_premium(k1_ask_usd, k2_bid_usd)
     theoretical_contract_amount = cal_contract_amount(pm_max_ev, (strategy_input.k2_price - strategy_input.k1_price))
-    contract_amount = round(theoretical_contract_amount, 1)
+    contract_amount = round(theoretical_contract_amount, 2)
     # Black-Scholes概率计算
     prob_less_k1, prob_less_k_poly_more_k1, prob_less_k2_more_k_poly, prob_more_k2 = cal_Black_Scholes(
         strategy_input.is_DST, 
@@ -175,16 +377,46 @@ def strategy(strategy_input: Strategy_input):
     pm_expected_ev = round(pm_expected_ev, 2)
     db_expected_ev = round(db_expected_ev, 2)
     gross_ev = round(pm_expected_ev + db_expected_ev, 2)
-    # print(f"pm_expected_ev: {pm_expected_ev}, db_expected_ev: {db_expected_ev}, gross_ev: {gross_ev}")
-    # assert pm_expected_ev == -0.26
-    # assert db_expected_ev == 6.36
-    # assert gross_ev == 6.1 # not dst
-    # 第7步：结算时间修正
+    # 结算时间修正
     settlement_adjustment = cal_settlement_adjustment(
         strategy_input, contract_amount
     )
     adjusted_gross_ev = round(gross_ev + settlement_adjustment, 2)
-    return adjusted_gross_ev
+    if strategy_input.strategy == 2:
+        # 策略2：买牛市价差（long K1, short K2）
+        positions = [
+            OptionPosition(
+                strike=Strategy_input.k1_price,
+                direction="long",
+                contracts=contract_amount,
+                current_price=round(strategy_input.k1_ask_btc * strategy_input.spot_price, 2),
+                implied_vol=Strategy_input.sigma,
+                option_type="call",
+            ),
+            OptionPosition(
+                strike=Strategy_input.k2_price,
+                direction="short",
+                contracts=contract_amount,
+                current_price=round(strategy_input.k2_bid_btc * strategy_input.spot_price, 2),
+                implied_vol=Strategy_input.sigma,
+                option_type="call",
+            ),
+        ]
+
+        pme_margin_result = calculate_pme_margin(
+            positions=positions,
+            current_index_price=Strategy_input.spot_price,
+            days_to_expiry=Strategy_input.days_to_expiry,
+            pme_params=PMEParams(),
+        )
+        im_value_usd = float(pme_margin_result["c_dr_usd"])
+        roi_pct = adjusted_gross_ev / (strategy_input.inv_usd + im_value_usd) * 100
+        strategyOutput = StrategyOutput(
+            gross_ev=adjusted_gross_ev, 
+            contract_amount=contract_amount, 
+            roi_pct=roi_pct
+        )
+    return strategyOutput
 
 if __name__ == "__main__":
     import datetime
@@ -200,7 +432,7 @@ if __name__ == "__main__":
         k1_price = 95000,
         k2_price = 97000,
         k_poly_price = 96000,
-        days_to_expiry = 0.951 * 365, # 以 deribit 为准
+        days_to_expiry = 0.951, # 以 deribit 为准
         sigma = 0.6071,
         pm_yes_price= 0.16,
         pm_no_price = 0.84,
@@ -210,27 +442,27 @@ if __name__ == "__main__":
         k2_ask_btc = 0.0010,
         k2_bid_btc = 0.0009,
     )
-    gross_ev = strategy(strategy_input)
+    gross_ev = cal_strategy_result(strategy_input)
     print(gross_ev)
-    # assert gross_ev == -1.74
+    # assert gross_ev == -1.74 # not dst
 
     # 输入参数
-    strategy_input = Strategy_input(
-        inv_usd = 200,
-        strategy = 2,
-        spot_price = 91325.46,
-        k1_price = 91000,
-        k2_price = 93000,
-        k_poly_price = 92000,
-        days_to_expiry = 0.509 * 365, # 以 deribit 为准
-        sigma = 0.3949,
-        pm_yes_price= 0.35,
-        pm_no_price = 0.65,
-        is_DST = is_DST, # 是否为夏令时
-        k1_ask_btc = 0.008,
-        k1_bid_btc = 0.007,
-        k2_ask_btc = 0.0011,
-        k2_bid_btc = 0.0008,
-    )
-    gross_ev = strategy(strategy_input)
-    print(gross_ev)
+    # strategy_input = Strategy_input(
+    #     inv_usd = 200,
+    #     strategy = 2,
+    #     spot_price = 91325.46,
+    #     k1_price = 91000,
+    #     k2_price = 93000,
+    #     k_poly_price = 92000,
+    #     days_to_expiry = 0.509 * 365, # 以 deribit 为准
+    #     sigma = 0.3949,
+    #     pm_yes_price= 0.35,
+    #     pm_no_price = 0.65,
+    #     is_DST = is_DST, # 是否为夏令时
+    #     k1_ask_btc = 0.008,
+    #     k1_bid_btc = 0.007,
+    #     k2_ask_btc = 0.0011,
+    #     k2_bid_btc = 0.0008,
+    # )
+    # gross_ev = strategy(strategy_input)
+    # print(gross_ev)

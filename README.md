@@ -12,4 +12,5 @@
 12. scp rex@104.248.192.200:data/positions.csv ./data/positions.csv
 13. scp rex@104.248.192.200:data/results.csv ./data/results.csv
 14. scp rex@104.248.192.200:data/raw_results.csv ./data/raw_results.csv
-15. docker logs -f -n 200 proarb
+15. scp rex@104.248.192.200:data/proarb.log ./data/proarb.log 
+16. docker logs -f -n 200 proarb

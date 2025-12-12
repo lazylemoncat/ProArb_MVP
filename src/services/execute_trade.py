@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from ..filters.filters import Trade_filter_input, check_should_trade_signal, Trade_filter
 
 from ..fetch_data.polymarket_client import PolymarketClient
-from ..strategy.strategy2 import Strategy_input, strategy
+from ..strategy.strategy2 import Strategy_input, cal_strategy_result
 from ..telegram.TG_bot import TG_bot
 from ..trading.deribit_trade import DeribitUserCfg
 from ..trading.deribit_trade_client import Deribit_trade_client
@@ -114,7 +114,7 @@ async def execute_trade(
         k2_ask_btc=deribit_ctx.k2_ask_btc,
         k2_bid_btc=deribit_ctx.k2_bid_btc
     )
-    gross_ev = strategy(strategy_input)
+    gross_ev = cal_strategy_result(strategy_input).gross_ev
     net_ev = gross_ev - fee_total - slippage
     if net_ev <= 0:
         return False
