@@ -28,6 +28,16 @@ class StrategyOutput:
     gross_ev: float
     contract_amount: float
     roi_pct: float
+    # debug
+    k1_ask_usd: float
+    k1_bid_usd: float
+    k2_ask_usd: float
+    k2_bid_usd: float
+    pm_max_ev: float
+    prob_less_k1: float
+    prob_less_k_poly_more_k1: float
+    prob_less_k2_more_k_poly: float
+    prob_more_k2: float
 
 @dataclass
 class OptionPosition:
@@ -232,15 +242,11 @@ def transform_price(strategy_input: Strategy_input):
     """
     期权价格转换
     """
-    if strategy_input.strategy == 1:
-        k1_price_btc = strategy_input.k1_bid_btc
-        k2_price_btc = strategy_input.k2_ask_btc
-    else:
-        k1_price_btc = strategy_input.k1_ask_btc
-        k2_price_btc = strategy_input.k2_bid_btc
-    k1_usd = round(k1_price_btc * strategy_input.spot_price, 2)
-    k2_usd = round(k2_price_btc * strategy_input.spot_price, 2)
-    return k1_usd, k2_usd
+    k1_ask_usd = round(strategy_input.k1_ask_btc * strategy_input.spot_price, 2)
+    k1_bid_usd = round(strategy_input.k1_bid_btc * strategy_input.spot_price, 2)
+    k2_ask_usd = round(strategy_input.k2_ask_btc * strategy_input.spot_price, 2)
+    k2_bid_usd = round(strategy_input.k2_bid_btc * strategy_input.spot_price, 2)
+    return k1_ask_usd, k1_bid_usd, k2_ask_usd, k2_bid_usd
 
 # 合约数量计算
 def cal_pm_max_ev(strategy_input: Strategy_input):
@@ -338,7 +344,7 @@ def cal_settlement_adjustment(
 
 def cal_strategy_result(strategy_input: Strategy_input) -> StrategyOutput:
     # 期权价格转换
-    k1_ask_usd, k2_bid_usd = transform_price(strategy_input)
+    k1_ask_usd, k1_bid_usd, k2_ask_usd, k2_bid_usd = transform_price(strategy_input)
     # 合约数量计算
     pm_max_ev = cal_pm_max_ev(strategy_input)
     db_premium = cal_db_premium(k1_ask_usd, k2_bid_usd)
@@ -386,27 +392,27 @@ def cal_strategy_result(strategy_input: Strategy_input) -> StrategyOutput:
         # 策略2：买牛市价差（long K1, short K2）
         positions = [
             OptionPosition(
-                strike=Strategy_input.k1_price,
+                strike=strategy_input.k1_price,
                 direction="long",
                 contracts=contract_amount,
                 current_price=round(strategy_input.k1_ask_btc * strategy_input.spot_price, 2),
-                implied_vol=Strategy_input.sigma,
+                implied_vol=strategy_input.sigma,
                 option_type="call",
             ),
             OptionPosition(
-                strike=Strategy_input.k2_price,
+                strike=strategy_input.k2_price,
                 direction="short",
                 contracts=contract_amount,
                 current_price=round(strategy_input.k2_bid_btc * strategy_input.spot_price, 2),
-                implied_vol=Strategy_input.sigma,
+                implied_vol=strategy_input.sigma,
                 option_type="call",
             ),
         ]
 
         pme_margin_result = calculate_pme_margin(
             positions=positions,
-            current_index_price=Strategy_input.spot_price,
-            days_to_expiry=Strategy_input.days_to_expiry,
+            current_index_price=strategy_input.spot_price,
+            days_to_expiry=strategy_input.days_to_expiry,
             pme_params=PMEParams(),
         )
         im_value_usd = float(pme_margin_result["c_dr_usd"])
@@ -414,7 +420,16 @@ def cal_strategy_result(strategy_input: Strategy_input) -> StrategyOutput:
         strategyOutput = StrategyOutput(
             gross_ev=adjusted_gross_ev, 
             contract_amount=contract_amount, 
-            roi_pct=roi_pct
+            roi_pct=round(roi_pct, 2),
+            k1_ask_usd=k1_ask_usd,
+            k1_bid_usd=k1_bid_usd,
+            k2_ask_usd=k2_ask_usd,
+            k2_bid_usd=k2_bid_usd,
+            pm_max_ev=pm_max_ev,
+            prob_less_k1=prob_less_k1,
+            prob_less_k_poly_more_k1=prob_less_k_poly_more_k1,
+            prob_less_k2_more_k_poly=prob_less_k2_more_k_poly,
+            prob_more_k2=prob_more_k2
         )
     return strategyOutput
 
@@ -443,7 +458,6 @@ if __name__ == "__main__":
         k2_bid_btc = 0.0009,
     )
     gross_ev = cal_strategy_result(strategy_input)
-    print(gross_ev)
     # assert gross_ev == -1.74 # not dst
 
     # 输入参数
@@ -454,7 +468,7 @@ if __name__ == "__main__":
     #     k1_price = 91000,
     #     k2_price = 93000,
     #     k_poly_price = 92000,
-    #     days_to_expiry = 0.509 * 365, # 以 deribit 为准
+    #     days_to_expiry = 0.509, # 以 deribit 为准
     #     sigma = 0.3949,
     #     pm_yes_price= 0.35,
     #     pm_no_price = 0.65,

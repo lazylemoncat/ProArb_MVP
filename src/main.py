@@ -4,7 +4,7 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List
 
-from .fetch_data.polymarket_client import Insufficient_liquidity
+from .fetch_data.polymarket_client import Insufficient_liquidity, PolymarketClient
 from .filters.filters import (
     Record_signal_filter,
     SignalSnapshot,
@@ -169,6 +169,30 @@ async def loop_event(
             #     deribit_ctx=deribit_ctx,
             #     poly_ctx=poly_ctx,
             # )
+            strategy_choosed = 2
+            yes_token_id = poly_ctx.yes_token_id
+            pm_open = await PolymarketClient.get_polymarket_slippage(
+                yes_token_id,
+                inv,
+                side="buy",
+                amount_type="usd",
+            )
+            yes_avg_price = pm_open.avg_price
+            slippage_pct_1 = pm_open.slippage_pct
+            
+            no_token_id = poly_ctx.no_token_id
+            pm_open = await PolymarketClient.get_polymarket_slippage(
+                no_token_id,
+                inv,
+                side="buy",
+                amount_type="usd",
+            )
+            no_avg_price = pm_open.avg_price
+            slippage_pct_2 = pm_open.slippage_pct
+
+            pm_avg_open = yes_avg_price if strategy_choosed == 1 else no_avg_price
+            slippage_pct = slippage_pct_1 if strategy_choosed == 1 else slippage_pct_2
+            token_id = yes_token_id if strategy_choosed == 1 else no_token_id
             strategy_input = Strategy_input(
                 inv_usd=inv,
                 strategy=2,
@@ -178,8 +202,8 @@ async def loop_event(
                 k_poly_price=deribit_ctx.K_poly,
                 days_to_expiry=deribit_ctx.days_to_expairy,
                 sigma=deribit_ctx.mark_iv / 100.0,
-                pm_yes_price=poly_ctx.yes_price,
-                pm_no_price=poly_ctx.no_price,
+                pm_yes_price=yes_avg_price,
+                pm_no_price=no_avg_price,
                 is_DST=datetime.now().dst() is not None,
                 k1_ask_btc=deribit_ctx.k1_ask_btc,
                 k1_bid_btc=deribit_ctx.k1_bid_btc,
@@ -196,7 +220,7 @@ async def loop_event(
         try:
             strategy = 2
             net_ev = result.gross_ev
-            pm_price = float(poly_ctx.no_price)
+            pm_price = float(no_avg_price)
             deribit_price = float(1.0 - deribit_ctx.deribit_prob)
             prob_diff = (deribit_price - pm_price) * 100.0
 
@@ -244,6 +268,8 @@ async def loop_event(
             row_dict = {**(asdict(strategy_input)), **(asdict(result))}
             row_dict["contract_amount"] = theoretical_contracts_strategy2
             row_dict["contracts_amount_final"] = result.contract_amount
+            row_dict["pm_yes_price"] = yes_avg_price
+            row_dict["pm_no_price"] = no_avg_price
 
             skip_reasons: List[str] = []
             
@@ -456,7 +482,7 @@ async def run_monitor(config: Config, env_config: Env_config, trading_config: Tr
             pass
 
         logger.info(
-            f"\n[dim]⏳ 等待 {check_interval} 秒后重连 Deribit/Polymarket 数据流...[/dim]\n"
+            f"\n等待 {check_interval} 秒后重连 Deribit/Polymarket 数据流...\n"
         )
         await asyncio.sleep(check_interval)
 

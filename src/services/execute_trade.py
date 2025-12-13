@@ -60,29 +60,29 @@ async def execute_trade(
     if inv_usd <= 0:
         assert False
     
-    if strategy_choosed == 1:
-        token_id = poly_ctx.yes_token_id
-        pm_open = await PolymarketClient.get_polymarket_slippage(
-            token_id,
-            inv_usd,
-            side="buy",
-            amount_type="usd",
-        )
-        pm_avg_open = pm_open.avg_price
-        slippage_pct = pm_open.slippage_pct
-        
-    elif strategy_choosed == 2:
-        token_id = poly_ctx.no_token_id
-        pm_open = await PolymarketClient.get_polymarket_slippage(
-            token_id,
-            inv_usd,
-            side="buy",
-            amount_type="usd",
-        )
-        pm_avg_open = pm_open.avg_price
-        slippage_pct = pm_open.slippage_pct
-    else:
-        assert False
+    yes_token_id = poly_ctx.yes_token_id
+    pm_open = await PolymarketClient.get_polymarket_slippage(
+        yes_token_id,
+        inv_usd,
+        side="buy",
+        amount_type="usd",
+    )
+    yes_avg_price = pm_open.avg_price
+    slippage_pct_1 = pm_open.slippage_pct
+    
+    no_token_id = poly_ctx.no_token_id
+    pm_open = await PolymarketClient.get_polymarket_slippage(
+        no_token_id,
+        inv_usd,
+        side="buy",
+        amount_type="usd",
+    )
+    no_avg_price = pm_open.avg_price
+    slippage_pct_2 = pm_open.slippage_pct
+
+    pm_avg_open = yes_avg_price if strategy_choosed == 1 else no_avg_price
+    slippage_pct = slippage_pct_1 if strategy_choosed == 1 else slippage_pct_2
+    token_id = yes_token_id if strategy_choosed == 1 else no_token_id
 
     if contract_amount < 0.1:
         assert False
@@ -106,8 +106,8 @@ async def execute_trade(
         k_poly_price=deribit_ctx.K_poly,
         days_to_expiry=deribit_ctx.days_to_expairy,
         sigma=deribit_ctx.mark_iv / 100.0,
-        pm_yes_price=poly_ctx.yes_price,
-        pm_no_price=poly_ctx.no_price,
+        pm_yes_price=yes_avg_price,
+        pm_no_price=no_avg_price,
         is_DST=datetime.now().dst() is not None,
         k1_ask_btc=deribit_ctx.k1_ask_btc,
         k1_bid_btc=deribit_ctx.k1_bid_btc,
@@ -188,3 +188,19 @@ async def execute_trade(
     except Exception as e:
         logger.error(e)
         raise e
+    finally:
+        msg: str = (
+            f"交易debug: {poly_ctx.event_title}, {poly_ctx.market_title}\n"
+            f"strategy: {strategy_choosed}, spot_price: {deribit_ctx.spot}\n"
+            f"trade_signal: {trade_signal}, dry_run: {dry_run}\n"
+            f"inv_usd: {inv_usd}, contract_amount: {contract_amount}\n"
+            f"yes_price: {yes_avg_price}, no_price: {no_avg_price}\n"
+            f"k1_bid_btc: {deribit_ctx.k1_bid_btc}, k1_ask_btc: {deribit_ctx.k1_ask_btc}\n"
+            f"k2_bid_btc: {deribit_ctx.k2_bid_btc}, k2_ask_btc: {deribit_ctx.k2_ask_btc}\n"
+            f"mark_iv: {deribit_ctx.mark_iv}, sigma: {deribit_ctx.mark_iv / 100.0}\n"
+            f"days_to_expairy: {deribit_ctx.days_to_expairy}, r: {deribit_ctx.r}\n"
+            f"slippage_pct: {slippage_pct}, slippage: {slippage}, fee_total: {fee_total}\n"
+            f"roi_pct: {roi_pct}, gross_ev: {gross_ev}, net_ev: {net_ev}\n"
+            f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+        )
+        logger.info(msg)
