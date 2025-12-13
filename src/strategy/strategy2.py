@@ -28,6 +28,7 @@ class StrategyOutput:
     gross_ev: float
     contract_amount: float
     roi_pct: float
+    im_value_usd: float
     # debug
     k1_ask_usd: float
     k1_bid_usd: float

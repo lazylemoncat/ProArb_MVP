@@ -23,7 +23,7 @@ def test_strategy():
     contract_amount = strategy_result.contract_amount
     roi_pct = strategy_result.roi_pct
 
-    db_fee = 0.003 * float(strategy_input.spot_price) * contract_amount
+    db_fee = 0.0003 * float(strategy_input.spot_price) * contract_amount
     k1_fee = 0.125 * (strategy_result.k1_ask_usd if strategy_input.strategy == 2 else strategy_result.k1_bid_usd) * contract_amount
     k2_fee = 0.125 * (strategy_result.k2_bid_usd if strategy_input.strategy == 2 else strategy_result.k2_ask_usd) * contract_amount
     fee_total = round(max(min(db_fee, k1_fee), min(db_fee, k2_fee)), 2)

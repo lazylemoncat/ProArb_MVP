@@ -1,9 +1,12 @@
 import logging
 from datetime import datetime, timezone
 
-from ..filters.filters import Trade_filter_input, check_should_trade_signal, Trade_filter
-
 from ..fetch_data.polymarket_client import PolymarketClient
+from ..filters.filters import (
+    Trade_filter,
+    Trade_filter_input,
+    check_should_trade_signal,
+)
 from ..strategy.strategy2 import Strategy_input, cal_strategy_result
 from ..telegram.TG_bot import TG_bot
 from ..trading.deribit_trade import DeribitUserCfg
@@ -11,6 +14,7 @@ from ..trading.deribit_trade_client import Deribit_trade_client
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.dataloader import Env_config
 from ..utils.market_context import DeribitMarketContext, PolymarketState
+from ..utils.save_result import save_position_to_csv
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +94,7 @@ async def execute_trade(
     # 获取实际成交价格
     limit_price = pm_avg_open
     # 获取 db 手续费, pm 没有手续费
-    db_fee = 0.003 * float(deribit_ctx.spot) * contract_amount
+    db_fee = 0.0003 * float(deribit_ctx.spot) * contract_amount
     k1_fee = 0.125 * (deribit_ctx.k1_ask_usd if strategy_choosed == 2 else deribit_ctx.k1_bid_usd) * contract_amount
     k2_fee = 0.125 * (deribit_ctx.k2_bid_usd if strategy_choosed == 2 else deribit_ctx.k2_ask_usd) * contract_amount
     fee_total = max(min(db_fee, k1_fee), min(db_fee, k2_fee))
@@ -114,7 +118,8 @@ async def execute_trade(
         k2_ask_btc=deribit_ctx.k2_ask_btc,
         k2_bid_btc=deribit_ctx.k2_bid_btc
     )
-    gross_ev = cal_strategy_result(strategy_input).gross_ev
+    strategy_result = cal_strategy_result(strategy_input)
+    gross_ev = strategy_result.gross_ev
     net_ev = gross_ev - fee_total - slippage
     if net_ev <= 0:
         return False
@@ -169,6 +174,49 @@ async def execute_trade(
         except Exception:
             logger.error(f"db 交易失败, market_id: {poly_ctx.market_id}")
             raise Exception
+        position_data = {
+            # 基础信息
+            "trade_id": pm_order_id,
+            "market_id": poly_ctx.market_id,
+            "direction": "no",
+            "strategy": strategy_choosed,
+            "status": "open",
+            "entry_timestamp": datetime.now(timezone.utc).isoformat(),
+
+            # PM 头寸信息
+            "pm_token_id": token_id,
+            "pm_tokens": inv_usd / limit_price,
+            "pm_entry_cost": inv_usd,
+            "entry_price_pm": limit_price,
+
+            # DR 头寸信息
+            "contracts": contract_amount,
+            "contracts_theoretical": contract_amount,
+            "dr_entry_cost": fee_total,
+            "inst_k1": deribit_ctx.inst_k1,
+            "inst_k2": deribit_ctx.inst_k2,
+
+            # 行权价信息
+            "K_poly": deribit_ctx.K_poly,
+            "K1": deribit_ctx.k1_strike,
+            "K2": deribit_ctx.k2_strike,
+
+            # 资本信息
+            "im_usd": strategy_result.im_value_usd,
+            "capital_input": inv_usd + strategy_result.im_value_usd,
+
+            # 到期信息
+            "expiry_date": deribit_ctx.k1_expiration_timestamp,
+            "expiry_timestamp": deribit_ctx.k1_expiration_timestamp,
+
+            # 平仓信息（开仓时为空）
+            "exit_timestamp": "",
+            "exit_price_pm": "",
+            "settlement_price": "",
+            "exit_pnl": "",
+            "exit_reason": "",
+        }
+        save_position_to_csv(position_data)
     # 通知
     try:
         await trading_bot.publish((
