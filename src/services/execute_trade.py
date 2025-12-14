@@ -92,7 +92,7 @@ async def execute_trade(
         assert False
     
     # 获取实际成交价格
-    limit_price = pm_avg_open
+    limit_price = round(pm_avg_open, 2)
     # 获取 db 手续费, pm 没有手续费
     db_fee = 0.0003 * float(deribit_ctx.spot) * contract_amount
     k1_fee = 0.125 * (deribit_ctx.k1_ask_usd if strategy_choosed == 2 else deribit_ctx.k1_bid_usd) * contract_amount
@@ -123,16 +123,16 @@ async def execute_trade(
     net_ev = gross_ev - fee_total - slippage
     if net_ev <= 0:
         return False
-    await send_opportunity(
-        alert_bot, 
-        poly_ctx.market_title, 
-        net_ev, 
-        strategy_choosed, 
-        prob_diff, 
-        limit_price, 
-        deribit_price, 
-        inv_usd,
-    )
+    # await send_opportunity(
+    #     alert_bot, 
+    #     poly_ctx.market_title, 
+    #     net_ev, 
+    #     strategy_choosed, 
+    #     prob_diff, 
+    #     limit_price, 
+    #     deribit_price, 
+    #     inv_usd,
+    # )
     prob_diff = (deribit_price - limit_price) * 100.0
     prob_edge_pct = abs(prob_diff) / 100.0
     trade_filter_input = Trade_filter_input(
@@ -157,6 +157,7 @@ async def execute_trade(
             client_secret=str(env_config.deribit_client_secret),
         )
         try:
+            logger.info(f"limit_price: {limit_price}")
             pm_resp, pm_order_id = Polymarket_trade_client.place_buy_by_investment(
                 token_id=token_id, investment_usd=inv_usd, limit_price=limit_price
             )

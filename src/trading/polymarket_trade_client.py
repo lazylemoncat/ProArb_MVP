@@ -1,5 +1,14 @@
+import logging
+from decimal import ROUND_DOWN, Decimal
 from typing import Any, Dict, Optional
+
 from .polymarket_trade import Polymarket_trade
+
+logger = logging.getLogger(__name__)
+
+def _q_down(x: Decimal, decimals: int) -> Decimal:
+    step = Decimal("1").scaleb(-decimals)  # 10**(-decimals)
+    return x.quantize(step, rounding=ROUND_DOWN)
 
 class Polymarket_trade_client:
     @staticmethod
@@ -12,10 +21,27 @@ class Polymarket_trade_client:
             raise ValueError("investment_usd must be > 0")
         if limit_price <= 0 or limit_price >= 1:
             raise ValueError("limit_price must be in (0,1)")
+        
+        # 需要用 decimal 模块保证精度问题
+        price = Decimal(str(limit_price))
+        invest = _q_down(Decimal(str(investment_usd)), 2)          # maker: 2 decimals
+        size = _q_down(invest / price, 4)                          # taker: 4 decimals
+        cost = _q_down(size * price, 2)     
+
+        if size <= 0 or cost <= 0:
+            raise ValueError(f"Computed non-positive size/cost: size={size}, cost={cost}")
+        
+        logger.info(f"limit_price={price}, invest={invest}, size={size}, cost={cost}")
 
         client = Polymarket_trade.get_client()
-        size = float(investment_usd) / float(limit_price)
-        resp = Polymarket_trade.create_order(client, price=float(limit_price), size=size, side="BUY", token_id=token_id)
+        size = int(investment_usd / limit_price)
+        resp = Polymarket_trade.create_order(
+            client, 
+            price=float(price), 
+            size=float(size), 
+            side="BUY", 
+            token_id=token_id
+        )
         return resp, Polymarket_trade.extract_order_id(resp)
 
     @staticmethod

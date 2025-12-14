@@ -430,7 +430,8 @@ def cal_strategy_result(strategy_input: Strategy_input) -> StrategyOutput:
             prob_less_k1=prob_less_k1,
             prob_less_k_poly_more_k1=prob_less_k_poly_more_k1,
             prob_less_k2_more_k_poly=prob_less_k2_more_k_poly,
-            prob_more_k2=prob_more_k2
+            prob_more_k2=prob_more_k2,
+            im_value_usd=im_value_usd
         )
     return strategyOutput
 
