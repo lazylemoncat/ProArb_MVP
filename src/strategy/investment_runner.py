@@ -13,7 +13,7 @@ from .strategy import (
     calculate_pme_margin,
     main_calculation,
 )
-from ..utils.market_context import DeribitMarketContext, PolymarketState
+from ..utils.market_context import DeribitMarketContext, PolymarketContext
 
 
 @dataclass
@@ -113,7 +113,7 @@ class InvestmentResult:
         self,
         timestamp: str,
         deribit_ctx: DeribitMarketContext,
-        poly_ctx: PolymarketState,
+        poly_ctx: PolymarketContext,
         strategy: int,
     ) -> Dict[str, Any]:
         """构造清理后的 CSV 数据（无冗余字段）。"""
@@ -417,7 +417,7 @@ def calculate_strategy_costs(
 async def evaluate_investment(
     inv_base_usd: float,
     deribit_ctx: DeribitMarketContext,
-    poly_ctx: PolymarketState,
+    poly_ctx: PolymarketContext,
 ) -> Tuple[InvestmentResult, int]:
     """对单笔投资进行完整的 Slippage、保证金、EV 等测算。
 

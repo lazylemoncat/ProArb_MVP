@@ -7,7 +7,7 @@ thresholds:
   notify_net_ev_min: 0.05         # 通知的最小净利润
   check_interval_sec: 10          # 循环的间隔秒数
   INVESTMENTS: [200]              # 一笔的投资金额
-  dry_trade: true                # 交易是否走模拟模式
+  dry_trade: false                # 交易是否走模拟模式
   min_contract_size: 0.1          # Deribit最小合约单位（BTC）
   contract_rounding_band: 3       # 合约数调整范围系数；1 表示允许在目标合约数的 ±10% 内四舍五入到最接近的 0.1（当前值 3 = ±30%）
   min_pm_price: 0.01              # PM价格 < 0.01 拒绝

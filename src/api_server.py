@@ -16,6 +16,7 @@ from dataclasses import asdict
 
 from src.fetch_data.polymarket_client import PolymarketClient
 from src.fetch_data.deribit_client import DeribitClient
+from src.strategy.strategy2 import Strategy_input, cal_strategy_result, StrategyOutput
 
 from .services.api_models import (
     ApiErrorResponse,
@@ -305,6 +306,7 @@ async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteRespons
 
 @app.get("/api/trade/positions")
 async def get_positions():
+    # TODO 修复 pnl
     positions_file = _position_csv_path()
 
     if not os.path.exists(positions_file):
@@ -362,70 +364,152 @@ async def get_positions():
     with open(positions_file, mode='r', encoding='utf-8') as file:
         reader = csv.DictReader(file)
         for row in reader:
-            entry_price_pm = float(row.get("entry_price_pm", 0) or 0)
-            contracts = float(row.get("contracts", 0) or 0)
-            im_usd = float(row.get("im_usd", 0) or 0)
-            pm_tokens = float(row.get("pm_tokens", 0) or 0)
-            pm_entry_cost = float(row.get("pm_entry_cost", 0) or 0)
-            dr_entry_cost = float(row.get("dr_entry_cost", 0) or 0)
-            strategy = int(float(row.get("strategy", 0) or 0))
+            market_id = row.get("market_id") or ""
             inst_k1 = row.get("inst_k1") or ""
             inst_k2 = row.get("inst_k2") or ""
+            k1_strike = float(row.get("K1") or 0.0)
+            k2_strike = float(row.get("K2") or "")
+            k_poly = float(row.get("K_poly") or 0.0)
+            expiry_timestamp = float(row.get("expiry_timestamp") or 0.0)
+            inv_usd = float(row.get("pm_entry_cost") or 0.0)
+            strategy_choosed = int(row.get("strategy") or 0.0)
+            contract_amount = float(row.get("contracts") or 0.0)
 
-            market_id = row.get("market_id") or ""
-            direction = (row.get("direction") or "").lower()
+            if not market_id:
+                continue
+            pm_context = PolymarketClient.get_pm_context(market_id)
+            try:
+                db_context = DeribitClient.get_db_context(
+                    title=market_id,
+                    asset="btc",
+                    inst_k1=inst_k1,
+                    inst_k2=inst_k2,
+                    k1_strike=k1_strike,
+                    k2_strike=k2_strike,
+                    k_poly=k_poly,
+                    expiry_timestamp=expiry_timestamp,
+                )
+            except Exception as e:
+                continue
 
-            yes_price, no_price = PolymarketClient.get_prices(market_id)
-            current_price_pm = yes_price if direction == "yes" else no_price
+            yes_token_id = pm_context.yes_token_id
+            pm_open = await PolymarketClient.get_polymarket_slippage(
+                yes_token_id,
+                inv_usd,
+                side="buy",
+                amount_type="usd",
+            )
+            yes_avg_price = pm_open.avg_price
+            slippage_pct_1 = pm_open.slippage_pct
+            
+            no_token_id = pm_context.no_token_id
+            pm_open = await PolymarketClient.get_polymarket_slippage(
+                no_token_id,
+                inv_usd,
+                side="buy",
+                amount_type="usd",
+            )
+            no_avg_price = pm_open.avg_price
+            slippage_pct_2 = pm_open.slippage_pct
 
-            current_value = pm_tokens * current_price_pm
+            pm_avg_open = yes_avg_price if strategy_choosed == 1 else no_avg_price
+            slippage_pct = slippage_pct_1 if strategy_choosed == 1 else slippage_pct_2
+            token_id = yes_token_id if strategy_choosed == 1 else no_token_id
 
-            price_k1 = _get_deribit_mid_price(inst_k1)
-            price_k2 = _get_deribit_mid_price(inst_k2)
-            deribit_value = 0.0
-            # Deribit 期权报价以币本位计价，需折算为 USD
-            currency = (inst_k1 or inst_k2).split("-")[0].upper() if (inst_k1 or inst_k2) else ""
-            spot_usd = _get_deribit_spot_usd(currency) if currency else 0.0
-            spread_value = 0
-            if contracts:
-                # 计算持仓价值（注意方向）
-                # 价差市场价值 = (K1价格 - K2价格) × 合约数
-                spread_value = (price_k1 - price_k2) * contracts
+            # 获取实际成交价格
+            limit_price = round(pm_avg_open, 2)
+            # 获取 db 手续费, pm 没有手续费
+            db_fee = 0.0003 * float(db_context.spot) * contract_amount
+            k1_fee = 0.125 * (db_context.k1_ask_usd if strategy_choosed == 2 else db_context.k1_bid_usd) * contract_amount
+            k2_fee = 0.125 * (db_context.k2_bid_usd if strategy_choosed == 2 else db_context.k2_ask_usd) * contract_amount
+            fee_total = max(min(db_fee, k1_fee), min(db_fee, k2_fee))
+            # 获取滑点
+            slippage = inv_usd * slippage_pct
+            # 获取净利润
+            strategy_input = Strategy_input(
+                inv_usd=inv_usd,
+                strategy=strategy_choosed,
+                spot_price=db_context.spot,
+                k1_price=db_context.k1_strike,
+                k2_price=db_context.k2_strike,
+                k_poly_price=db_context.K_poly,
+                days_to_expiry=db_context.days_to_expairy,
+                sigma=db_context.mark_iv / 100.0,
+                pm_yes_price=yes_avg_price,
+                pm_no_price=no_avg_price,
+                is_DST=datetime.now().dst() is not None,
+                k1_ask_btc=db_context.k1_ask_btc,
+                k1_bid_btc=db_context.k1_bid_btc,
+                k2_ask_btc=db_context.k2_ask_btc,
+                k2_bid_btc=db_context.k2_bid_btc
+            )
 
-                if strategy == 1:
-                    # 策略1：卖出牛市价差（Short Bull Spread）
-                    # 持仓是负债，价差上涨对卖方不利
-                    # 持仓价值 = -价差市场价值（负值）
-                    deribit_value = -spread_value
-                elif strategy == 2:
-                    # 策略2：买入牛市价差（Long Bull Spread）
-                    # 持仓是资产，价差上涨对买方有利
-                    # 持仓价值 = 价差市场价值（正值）
-                    deribit_value = spread_value
+            strategy_result = cal_strategy_result(strategy_input)
+            gross_ev = strategy_result.gross_ev
+            net_ev = gross_ev - fee_total - slippage
 
-            deribit_value_usd = deribit_value * spot_usd
-            deribit_unrealized_pnl = deribit_value_usd + dr_entry_cost
-            unrealized_pnl_usd = (current_value - pm_entry_cost) + deribit_unrealized_pnl
-            current_ev_usd = current_value + deribit_value_usd
+
+            # entry_price_pm = float(row.get("entry_price_pm", 0) or 0)
+            # contracts = float(row.get("contracts", 0) or 0)
+            # im_usd = float(row.get("im_usd", 0) or 0)
+            # pm_tokens = float(row.get("pm_tokens", 0) or 0)
+            # pm_entry_cost = float(row.get("pm_entry_cost", 0) or 0)
+            # dr_entry_cost = float(row.get("dr_entry_cost", 0) or 0)
+            # strategy = int(float(row.get("strategy", 0) or 0))
+
+            # direction = (row.get("direction") or "").lower()
+
+            # yes_price, no_price = PolymarketClient.get_prices(market_id)
+            # current_price_pm = yes_price if direction == "yes" else no_price
+
+            # current_value = pm_tokens * current_price_pm
+
+            # price_k1 = _get_deribit_mid_price(inst_k1)
+            # price_k2 = _get_deribit_mid_price(inst_k2)
+            # deribit_value = 0.0
+            # # Deribit 期权报价以币本位计价，需折算为 USD
+            # currency = (inst_k1 or inst_k2).split("-")[0].upper() if (inst_k1 or inst_k2) else ""
+            # spot_usd = _get_deribit_spot_usd(currency) if currency else 0.0
+            # spread_value = 0
+            # if contracts:
+            #     # 计算持仓价值（注意方向）
+            #     # 价差市场价值 = (K1价格 - K2价格) × 合约数
+            #     spread_value = (price_k1 - price_k2) * contracts
+
+            #     if strategy == 1:
+            #         # 策略1：卖出牛市价差（Short Bull Spread）
+            #         # 持仓是负债，价差上涨对卖方不利
+            #         # 持仓价值 = -价差市场价值（负值）
+            #         deribit_value = -spread_value
+            #     elif strategy == 2:
+            #         # 策略2：买入牛市价差（Long Bull Spread）
+            #         # 持仓是资产，价差上涨对买方有利
+            #         # 持仓价值 = 价差市场价值（正值）
+            #         deribit_value = spread_value
+
+            # deribit_value_usd = deribit_value * spot_usd
+            # deribit_unrealized_pnl = deribit_value_usd + dr_entry_cost
+            # unrealized_pnl_usd = (current_value - pm_entry_cost) + deribit_unrealized_pnl
+            # current_ev_usd = current_value + deribit_value_usd
 
             position = {
                 "trade_id": row.get("trade_id"),
                 "market_id": market_id,
                 "direction": row.get("direction"),
-                "contracts": contracts,
-                "entry_price_pm": entry_price_pm,
+                "contracts": contract_amount,
+                "entry_price_pm": inv_usd,
                 "entry_timestamp": row.get("entry_timestamp"),
-                "im_usd": im_usd,
+                "im_usd": strategy_result.im_value_usd,
                 "status": row.get("status"),
-                "current_price_pm": current_price_pm,
-                "deribit_price_k1": price_k1,
-                "deribit_price_k2": price_k2,
-                "deribit_unrealized_pnl_usd": deribit_unrealized_pnl,
-                "unrealized_pnl_usd": unrealized_pnl_usd,
-                "current_ev_usd": current_ev_usd,
-                "spot_usd": spot_usd,
-                "dr_entry_cost": dr_entry_cost,
-                "spread_value": spread_value
+                "current_price_pm": pm_context.no_price if strategy_choosed == 2 else pm_context.yes_price,
+                "deribit_price_k1": db_context.k1_mid_usd,
+                "deribit_price_k2": db_context.k2_mid_usd,
+                "deribit_unrealized_pnl_usd": 0,
+                "unrealized_pnl_usd": net_ev,
+                "current_ev_usd": net_ev,
+                "spot_usd": db_context.spot,
+                "dr_entry_cost": 0,
+                "spread_value": 0
             }
 
             positions.append(position)

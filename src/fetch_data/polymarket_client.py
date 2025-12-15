@@ -1,9 +1,25 @@
 import json
-from typing import Any, Literal, Tuple
+from typing import Any, Dict, Literal, Tuple
 
 from .get_polymarket_slippage import Polymarket_Slippage, get_polymarket_slippage, Insufficient_liquidity
 
 from .polymarket_api import PolymarketAPI
+from dataclasses import dataclass
+
+@dataclass
+class PolymarketContext:
+    """Polymarket 市场的快照。"""
+    event_title: str
+    market_title: str
+
+    event_id: str
+    market_id: str
+
+    yes_price: float
+    no_price: float
+
+    yes_token_id: str
+    no_token_id: str
 
 
 class PolymarketClient:
@@ -60,6 +76,35 @@ class PolymarketClient:
     def get_market_data_by_market_title(event_id: str, market_title: str):
         market_id = PolymarketClient.get_market_id_by_market_title(event_id, market_title)
         return PolymarketAPI.get_market_by_id(market_id)
+    
+    @staticmethod
+    def get_market_data_by_market_id(market_id: str):
+        return PolymarketAPI.get_market_by_id(market_id)
+    
+    @staticmethod
+    def get_pm_context(market_id: str):
+        question: str = PolymarketAPI.get_market_by_id(market_id).get("question", "")
+        event: dict = PolymarketAPI.get_market_public_search(question).get("events", [])[0]
+        event_id = event.get("id", "")
+        event_title = event.get("description", "")
+
+        market_data = PolymarketAPI.get_market_by_id(market_id)
+        market_title = market_data.get("groupItemTitle", "")
+        yes_price, no_price = PolymarketAPI.get_prices(market_id)
+        clob_token_ids = PolymarketAPI.get_clob_token_ids_by_market_id(market_id)
+        yes_token_id = clob_token_ids.get("yes_token_id", "")
+        no_token_id = clob_token_ids.get("no_token_id", "")
+
+        return PolymarketContext(
+            event_title=event_title,
+            market_title=market_title,
+            event_id=event_id,
+            market_id=market_id,
+            yes_price=yes_price,
+            no_price=no_price,
+            yes_token_id=yes_token_id,
+            no_token_id=no_token_id,
+        )
 
     @staticmethod
     def get_clob_token_ids_by_market_id(market_id: str) -> dict[str, str]:

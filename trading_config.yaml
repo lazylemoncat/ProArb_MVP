@@ -18,7 +18,7 @@ record_signal_filter:
 
 trade_signal_filter:
   inv_usd_limit: 200                # 交易资金上限
-  daily_trade_limit: 1              # 每日交易次数上限
+  daily_trade_limit: 3              # 每日交易次数上限
   open_positions_limit: 3           # 总共持仓上限
   allow_repeat_open_position: false # 允许对已有持仓进行交易
   min_contract_amount: 0.1          # 最小交易合约数量

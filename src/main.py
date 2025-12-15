@@ -29,7 +29,7 @@ from .utils.init_markets import init_markets
 from .utils.loop_event import build_events_for_date
 from .utils.market_context import (
     DeribitMarketContext,
-    PolymarketState,
+    PolymarketContext,
     build_deribit_context,
     build_polymarket_state,
     make_summary_table,
@@ -148,7 +148,7 @@ async def loop_event(
 
     # --- Polymarket --- 
     try:
-        poly_ctx: PolymarketState = build_polymarket_state(data)
+        poly_ctx: PolymarketContext = build_polymarket_state(data)
     except Exception as exc:
         return
 
@@ -264,6 +264,7 @@ async def loop_event(
                     inv_base_usd, 
                     record_signal_filter,
                 )
+            validation_errors.append(details)
 
             row_dict = {**(asdict(strategy_input)), **(asdict(result))}
             row_dict["contract_amount"] = theoretical_contracts_strategy2
@@ -275,18 +276,18 @@ async def loop_event(
             
             if record_signal:
                 # 发送套利机会到 Alert Bot
-                # await send_opportunity(
-                #     alert_bot, 
-                #     market_title, 
-                #     net_ev, 
-                #     strategy, 
-                #     prob_diff, 
-                #     pm_price, 
-                #     deribit_price, 
-                #     inv_base_usd,
-                #     validation_errors,
-                #     trade_details
-                # )
+                await send_opportunity(
+                    alert_bot, 
+                    poly_ctx.market_title, 
+                    net_ev, 
+                    strategy, 
+                    prob_diff, 
+                    pm_price, 
+                    deribit_price, 
+                    inv_base_usd,
+                    validation_errors,
+                    trade_details
+                )
                 signal_state[signal_key] = now_snapshot
                 # 写入本次检测结果
                 CsvHandler.save_to_result2(csv_path="data/results2.csv", row_dict=row_dict)
@@ -301,12 +302,14 @@ async def loop_event(
                 #     skip_reasons=skip_reasons,
                 # )
                 CsvHandler.save_to_result2(csv_path="data/results2.csv", row_dict=row_dict)
+                logger.info(f"{market_id} validation_errors, {row_dict}")
                 continue
 
 
             try:
                 if trade_signal and time_condition:
                     # await trading_bot.publish(f"{market_id} 正在进行交易")
+                    logger.info(f"{market_id} 正在进行交易")
                     await execute_trade(
                         trade_signal=trade_signal,
                         dry_run=dry_trade_mode,

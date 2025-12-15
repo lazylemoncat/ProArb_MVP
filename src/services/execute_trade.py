@@ -13,7 +13,7 @@ from ..trading.deribit_trade import DeribitUserCfg
 from ..trading.deribit_trade_client import Deribit_trade_client
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.dataloader import Env_config
-from ..utils.market_context import DeribitMarketContext, PolymarketState
+from ..utils.market_context import DeribitMarketContext, PolymarketContext
 from ..utils.save_result import save_position_to_csv
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ async def execute_trade(
     dry_run: bool,
     inv_usd: float,
     contract_amount: float,
-    poly_ctx: PolymarketState, 
+    poly_ctx: PolymarketContext, 
     deribit_ctx: DeribitMarketContext,
     strategy_choosed: int,
     env_config: Env_config,
@@ -121,18 +121,10 @@ async def execute_trade(
     strategy_result = cal_strategy_result(strategy_input)
     gross_ev = strategy_result.gross_ev
     net_ev = gross_ev - fee_total - slippage
+
     if net_ev <= 0:
         return False
-    # await send_opportunity(
-    #     alert_bot, 
-    #     poly_ctx.market_title, 
-    #     net_ev, 
-    #     strategy_choosed, 
-    #     prob_diff, 
-    #     limit_price, 
-    #     deribit_price, 
-    #     inv_usd,
-    # )
+    
     prob_diff = (deribit_price - limit_price) * 100.0
     prob_edge_pct = abs(prob_diff) / 100.0
     trade_filter_input = Trade_filter_input(

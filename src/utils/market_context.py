@@ -57,7 +57,7 @@ class DeribitMarketContext:
 
 
 @dataclass
-class PolymarketState:
+class PolymarketContext:
     """Polymarket 市场的快照。"""
     event_title: str
     market_title: str
@@ -186,7 +186,7 @@ def build_deribit_context(
     )
 
 
-def build_polymarket_state(data: Dict[str, Any]) -> PolymarketState:
+def build_polymarket_state(data: Dict[str, Any]) -> PolymarketContext:
     """构建 Polymarket 市场快照。"""
     event_title = data["polymarket"]["event_title"]
     market_title = data["polymarket"]["market_title"]
@@ -216,7 +216,7 @@ def build_polymarket_state(data: Dict[str, Any]) -> PolymarketState:
     yes_token_id = tokens["yes_token_id"]
     no_token_id = tokens["no_token_id"]
 
-    return PolymarketState(
+    return PolymarketContext(
         event_title=event_title,
         market_title=market_title,
         event_id=event_id,
@@ -230,7 +230,7 @@ def build_polymarket_state(data: Dict[str, Any]) -> PolymarketState:
 
 def make_summary_table(
     deribit_ctx: DeribitMarketContext,
-    poly_ctx: PolymarketState,
+    poly_ctx: PolymarketContext,
     timestamp: str | None = None,
 ) -> Table:
     """构造 rich.Table，用于主进程输出摘要信息。"""
