@@ -1,6 +1,7 @@
 import csv
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -45,6 +46,36 @@ class CsvHandler:
         return True
     
     @staticmethod
+    def save_to_csv(csv_path: str,  row_dict: dict[str, str | float], class_obj: Any):
+        if not is_dataclass(class_obj):
+            raise ValueError("is not dataclass")
+        dataclass_fields = list(fields(class_obj))
+        field_names = [f.name for f in dataclass_fields]
+
+        # 检查是否有缺失字段
+        missing_required = []
+        for f in dataclass_fields:
+            if f.name not in row_dict:
+                missing_required.append(f.name)
+
+        if missing_required:
+            raise ValueError(f"缺失必填字段: {missing_required}")
+        
+        CsvHandler.check_csv(csv_path, field_names)
+        
+        # 组装写入行：按表头顺序输出
+        output_row = []
+        for f in dataclass_fields:
+            val = row_dict[f.name]
+            output_row.append(val)
+
+        # 追加写入
+        path = Path(csv_path)
+        with open(path, mode="a", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow(output_row)
+    
+    @staticmethod
     def save_to_result2(csv_path: str,  row_dict: dict[str, str | float]):
         dataclass_fields = list(fields(ResultColumns))
         field_names = [f.name for f in dataclass_fields]
@@ -70,3 +101,23 @@ class CsvHandler:
         with open(path, mode="a", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
             writer.writerow(output_row)
+
+    @staticmethod
+    def delete_csv(csv_path: str, not_exists_ok: bool = False) -> bool:
+        """
+        删除指定 CSV 文件。
+        - 文件存在且删除成功 -> True
+        - 文件不存在 -> False
+        - 删除失败(权限/占用等) -> False
+        """
+        path = Path(csv_path)
+
+        if not path.exists():
+            return not_exists_ok
+        
+
+        try:
+            path.unlink()  # 删除文件
+            return True
+        except (OSError, PermissionError):
+            return False

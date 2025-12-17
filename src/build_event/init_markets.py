@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
-from fetch_data.deribit_client import DeribitClient
+from ..fetch_data.deribit_client import DeribitClient
 
 
 def parse_timestamp(exp: Any) -> Optional[float]:
@@ -19,7 +19,7 @@ def init_markets(
     """
     根据行权价为每个事件找出 Deribit 的 K1/K2 合约名，并记录资产类型 BTC / ETH。
 
-    优先使用显式给出的到期时间（k1_expiration / k2_expiration），否则根据 day_offset 自动匹配。
+    优先使用显式给出的到期时间(k1_expiration / k2_expiration), 否则根据 day_offset 自动匹配。
     若实际合约到期日与 target_date 不符，则跳过该市场。
     """
     instruments_map: Dict[str, Dict[str, Any]] = {}
@@ -75,8 +75,10 @@ def init_markets(
                 continue
 
         instruments_map[title] = {
+            "k1_strike": k1,
             "k1": inst_k1,
             "k1_expiration_timestamp": k1_exp,
+            "k2_strike": k2,
             "k2": inst_k2,
             "k2_expiration_timestamp": k2_exp,
             "asset": asset,

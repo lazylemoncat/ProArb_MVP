@@ -57,8 +57,7 @@ def check_time_condition(previous_snapshot: SignalSnapshot, record_signal_filter
     time_condition = time_gap >= time_window_seconds
     if not time_condition:
         details += f"时间间隔 {time_gap} 不大于等于要求的 {time_window_seconds} 秒 \n"
-    else:
-        details += f"时间间隔 {time_gap} 大于等于要求的 {time_window_seconds} 秒 \n"
+
     return time_condition, details
 
 def check_ev_change_condition(

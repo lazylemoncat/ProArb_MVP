@@ -91,8 +91,6 @@ class DeribitAPI:
         instrument_name = selected["instrument_name"]
         expiration_timestamp = selected["expiration_timestamp"]
 
-        print(f"{strike}, {instrument_name}")
-
         return instrument_name, expiration_timestamp
     
     @staticmethod

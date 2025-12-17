@@ -256,15 +256,15 @@ async def loop_event(
             if previous_snapshot is None and net_ev > 0:
                 record_signal = True
                 time_condition = True
-                details = ""
+                record_details = ""
             else:
-                record_signal, details, time_condition = check_should_record_signal(
+                record_signal, record_details, time_condition = check_should_record_signal(
                     now_snapshot, 
                     previous_snapshot, 
                     inv_base_usd, 
                     record_signal_filter,
                 )
-            validation_errors.append(details)
+            validation_errors.append(record_details)
 
             row_dict = {**(asdict(strategy_input)), **(asdict(result))}
             row_dict["contract_amount"] = theoretical_contracts_strategy2
@@ -274,7 +274,7 @@ async def loop_event(
 
             skip_reasons: List[str] = []
             
-            if record_signal:
+            if record_signal and time_condition:
                 # 发送套利机会到 Alert Bot
                 await send_opportunity(
                     alert_bot, 
@@ -303,7 +303,6 @@ async def loop_event(
                 # )
                 CsvHandler.save_to_result2(csv_path="data/results2.csv", row_dict=row_dict)
                 logger.info(f"{market_id} validation_errors, {row_dict}")
-                continue
 
 
             try:

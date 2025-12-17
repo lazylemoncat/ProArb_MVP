@@ -138,6 +138,7 @@ async def execute_trade(
     )
     trade_signal, trade_details = check_should_trade_signal(trade_filter_input, trade_filter)
     if not trade_signal:
+        await alert_bot.publish(trade_details)
         logger.info(trade_details)
         return False
     # 交易

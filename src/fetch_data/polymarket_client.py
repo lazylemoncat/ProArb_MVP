@@ -23,10 +23,6 @@ class PolymarketContext:
 
 
 class PolymarketClient:
-    """
-    - 市场 / 事件查询
-    - YES/NO 价格与 token id 获取
-    """
     @staticmethod
     def get_event_id_public_search(querystring: str) -> str:
         """根据问题关键词搜索市场事件 ID"""
