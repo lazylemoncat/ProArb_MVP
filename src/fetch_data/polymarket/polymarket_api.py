@@ -7,6 +7,7 @@ import requests
 
 BASE_URL = "https://gamma-api.polymarket.com"
 LIST_MARKET_URL = f"{BASE_URL}/markets"
+LIST_EVENT_URL = f"{BASE_URL}/events"
 PUBLIC_SEARCH_URL = f"{BASE_URL}/public-search"
 GET_MARKET_BY_ID_URL = f"{BASE_URL}/markets/{{market_id}}"
 GET_EVENT_BY_ID_URL = f"{BASE_URL}/events/{{event_id}}"
@@ -21,9 +22,18 @@ REQUESTS_SESSION.verify = certifi.where()
 
 class PolymarketAPI:
     @staticmethod
-    def get_market_list() -> Dict[str, Any]:
+    def get_market_list(closed: bool = False, offset: int = 0) -> list[Dict[str, Any]]:
         """获取所有市场列表"""
-        response = REQUESTS_SESSION.get(LIST_MARKET_URL, timeout=HTTP_TIMEOUT)
+        url = LIST_MARKET_URL + "?closed=" + str(closed) + "&offset=" + str(offset)
+        response = REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
+        response.raise_for_status()
+        return response.json()
+    
+    @staticmethod
+    def get_event_list(closed: bool = False, offset: int = 0) -> list[Dict[str, Any]]:
+        """获取所有事件列表"""
+        url = LIST_EVENT_URL + "?closed=" + str(closed) + "&offset=" + str(offset)
+        response = REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         return response.json()
 

@@ -1,14 +1,22 @@
 import json
-from typing import Any, Dict, Literal, Tuple
-
-from .get_polymarket_slippage import Polymarket_Slippage, get_polymarket_slippage, Insufficient_liquidity
-
-from .polymarket_api import PolymarketAPI
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Literal, Tuple
+
+from .get_polymarket_slippage import (
+    Insufficient_liquidity,
+    Polymarket_Slippage,
+    get_polymarket_slippage,
+)
+from .polymarket_api import PolymarketAPI
+from .polymarket_ws import PolymarketWS
+
 
 @dataclass
 class PolymarketContext:
     """Polymarket 市场的快照。"""
+    time: datetime
+
     event_title: str
     market_title: str
 
@@ -21,8 +29,40 @@ class PolymarketContext:
     yes_token_id: str
     no_token_id: str
 
+    yes_bid_price_1: float
+    yes_bid_price_size_1: float
+    yes_bid_price_2: float
+    yes_bid_price_size_2: float
+    yes_bid_price_3: float
+    yes_bid_price_size_3: float
+
+    yes_ask_price_1: float
+    yes_ask_price_1_size: float
+    yes_ask_price_2: float
+    yes_ask_price_2_size: float
+    yes_ask_price_3: float
+    yes_ask_price_3_size: float
+
+    no_bid_price_1: float
+    no_bid_price_size_1: float
+    no_bid_price_2: float
+    no_bid_price_size_2: float
+    no_bid_price_3: float
+    no_bid_price_size_3: float
+
+    no_ask_price_1: float
+    no_ask_price_1_size: float
+    no_ask_price_2: float
+    no_ask_price_2_size: float
+    no_ask_price_3: float
+    no_ask_price_3_size: float
+
 
 class PolymarketClient:
+    """
+    - 市场 / 事件查询
+    - YES/NO 价格与 token id 获取
+    """
     @staticmethod
     def get_event_id_public_search(querystring: str) -> str:
         """根据问题关键词搜索市场事件 ID"""
@@ -78,20 +118,56 @@ class PolymarketClient:
         return PolymarketAPI.get_market_by_id(market_id)
     
     @staticmethod
-    def get_pm_context(market_id: str):
-        question: str = PolymarketAPI.get_market_by_id(market_id).get("question", "")
-        event: dict = PolymarketAPI.get_market_public_search(question).get("events", [])[0]
-        event_id = event.get("id", "")
-        event_title = event.get("description", "")
+    async def get_pm_context(market_id: str):
+        try:
+            question: str = PolymarketAPI.get_market_by_id(market_id).get("question", "")
+            event: dict = PolymarketAPI.get_market_public_search(question).get("events", [])[0]
+            event_id = event.get("id", "")
+            event_title = event.get("title", "")
 
-        market_data = PolymarketAPI.get_market_by_id(market_id)
-        market_title = market_data.get("groupItemTitle", "")
-        yes_price, no_price = PolymarketAPI.get_prices(market_id)
-        clob_token_ids = PolymarketAPI.get_clob_token_ids_by_market_id(market_id)
-        yes_token_id = clob_token_ids.get("yes_token_id", "")
-        no_token_id = clob_token_ids.get("no_token_id", "")
+            market_data = PolymarketAPI.get_market_by_id(market_id)
+            market_title = market_data.get("groupItemTitle", "")
+            yes_price, no_price = PolymarketAPI.get_prices(market_id)
+            clob_token_ids = PolymarketAPI.get_clob_token_ids_by_market_id(market_id)
+            yes_token_id = clob_token_ids.get("yes_token_id", "")
+            no_token_id = clob_token_ids.get("no_token_id", "")
+            yes_bid_prices = await PolymarketWS.fetch_orderbook(clob_token_ids["yes_token_id"], side="bid")
+            no_bid_prices = await PolymarketWS.fetch_orderbook(clob_token_ids["no_token_id"], side="bid")
+            yes_ask_prices = await PolymarketWS.fetch_orderbook(clob_token_ids["yes_token_id"], side="ask")
+            no_ask_prices = await PolymarketWS.fetch_orderbook(clob_token_ids["no_token_id"], side="ask")
+
+            yes_bid_price_1 = yes_bid_prices[0][0]
+            yes_bid_price_size_1 = yes_bid_prices[0][1]
+            yes_bid_price_2 = yes_bid_prices[1][0]
+            yes_bid_price_size_2 = yes_bid_prices[1][1]
+            yes_bid_price_3 = yes_bid_prices[2][0] if len(yes_bid_prices) >= 3 else 0
+            yes_bid_price_size_3 = yes_bid_prices[2][1] if len(yes_bid_prices) >= 3 else 0
+
+            yes_ask_price_1 = yes_ask_prices[0][0]
+            yes_ask_price_1_size = yes_ask_prices[0][1]
+            yes_ask_price_2 = yes_ask_prices[1][0]
+            yes_ask_price_2_size = yes_ask_prices[1][1]
+            yes_ask_price_3 = yes_ask_prices[2][0] if len(yes_ask_prices) >= 3 else 0
+            yes_ask_price_3_size = yes_ask_prices[2][1] if len(yes_ask_prices) >= 3 else 0
+
+            no_bid_price_1 = no_bid_prices[0][0]
+            no_bid_price_size_1 = no_bid_prices[0][1]
+            no_bid_price_2 = no_bid_prices[1][0]
+            no_bid_price_size_2 = no_bid_prices[1][1]
+            no_bid_price_3 = no_bid_prices[2][0] if len(no_bid_prices) >= 3 else 0
+            no_bid_price_size_3 = no_bid_prices[2][1] if len(no_bid_prices) >= 3 else 0
+
+            no_ask_price_1 = no_ask_prices[0][0]
+            no_ask_price_1_size = no_ask_prices[0][1]
+            no_ask_price_2 = no_ask_prices[1][0]
+            no_ask_price_2_size = no_ask_prices[1][1]
+            no_ask_price_3 = no_ask_prices[2][0] if len(no_ask_prices) >= 3 else 0
+            no_ask_price_3_size = no_ask_prices[2][1] if len(no_ask_prices) >= 3 else 0
+        except Exception:
+            raise Exception
 
         return PolymarketContext(
+            time=datetime.now(timezone.utc),
             event_title=event_title,
             market_title=market_title,
             event_id=event_id,
@@ -100,6 +176,34 @@ class PolymarketClient:
             no_price=no_price,
             yes_token_id=yes_token_id,
             no_token_id=no_token_id,
+
+            yes_bid_price_1=yes_bid_price_1,
+            yes_bid_price_size_1=yes_bid_price_size_1,
+            yes_bid_price_2=yes_bid_price_2,
+            yes_bid_price_size_2=yes_bid_price_size_2,
+            yes_bid_price_3=yes_bid_price_3,
+            yes_bid_price_size_3=yes_bid_price_size_3,
+
+            yes_ask_price_1=yes_ask_price_1,
+            yes_ask_price_1_size=yes_ask_price_1_size,
+            yes_ask_price_2=yes_ask_price_2,
+            yes_ask_price_2_size=yes_ask_price_2_size,
+            yes_ask_price_3=yes_ask_price_3,
+            yes_ask_price_3_size=yes_ask_price_3_size,
+
+            no_bid_price_1=no_bid_price_1,
+            no_bid_price_size_1=no_bid_price_size_1,
+            no_bid_price_2=no_bid_price_2,
+            no_bid_price_size_2=no_bid_price_size_2,
+            no_bid_price_3=no_bid_price_3,
+            no_bid_price_size_3=no_bid_price_size_3,
+
+            no_ask_price_1=no_ask_price_1,
+            no_ask_price_1_size=no_ask_price_1_size,
+            no_ask_price_2=no_ask_price_2,
+            no_ask_price_2_size=no_ask_price_2_size,
+            no_ask_price_3=no_ask_price_3,
+            no_ask_price_3_size=no_ask_price_3_size
         )
 
     @staticmethod
@@ -194,10 +298,18 @@ class PolymarketClient:
     async def get_polymarket_slippage(
         asset_id: str,
         amount: float,
-        side: Literal["buy", "sell"] = "buy",
+        side: Literal["ask", "bid"] = "ask",
         amount_type: Literal["usd", "shares"] = "usd",
     ) -> Polymarket_Slippage:
         try:
             return await get_polymarket_slippage(asset_id, amount, side, amount_type)
         except Insufficient_liquidity as e:
             raise Insufficient_liquidity(e)
+        
+    @staticmethod
+    def get_market_list(closed: bool = False, offset: int = 0):
+        return PolymarketAPI.get_market_list(closed=closed, offset = offset)
+    
+    @staticmethod
+    def get_event_list(closed: bool = False, offset: int = 0):
+        return PolymarketAPI.get_event_list(closed=closed, offset = offset)

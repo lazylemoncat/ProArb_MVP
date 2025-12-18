@@ -16,7 +16,7 @@ class PolymarketWS:
     async def fetch_orderbook(
         cls,
         asset_id: str,
-        side: Literal["buy", "sell"],
+        side: Literal["ask", "bid"],
     ) -> list[tuple[float, float]]:
         async with websockets.connect(CLOB_WS_URL, ssl=SSL_CONTEXT) as ws:
             await ws.send(json.dumps({"assets_ids": [asset_id], "type": "market"}))
@@ -36,7 +36,7 @@ class PolymarketWS:
                     continue
 
                 # 先取原始的 orderbook 列表（还是 list[dict]）
-                raw_book = data.get("asks", []) if side == "buy" else data.get("bids", [])
+                raw_book = data.get("asks", []) if side == "ask" else data.get("bids", [])
                 if not raw_book:
                     raise ValueError(f"Empty orderbook for asset_id {asset_id}")
 
@@ -59,5 +59,5 @@ class PolymarketWS:
                     )
 
                 # 买单吃 ask：从低到高；卖单吃 bid：从高到低
-                book.sort(key=lambda x: x[0], reverse=(side == "sell"))
+                book.sort(key=lambda x: x[0], reverse=(side == "bid"))
                 return book

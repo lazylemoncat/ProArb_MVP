@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import time
 from typing import Any, Literal
 
-from ..strategy.probability_engine import bs_probability_gt
+from ...strategy.probability_engine import bs_probability_gt
 
 from .deribit_api import DeribitAPI
 

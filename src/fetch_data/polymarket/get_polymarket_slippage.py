@@ -12,7 +12,7 @@ class Polymarket_Slippage:
     shares: float
     total_cost_usd: float
     slippage_pct: float
-    side: Literal["buy", "sell"]
+    side: Literal["ask", "bid"]
     amount_type: Literal["usd", "shares"]
     # === 新增：盘口信息，用于套利分析 ===
     best_ask: Optional[float] = None
@@ -28,7 +28,7 @@ class Insufficient_liquidity(Exception):
 def _simulate_fill(
     book: list[tuple[float, float]],
     amount: float,
-    side: Literal["buy", "sell"],
+    side: Literal["ask", "bid"],
     amount_type: Literal["usd", "shares"],
 ) -> tuple[float, float, float, float]:
     """
@@ -108,7 +108,7 @@ def _simulate_fill(
 async def get_polymarket_slippage(
     asset_id: str,
     amount: float,
-    side: Literal["buy", "sell"] = "buy",
+    side: Literal["ask", "bid"] = "ask",
     amount_type: Literal["usd", "shares"] = "usd",
 ) -> Polymarket_Slippage:
     """
@@ -143,7 +143,7 @@ async def get_polymarket_slippage(
     best_side_price = book[0][0] if book else None
 
     # 反方向盘口（只需要最优一档）
-    other_side = "sell" if side == "buy" else "buy"
+    other_side = "bid" if side == "ask" else "bid"
     try:
         other_book = await PolymarketWS.fetch_orderbook(
             asset_id=asset_id,
