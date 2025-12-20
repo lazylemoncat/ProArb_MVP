@@ -8,6 +8,26 @@ WS_URL = "wss://www.deribit.com/ws/api/v2"
 
 class Deribit_trade_client:
     @staticmethod
+    async def get_orderbook_prices(
+        deribitUserCfg: DeribitUserCfg,
+        instrument_name: str,
+        depth: int = 3
+    ):
+        async with websockets.connect(WS_URL) as websocket:
+            await Deribit_trade.websocket_auth(websocket, deribitUserCfg)
+            orderbook = await Deribit_trade.get_orderbook_by_instrument_name(
+                websocket,
+                deribitUserCfg,
+                instrument_name,
+                depth=depth
+            )
+            res = orderbook.get("result", {})
+            return {
+                "bids": res.get("bids", []),
+                "asks": res.get("asks", []),
+            }
+
+    @staticmethod
     async def buy(deribitUserCfg: DeribitUserCfg, amount: float, instrument_name: str) -> Dict[str, Any]:
         async with websockets.connect(WS_URL) as websocket:
             await Deribit_trade.websocket_auth(websocket, deribitUserCfg)

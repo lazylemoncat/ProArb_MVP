@@ -31,10 +31,8 @@ def loop_date(current_target_date: date | None, day_off: int) -> Tuple[date, boo
     return current_target_date, have_changed
 
 def _get_instruments_map(events: List[dict], instruments_map: dict[str, Dict[str, Any]], config: Config, day_off: int, target_date: date) -> dict[str, dict[str, Any]]:
-    cfg_for_markets = asdict(config)
-    cfg_for_markets["events"] = events
     instruments_map, skipped_titles = init_markets(
-        cfg_for_markets, day_offset=day_off, target_date=target_date
+        events, day_offset=day_off, target_date=target_date
     )
     if skipped_titles:
         skipped_set = set(skipped_titles)

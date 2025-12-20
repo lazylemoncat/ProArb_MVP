@@ -30,7 +30,7 @@ class ThresholdsConfig:
     ev_spread_min: float
     notify_net_ev_min: float
     check_interval_sec: int
-    INVESTMENTS: List[int]
+    INVESTMENTS: List[float]
     min_contract_size: float
     contract_rounding_band: float
     min_pm_price: float

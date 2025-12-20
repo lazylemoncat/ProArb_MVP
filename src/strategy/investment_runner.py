@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Tuple
 
-from ..fetch_data.polymarket_client import PolymarketClient, Insufficient_liquidity
+from ..fetch_data.polymarket.polymarket_client import PolymarketClient, Insufficient_liquidity
 from .early_exit import make_exit_decision
 from .models import ExitDecision, OptionPosition, Position
 from .strategy import (

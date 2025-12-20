@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from ..fetch_data.polymarket_client import PolymarketClient
+from ..fetch_data.polymarket.polymarket_client import PolymarketClient
 from ..filters.filters import (
     Trade_filter,
     Trade_filter_input,
@@ -13,7 +13,8 @@ from ..trading.deribit_trade import DeribitUserCfg
 from ..trading.deribit_trade_client import Deribit_trade_client
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.dataloader import Env_config
-from ..utils.market_context import DeribitMarketContext, PolymarketContext
+from ..fetch_data.deribit.deribit_client import DeribitMarketContext
+from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..utils.save_result import save_position_to_csv
 
 logger = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ async def execute_trade(
     pm_open = await PolymarketClient.get_polymarket_slippage(
         yes_token_id,
         inv_usd,
-        side="buy",
+        side="ask",
         amount_type="usd",
     )
     yes_avg_price = pm_open.avg_price
@@ -78,7 +79,7 @@ async def execute_trade(
     pm_open = await PolymarketClient.get_polymarket_slippage(
         no_token_id,
         inv_usd,
-        side="buy",
+        side="ask",
         amount_type="usd",
     )
     no_avg_price = pm_open.avg_price
@@ -138,7 +139,7 @@ async def execute_trade(
     )
     trade_signal, trade_details = check_should_trade_signal(trade_filter_input, trade_filter)
     if not trade_signal:
-        await alert_bot.publish(trade_details)
+        await alert_bot.publish(str(trade_details))
         logger.info(trade_details)
         return False
     # 交易

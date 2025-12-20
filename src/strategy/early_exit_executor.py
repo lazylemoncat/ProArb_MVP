@@ -18,8 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..fetch_data.deribit_client import DeribitClient
-from ..fetch_data.polymarket_client import PolymarketClient
+from ..fetch_data.deribit.deribit_client import DeribitClient
+from ..fetch_data.polymarket.polymarket_client import PolymarketClient
 from ..telegram.TG_bot import TG_bot
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.dataloader import Env_config, load_all_configs

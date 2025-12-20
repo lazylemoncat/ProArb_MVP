@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
-from ..fetch_data.deribit_client import DeribitClient
+from ..fetch_data.deribit.deribit_client import DeribitClient
 
 
 def parse_timestamp(exp: Any) -> Optional[float]:
@@ -14,7 +14,7 @@ def parse_timestamp(exp: Any) -> Optional[float]:
     return None
 
 def init_markets(
-    config: Dict[str, Any], day_offset: int = 0, target_date: date | None = None
+    events: list[dict], day_offset: int = 0, target_date: date | None = None
 ) -> Tuple[Dict[str, Dict[str, Any]], list[str]]:
     """
     根据行权价为每个事件找出 Deribit 的 K1/K2 合约名，并记录资产类型 BTC / ETH。
@@ -25,7 +25,7 @@ def init_markets(
     instruments_map: Dict[str, Dict[str, Any]] = {}
     skipped_titles: list[str] = []
 
-    for m in config["events"]:
+    for m in events:
         title = m["polymarket"]["market_title"]
         asset = m["deribit"]["asset"]
         k1 = m["deribit"].get("k1_strike")

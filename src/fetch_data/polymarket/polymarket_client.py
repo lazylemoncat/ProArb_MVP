@@ -118,7 +118,7 @@ class PolymarketClient:
         return PolymarketAPI.get_market_by_id(market_id)
     
     @staticmethod
-    async def get_pm_context(market_id: str):
+    async def get_pm_context(market_id: str) -> PolymarketContext:
         try:
             question: str = PolymarketAPI.get_market_by_id(market_id).get("question", "")
             event: dict = PolymarketAPI.get_market_public_search(question).get("events", [])[0]
@@ -138,29 +138,29 @@ class PolymarketClient:
 
             yes_bid_price_1 = yes_bid_prices[0][0]
             yes_bid_price_size_1 = yes_bid_prices[0][1]
-            yes_bid_price_2 = yes_bid_prices[1][0]
-            yes_bid_price_size_2 = yes_bid_prices[1][1]
+            yes_bid_price_2 = yes_bid_prices[1][0] if len(yes_bid_prices) >= 2 else 0
+            yes_bid_price_size_2 = yes_bid_prices[1][1] if len(yes_bid_prices) >= 2 else 0
             yes_bid_price_3 = yes_bid_prices[2][0] if len(yes_bid_prices) >= 3 else 0
             yes_bid_price_size_3 = yes_bid_prices[2][1] if len(yes_bid_prices) >= 3 else 0
 
             yes_ask_price_1 = yes_ask_prices[0][0]
             yes_ask_price_1_size = yes_ask_prices[0][1]
-            yes_ask_price_2 = yes_ask_prices[1][0]
-            yes_ask_price_2_size = yes_ask_prices[1][1]
+            yes_ask_price_2 = yes_ask_prices[1][0] if len(yes_bid_prices) >= 2 else 0
+            yes_ask_price_2_size = yes_ask_prices[1][1] if len(yes_bid_prices) >= 2 else 0
             yes_ask_price_3 = yes_ask_prices[2][0] if len(yes_ask_prices) >= 3 else 0
             yes_ask_price_3_size = yes_ask_prices[2][1] if len(yes_ask_prices) >= 3 else 0
 
             no_bid_price_1 = no_bid_prices[0][0]
             no_bid_price_size_1 = no_bid_prices[0][1]
-            no_bid_price_2 = no_bid_prices[1][0]
-            no_bid_price_size_2 = no_bid_prices[1][1]
+            no_bid_price_2 = no_bid_prices[1][0] if len(yes_bid_prices) >= 2 else 0
+            no_bid_price_size_2 = no_bid_prices[1][1] if len(yes_bid_prices) >= 2 else 0
             no_bid_price_3 = no_bid_prices[2][0] if len(no_bid_prices) >= 3 else 0
             no_bid_price_size_3 = no_bid_prices[2][1] if len(no_bid_prices) >= 3 else 0
 
             no_ask_price_1 = no_ask_prices[0][0]
             no_ask_price_1_size = no_ask_prices[0][1]
-            no_ask_price_2 = no_ask_prices[1][0]
-            no_ask_price_2_size = no_ask_prices[1][1]
+            no_ask_price_2 = no_ask_prices[1][0] if len(yes_bid_prices) >= 2 else 0
+            no_ask_price_2_size = no_ask_prices[1][1] if len(yes_bid_prices) >= 2 else 0
             no_ask_price_3 = no_ask_prices[2][0] if len(no_ask_prices) >= 3 else 0
             no_ask_price_3_size = no_ask_prices[2][1] if len(no_ask_prices) >= 3 else 0
         except Exception:

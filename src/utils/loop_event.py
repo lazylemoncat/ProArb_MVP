@@ -3,7 +3,7 @@ from dataclasses import asdict
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List
 
-from ..fetch_data.polymarket_client import (
+from ..fetch_data.polymarket.polymarket_client import (
     PolymarketClient,
 )
 from .dataloader import Config, load_all_configs

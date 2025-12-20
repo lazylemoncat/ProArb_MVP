@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List
 
-from ..fetch_data.polymarket_client import PolymarketClient
+from ..fetch_data.polymarket.polymarket_client import PolymarketClient
 
 from ..utils.dataloader import Config
 

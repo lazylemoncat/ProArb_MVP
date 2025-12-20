@@ -14,8 +14,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from dataclasses import asdict
 
-from src.fetch_data.polymarket_client import PolymarketClient
-from src.fetch_data.deribit_client import DeribitClient
+from fetch_data.polymarket.polymarket_client import PolymarketClient
+from fetch_data.deribit.deribit_client import DeribitClient
 from src.strategy.strategy2 import Strategy_input, cal_strategy_result, StrategyOutput
 
 from .services.api_models import (
@@ -377,11 +377,11 @@ async def get_positions():
 
             if not market_id:
                 continue
-            pm_context = PolymarketClient.get_pm_context(market_id)
+            pm_context = await PolymarketClient.get_pm_context(market_id)
             try:
                 db_context = DeribitClient.get_db_context(
                     title=market_id,
-                    asset="btc",
+                    asset="BTC",
                     inst_k1=inst_k1,
                     inst_k2=inst_k2,
                     k1_strike=k1_strike,

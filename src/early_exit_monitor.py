@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Dict, Any, Optional, Literal
 
-from .fetch_data.polymarket_client import PolymarketClient
+from .fetch_data.polymarket.polymarket_client import PolymarketClient
 from .utils.dataloader import load_all_configs
 from .utils.save_result import RESULTS_CSV_HEADER, ensure_csv_file
 

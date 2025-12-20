@@ -28,7 +28,7 @@ def check_should_record_signal(
     previous_snapshot: SignalSnapshot | None,
     investment_usd: float,
     record_signal_filter: Record_signal_filter,
-) -> tuple[bool, str, bool]:
+) -> tuple[bool, list[str], bool]:
     """
     发送 alert 信号和记入数据库的条件:
 
@@ -41,33 +41,34 @@ def check_should_record_signal(
         2. 状态切换维度
         3. 市场关键变化(突破阈值立即记录)
     """
-    details: str = ""
+    details: list[str] = []
     
     if previous_snapshot is None:
-        time_condition = True
-    else:
-        time_condition, temp_details = check_time_condition(previous_snapshot, record_signal_filter)
-        details += temp_details
+        return False, [], False
+    
+    time_condition, detail = check_time_condition(previous_snapshot, record_signal_filter)
+    details.append(detail)
+
+    if not time_condition:
+        return False, details, time_condition
 
     if now_snapshot.net_ev <= 0:
-        return False, "net_ev <= 0", time_condition
-    elif previous_snapshot is None:
-        return True, "", True
+        return False, ["net_ev <= 0"], time_condition
 
 
-    ev_change_condition, temp_details = check_ev_change_condition(
+    ev_change_condition, detail = check_ev_change_condition(
         now_snapshot, 
         previous_snapshot, 
         investment_usd,
         record_signal_filter
     )
-    details += temp_details
+    details.append(detail)
 
-    sign_change_condition, temp_details = check_sign_change_condition(now_snapshot, previous_snapshot)
-    details += temp_details
+    sign_change_condition, detail = check_sign_change_condition(now_snapshot, previous_snapshot)
+    details.append(detail)
 
-    market_change_condition = check_market_change_condition(now_snapshot, previous_snapshot, record_signal_filter)
-    details += temp_details
+    market_change_condition, detail = check_market_change_condition(now_snapshot, previous_snapshot, record_signal_filter)
+    details.append(detail)
 
     return time_condition and any(
         [
@@ -78,43 +79,43 @@ def check_should_record_signal(
     ), details, time_condition
 
 def check_should_trade_signal(trade_filter_input: Trade_filter_input, trade_filter: Trade_filter):
-    details: str = ""
+    details: list[str] = []
     
-    inv_condition, temp_details = check_inv_condition(trade_filter_input, trade_filter)
-    details += temp_details
+    inv_condition, detail = check_inv_condition(trade_filter_input, trade_filter)
+    details.append(detail)
 
-    daily_trades_condition, temp_details = check_daily_trades_condition(trade_filter_input, trade_filter)
-    details += temp_details
+    daily_trades_condition, detail = check_daily_trades_condition(trade_filter_input, trade_filter)
+    details.append(detail)
 
-    positions_counts_conditions, temp_details = check_open_positions_counts(trade_filter_input, trade_filter)
-    details += temp_details
+    positions_counts_conditions, detail = check_open_positions_counts(trade_filter_input, trade_filter)
+    details.append(detail)
 
-    repeat_open_condition, temp_details = check_repeat_open_position(
+    repeat_open_condition, detail = check_repeat_open_position(
         trade_filter_input,
         trade_filter, 
     )
-    details += temp_details
+    details.append(detail)
 
-    contract_amount_condition, temp_details = check_contract_amount(trade_filter_input, trade_filter)
-    details += temp_details
+    contract_amount_condition, detail = check_contract_amount(trade_filter_input, trade_filter)
+    details.append(detail)
 
-    adjust_contract_amount_condition, temp_details = check_adjust_contract_amount(
+    adjust_contract_amount_condition, detail = check_adjust_contract_amount(
         trade_filter_input,
         trade_filter
     )
-    details += temp_details
+    details += detail
 
-    pm_price_condition, temp_details = check_pm_price(trade_filter_input, trade_filter)
-    details += temp_details
+    pm_price_condition, detail = check_pm_price(trade_filter_input, trade_filter)
+    details.append(detail)
 
-    net_ev_condition, temp_details = check_net_ev(trade_filter_input, trade_filter)
-    details += temp_details
+    net_ev_condition, detail = check_net_ev(trade_filter_input, trade_filter)
+    details.append(detail)
 
-    roi_condition, temp_details = check_roi_pct(trade_filter_input, trade_filter)
-    details += temp_details
+    roi_condition, detail = check_roi_pct(trade_filter_input, trade_filter)
+    details.append(detail)
 
-    prob_edge_pct_condition, temp_details = check_prob_edge_pct(trade_filter_input, trade_filter)
-    details += temp_details
+    prob_edge_pct_condition, detail = check_prob_edge_pct(trade_filter_input, trade_filter)
+    details.append(detail)
 
     return all(
         [

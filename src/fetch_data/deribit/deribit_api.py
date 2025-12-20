@@ -1,20 +1,72 @@
+import asyncio
 import datetime
-from typing import Literal, Any
-
+import json
 import ssl
+from dataclasses import dataclass
+from typing import Any, Dict, Literal
+
 import certifi
 import requests
+from websockets import ClientConnection
 
 BASE_URL = "https://www.deribit.com/api/v2"
 
 HTTP_TIMEOUT = 10  # 秒
+RPC_TIMEOUT_SEC = 10
 
 # SSL 配置 - 使用 certifi 提供的 CA 证书
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 REQUESTS_SESSION = requests.Session()
 REQUESTS_SESSION.verify = certifi.where()
 
+@dataclass
+class DeribitUserCfg:
+    user_id: str
+    client_id: str
+    client_secret: str
+
 class DeribitAPI:
+    @staticmethod
+    async def get_orderbook_by_instrument_name(
+        websocket: ClientConnection, 
+        deribitUserCfg: DeribitUserCfg,
+        instrument_name: str,
+        depth: int
+    ):
+        msg = {
+            "id": int(deribitUserCfg.user_id),
+            "jsonrpc": "2.0",
+            "method": "public/get_order_book",
+            "params": {
+                "depth": depth,
+                "instrument_name": instrument_name
+            }
+        }
+        return await DeribitAPI._send_rpc(websocket, msg)
+    
+    @staticmethod
+    async def _send_rpc(websocket: ClientConnection, msg: Dict[str, Any]) -> Dict[str, Any]:
+        await asyncio.wait_for(websocket.send(json.dumps(msg)), timeout=RPC_TIMEOUT_SEC)
+        raw = await asyncio.wait_for(websocket.recv(), timeout=RPC_TIMEOUT_SEC)
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"raw": str(raw)} 
+
+    @staticmethod
+    async def websocket_auth(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg) -> Dict[str, Any]:
+        msg = {
+            "id": int(deribitUserCfg.user_id),
+            "jsonrpc": "2.0",
+            "method": "public/auth",
+            "params": {
+                "client_id": deribitUserCfg.client_id,
+                "client_secret": deribitUserCfg.client_secret,
+                "grant_type": "client_credentials",
+            },
+        }
+        return await DeribitAPI._send_rpc(websocket, msg)
+    
     @staticmethod
     def get_spot_price(index_name: Literal["btc_usd", "eth_usd"] = "btc_usd") -> float:
         """

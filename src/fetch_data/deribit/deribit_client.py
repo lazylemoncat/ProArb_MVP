@@ -1,14 +1,20 @@
-from dataclasses import dataclass
+import math
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal
 
-from ...strategy.probability_engine import bs_probability_gt
+import websockets
 
-from .deribit_api import DeribitAPI
+from ...strategy.probability_engine import bs_probability_gt
+from .deribit_api import DeribitAPI, DeribitUserCfg
+
+WS_URL = "wss://www.deribit.com/ws/api/v2"
 
 @dataclass
 class DeribitMarketContext:
     """聚合 Deribit 相关的行情与参数，方便后续计算和输出。"""
+    time: datetime
     title: str
     asset: str
     # 现货价格
@@ -37,6 +43,8 @@ class DeribitMarketContext:
     # 波动率 / 手续费
     k1_iv: float
     k2_iv: float
+    spot_iv_lower: tuple
+    spot_iv_upper: tuple
     k1_fee_approx: float
     k2_fee_approx: float
     mark_iv: float
@@ -46,7 +54,20 @@ class DeribitMarketContext:
     days_to_expairy: float
     r: float
     deribit_prob: float
+    # asks & bids
+    k1_ask_1_usd: list
+    k1_ask_2_usd: list
+    k1_ask_3_usd: list
+    k2_ask_1_usd: list
+    k2_ask_2_usd: list
+    k2_ask_3_usd: list
 
+    k1_bid_1_usd: list
+    k1_bid_2_usd: list
+    k1_bid_3_usd: list
+    k2_bid_1_usd: list
+    k2_bid_2_usd: list
+    k2_bid_3_usd: list
 
 @dataclass
 class Deribit_option_data:
@@ -56,25 +77,83 @@ class Deribit_option_data:
     ask_price: float
     fee: float
 
+def nearest_two_by_step(x: float, step: int = 1000):
+    lower = math.floor(x / step) * step
+    upper = lower + step
+    # 找到最靠近 x 的数
+    dl = abs(x - lower)
+    du = abs(upper - x)
+
+    # 等距时默认选 lower
+    nearest = lower if dl <= du else upper
+    return lower, upper, nearest
+
+
 class DeribitClient:
     @staticmethod
-    def get_db_context(
+    async def get_orderbook_prices(
+        deribitUserCfg: DeribitUserCfg,
+        instrument_name: str,
+        depth: int = 3
+    ):
+        async with websockets.connect(WS_URL) as websocket:
+            await DeribitAPI.websocket_auth(websocket, deribitUserCfg)
+            orderbook = await DeribitAPI.get_orderbook_by_instrument_name(
+                websocket,
+                deribitUserCfg,
+                instrument_name,
+                depth=depth
+            )
+            res = orderbook.get("result", {})
+            return {
+                "bids": res.get("bids", []),
+                "asks": res.get("asks", []),
+            }
+    
+    @staticmethod
+    async def get_db_context(
+        deribitUserCfg: DeribitUserCfg,
         title: str, 
-        asset: str, 
-        inst_k1: str, 
-        inst_k2: str, 
+        asset: Literal["BTC", "ETH"], 
         k1_strike: float, 
         k2_strike: float,
         k_poly: float,
-        expiry_timestamp: float
+        expiry_timestamp: float,
+        day_offset: int
     ):
-        asset = asset.upper()
         spot_symbol = "btc_usd" if asset == "BTC" else "eth_usd"
         spot = DeribitAPI.get_spot_price(spot_symbol)
         deribit_list = DeribitClient.get_deribit_option_data()
+        spot_lower, spot_upper, nearest = nearest_two_by_step(spot, step=1000)
+        inst_k1, k1_exp = DeribitClient.find_option_instrument(
+            k1_strike,
+            call=True,
+            currency=asset,
+            day_offset=day_offset,
+        )
+        inst_k2, k2_exp = DeribitClient.find_option_instrument(
+            k2_strike,
+            call=True,
+            currency=asset,
+            day_offset=day_offset,
+        )
         k1_info = next((d for d in deribit_list if d.instrument_name == inst_k1), None)
         k2_info = next((d for d in deribit_list if d.instrument_name == inst_k2), None)
-        if k1_info is None or k2_info is None:
+        inst_lower, _ = DeribitClient.find_option_instrument(
+            spot_lower,
+            call=True,
+            currency=asset,
+            exp_timestamp=expiry_timestamp,
+        )
+        inst_upper, _ = DeribitClient.find_option_instrument(
+            spot_upper,
+            call=True,
+            currency=asset,
+            exp_timestamp=expiry_timestamp,
+        )
+        spot_lower_info = next((d for d in deribit_list if d.instrument_name == inst_lower), None)
+        spot_upper_info = next((d for d in deribit_list if d.instrument_name == inst_upper), None)
+        if k1_info is None or k2_info is None or spot_lower_info is None or spot_upper_info is None:
             raise RuntimeError("missing deribit option quotes")
 
         k1_bid_btc = float(k1_info.bid_price)
@@ -94,18 +173,22 @@ class DeribitClient:
 
         k1_iv = float(k1_info.mark_iv)
         k2_iv = float(k2_info.mark_iv)
+        spot_iv_lower = float(spot_lower_info.mark_iv)
+        spot_iv_upper = float(spot_upper_info.mark_iv)
         k1_fee_approx = float(k1_info.fee)
         k2_fee_approx = float(k2_info.fee)
 
-        def _choose_mark_iv(k1_iv: float, k2_iv: float) -> float:
-            """根据 PRD 约定选择用于定价的 sigma."""
-            if k1_iv > 0:
-                return k1_iv
-            if k2_iv > 0:
-                return k2_iv
-            raise ValueError("Both K1 / K2 IV are non-positive, cannot choose mark_iv")
+        def _choose_mark_iv(
+                spot_lower: float, 
+                spot_iv_lower: float, 
+                spot_upper: float, 
+                spot_iv_upper: float, 
+                nearest: float
+        ) -> float:
+            """选择最靠近 spot 的 mark_iv"""
+            return spot_iv_lower if nearest == spot_lower else spot_iv_upper
 
-        mark_iv = _choose_mark_iv(k1_iv, k2_iv)
+        mark_iv = _choose_mark_iv(spot_lower, spot_iv_lower, spot_upper, spot_iv_upper, nearest)
 
         inst_k1, k1_exp = DeribitClient.find_option_instrument(
             k1_strike,
@@ -130,7 +213,17 @@ class DeribitClient:
             S=spot, K=k_poly, T=T, sigma=mark_iv / 100.0, r=r
         )
 
+        orderbook_k1 = await DeribitClient.get_orderbook_prices(deribitUserCfg, inst_k1)
+        orderbook_k2 = await DeribitClient.get_orderbook_prices(deribitUserCfg, inst_k2)
+
+        k1_asks = orderbook_k1.get("asks", [])
+        k1_bids = orderbook_k1.get("bids", [])
+
+        k2_asks = orderbook_k2.get("asks", [])
+        k2_bids = orderbook_k2.get("bids", [])
+
         return DeribitMarketContext(
+            time=datetime.now(timezone.utc),
             title=title,
             asset=asset,
             spot=spot,
@@ -156,11 +249,26 @@ class DeribitClient:
             k1_fee_approx=k1_fee_approx,
             k2_fee_approx=k2_fee_approx,
             mark_iv=mark_iv,
+            spot_iv_lower=(spot_lower, spot_iv_lower),
+            spot_iv_upper=(spot_upper, spot_iv_upper),
             k1_expiration_timestamp=k1_exp,
             T=T,
             days_to_expairy=T * 365,
             r=r,
             deribit_prob=deribit_prob,
+            k1_ask_1_usd=k1_asks[0] if len(k1_asks) >= 1 else [0, 0],
+            k1_ask_2_usd=k1_asks[1] if len(k1_asks) >= 2 else [0, 0],
+            k1_ask_3_usd=k1_asks[2] if len(k1_asks) >= 3 else [0, 0],
+            k2_ask_1_usd=k2_asks[0] if len(k2_asks) >= 1 else [0, 0],
+            k2_ask_2_usd=k2_asks[1] if len(k2_asks) >= 2 else [0, 0],
+            k2_ask_3_usd=k2_asks[2] if len(k2_asks) >= 3 else [0, 0],
+
+            k1_bid_1_usd=k1_bids[0] if len(k1_bids) >= 1 else [0, 0],
+            k1_bid_2_usd=k1_bids[1] if len(k1_bids) >= 2 else [0, 0],
+            k1_bid_3_usd=k1_bids[2] if len(k1_bids) >= 3 else [0, 0],
+            k2_bid_1_usd=k2_bids[0] if len(k2_bids) >= 1 else [0, 0],
+            k2_bid_2_usd=k2_bids[1] if len(k2_bids) >= 2 else [0, 0],
+            k2_bid_3_usd=k2_bids[2] if len(k2_bids) >= 3 else [0, 0],
         )
 
     @staticmethod

@@ -4,7 +4,7 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List
 
-from .fetch_data.polymarket_client import Insufficient_liquidity, PolymarketClient
+from .fetch_data.polymarket.polymarket_client import Insufficient_liquidity, PolymarketClient
 from .filters.filters import (
     Record_signal_filter,
     SignalSnapshot,
@@ -152,16 +152,14 @@ async def loop_event(
     except Exception as exc:
         return
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    table = make_summary_table(deribit_ctx, poly_ctx, timestamp=timestamp)
+    # 弃用
+    # timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    # table = make_summary_table(deribit_ctx, poly_ctx, timestamp=timestamp)
 
     env, config, trading_config = load_all_configs()
 
     for inv in investments:
         inv_base_usd = float(inv)
-
-        if abs(inv_base_usd - 200) > 1e-6:
-            continue
 
         try:
             # result, _ = await evaluate_investment(
@@ -174,7 +172,7 @@ async def loop_event(
             pm_open = await PolymarketClient.get_polymarket_slippage(
                 yes_token_id,
                 inv,
-                side="buy",
+                side="ask",
                 amount_type="usd",
             )
             yes_avg_price = pm_open.avg_price
@@ -184,7 +182,7 @@ async def loop_event(
             pm_open = await PolymarketClient.get_polymarket_slippage(
                 no_token_id,
                 inv,
-                side="buy",
+                side="ask",
                 amount_type="usd",
             )
             no_avg_price = pm_open.avg_price

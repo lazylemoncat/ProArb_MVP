@@ -16,6 +16,24 @@ class DeribitUserCfg:
 
 class Deribit_trade:
     @staticmethod
+    async def get_orderbook_by_instrument_name(
+        websocket: ClientConnection, 
+        deribitUserCfg: DeribitUserCfg,
+        instrument_name: str,
+        depth: int
+    ):
+        msg = {
+            "id": int(deribitUserCfg.user_id),
+            "jsonrpc": "2.0",
+            "method": "public/get_order_book",
+            "params": {
+                "depth": depth,
+                "instrument_name": instrument_name
+            }
+        }
+        return await Deribit_trade._send_rpc(websocket, msg)
+    
+    @staticmethod
     def extract_order_id(obj: Any) -> Optional[str]:
         if obj is None:
             return None
