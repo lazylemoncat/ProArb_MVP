@@ -5,8 +5,20 @@ from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..fetch_data.deribit.deribit_client import DeribitMarketContext
 
 @dataclass
-class SaveResult:
-    time: datetime
+class SavePosition:
+    entry_timestamp: datetime
+
+    trade_id: str
+    direction: str
+    status: str
+    strategy: int
+
+    pm_entry_cost: float
+    entry_price_pm: float
+
+    contracts: float
+    dr_entry_cost: float
+    expiry_timestamp: float
 
     event_title: str
     market_title: str
@@ -101,9 +113,31 @@ class SaveResult:
     k2_bid_2_usd: list
     k2_bid_3_usd: list
 
-def save_result(pm_ctx: PolymarketContext, db_ctx: DeribitMarketContext, csv_path: str):
-    row_obj = SaveResult(
-        time=pm_ctx.time,
+def save_position(
+        pm_ctx: PolymarketContext, 
+        db_ctx: DeribitMarketContext, 
+        trade_id: str,
+        direction: str,
+        status: str,
+        strategy: int,
+        pm_entry_cost: float,
+        entry_price_pm: float,
+        contracts: float,
+        dr_entry_cost: float,
+        expiry_timestamp: float,
+        csv_path: str
+    ):
+    row_obj = SavePosition(
+        entry_timestamp=pm_ctx.time,
+        trade_id=trade_id,
+        direction=direction,
+        status=status,
+        strategy=strategy,
+        pm_entry_cost=pm_entry_cost,
+        entry_price_pm=entry_price_pm,
+        contracts=contracts,
+        dr_entry_cost=dr_entry_cost,
+        expiry_timestamp=expiry_timestamp,
         event_title=pm_ctx.event_title,
         market_title=pm_ctx.market_title,
         event_id=pm_ctx.event_id,
@@ -193,6 +227,6 @@ def save_result(pm_ctx: PolymarketContext, db_ctx: DeribitMarketContext, csv_pat
         k2_bid_3_usd=db_ctx.k2_bid_3_usd,
     )
 
-    CsvHandler.save_to_csv(csv_path, row_dict=asdict(row_obj), class_obj=SaveResult)
+    CsvHandler.save_to_csv(csv_path, row_dict=asdict(row_obj), class_obj=SavePosition)
 
     return row_obj

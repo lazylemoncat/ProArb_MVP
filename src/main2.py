@@ -277,6 +277,9 @@ async def main_monitor(
     pass
     return current_target_date, events, instruments_map
 
+async def early_exit_monitor():
+    pass
+
 async def main():
     # 读取配置, 已含检查 env, config, trading_config 是否存在
     env, config, trading_config = load_all_configs(dotenv_path="dev.env")
@@ -347,7 +350,8 @@ async def main():
         trading_bot=trading_bot,
         dry_run=dry_run
     )
-        # TODO 启动提前平仓检查
+    # TODO 启动提前平仓检查
+    await early_exit_monitor()
 
 if __name__ == "__main__":
     asyncio.run(main())

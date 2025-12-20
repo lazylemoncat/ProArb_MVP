@@ -15,7 +15,7 @@ from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.dataloader import Env_config
 from ..fetch_data.deribit.deribit_client import DeribitMarketContext
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
-from ..utils.save_result import save_position_to_csv
+from ..utils.save_position import save_position
 
 logger = logging.getLogger(__name__)
 
@@ -169,49 +169,20 @@ async def execute_trade(
         except Exception:
             logger.error(f"db 交易失败, market_id: {poly_ctx.market_id}")
             raise Exception
-        position_data = {
-            # 基础信息
-            "trade_id": pm_order_id,
-            "market_id": poly_ctx.market_id,
-            "direction": "no",
-            "strategy": strategy_choosed,
-            "status": "open",
-            "entry_timestamp": datetime.now(timezone.utc).isoformat(),
-
-            # PM 头寸信息
-            "pm_token_id": token_id,
-            "pm_tokens": inv_usd / limit_price,
-            "pm_entry_cost": inv_usd,
-            "entry_price_pm": limit_price,
-
-            # DR 头寸信息
-            "contracts": contract_amount,
-            "contracts_theoretical": contract_amount,
-            "dr_entry_cost": fee_total,
-            "inst_k1": deribit_ctx.inst_k1,
-            "inst_k2": deribit_ctx.inst_k2,
-
-            # 行权价信息
-            "K_poly": deribit_ctx.K_poly,
-            "K1": deribit_ctx.k1_strike,
-            "K2": deribit_ctx.k2_strike,
-
-            # 资本信息
-            "im_usd": strategy_result.im_value_usd,
-            "capital_input": inv_usd + strategy_result.im_value_usd,
-
-            # 到期信息
-            "expiry_date": deribit_ctx.k1_expiration_timestamp,
-            "expiry_timestamp": deribit_ctx.k1_expiration_timestamp,
-
-            # 平仓信息（开仓时为空）
-            "exit_timestamp": "",
-            "exit_price_pm": "",
-            "settlement_price": "",
-            "exit_pnl": "",
-            "exit_reason": "",
-        }
-        save_position_to_csv(position_data)
+        save_position(
+            pm_ctx=poly_ctx,
+            db_ctx=deribit_ctx,
+            trade_id=str(pm_order_id),
+            direction="no",
+            status="open",
+            strategy=strategy_choosed,
+            pm_entry_cost=inv_usd,
+            entry_price_pm=limit_price,
+            contracts=contract_amount,
+            dr_entry_cost=fee_total,
+            expiry_timestamp=deribit_ctx.k1_expiration_timestamp,
+            csv_path="./data/positions.csv"
+        )
     # 通知
     try:
         await trading_bot.publish((
@@ -232,18 +203,19 @@ async def execute_trade(
         logger.error(e)
         raise e
     finally:
-        msg: str = (
-            f"交易debug: {poly_ctx.event_title}, {poly_ctx.market_title}\n"
-            f"strategy: {strategy_choosed}, spot_price: {deribit_ctx.spot}\n"
-            f"trade_signal: {trade_signal}, dry_run: {dry_run}\n"
-            f"inv_usd: {inv_usd}, contract_amount: {contract_amount}\n"
-            f"yes_price: {yes_avg_price}, no_price: {no_avg_price}\n"
-            f"k1_bid_btc: {deribit_ctx.k1_bid_btc}, k1_ask_btc: {deribit_ctx.k1_ask_btc}\n"
-            f"k2_bid_btc: {deribit_ctx.k2_bid_btc}, k2_ask_btc: {deribit_ctx.k2_ask_btc}\n"
-            f"mark_iv: {deribit_ctx.mark_iv}, sigma: {deribit_ctx.mark_iv / 100.0}\n"
-            f"days_to_expairy: {deribit_ctx.days_to_expairy}, r: {deribit_ctx.r}\n"
-            f"slippage_pct: {slippage_pct}, slippage: {slippage}, fee_total: {fee_total}\n"
-            f"roi_pct: {roi_pct}, gross_ev: {gross_ev}, net_ev: {net_ev}\n"
-            f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
-        )
-        logger.info(msg)
+        # msg: str = (
+        #     f"交易debug: {poly_ctx.event_title}, {poly_ctx.market_title}\n"
+        #     f"strategy: {strategy_choosed}, spot_price: {deribit_ctx.spot}\n"
+        #     f"trade_signal: {trade_signal}, dry_run: {dry_run}\n"
+        #     f"inv_usd: {inv_usd}, contract_amount: {contract_amount}\n"
+        #     f"yes_price: {yes_avg_price}, no_price: {no_avg_price}\n"
+        #     f"k1_bid_btc: {deribit_ctx.k1_bid_btc}, k1_ask_btc: {deribit_ctx.k1_ask_btc}\n"
+        #     f"k2_bid_btc: {deribit_ctx.k2_bid_btc}, k2_ask_btc: {deribit_ctx.k2_ask_btc}\n"
+        #     f"mark_iv: {deribit_ctx.mark_iv}, sigma: {deribit_ctx.mark_iv / 100.0}\n"
+        #     f"days_to_expairy: {deribit_ctx.days_to_expairy}, r: {deribit_ctx.r}\n"
+        #     f"slippage_pct: {slippage_pct}, slippage: {slippage}, fee_total: {fee_total}\n"
+        #     f"roi_pct: {roi_pct}, gross_ev: {gross_ev}, net_ev: {net_ev}\n"
+        #     f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+        # )
+        # logger.info(msg)
+        pass
