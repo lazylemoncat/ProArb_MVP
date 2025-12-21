@@ -7,6 +7,7 @@ from ..fetch_data.deribit.deribit_client import DeribitMarketContext
 @dataclass
 class SavePosition:
     entry_timestamp: datetime
+    dry_run: bool
 
     trade_id: str
     direction: str
@@ -114,6 +115,7 @@ class SavePosition:
     k2_bid_3_usd: list
 
 def save_position(
+        dry_run: bool,
         pm_ctx: PolymarketContext, 
         db_ctx: DeribitMarketContext, 
         trade_id: str,
@@ -129,6 +131,7 @@ def save_position(
     ):
     row_obj = SavePosition(
         entry_timestamp=pm_ctx.time,
+        dry_run=dry_run,
         trade_id=trade_id,
         direction=direction,
         status=status,

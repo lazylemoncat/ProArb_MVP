@@ -8,7 +8,7 @@ class TG_bot:
 
     async def publish(self, msg: str):
         try:
-            success, msg_id = await self.notifier.send_message(text=msg, parse_mode="")
+            success, msg_id = await self.notifier.send_message(text=msg)
             return success, msg_id
         except:
             raise

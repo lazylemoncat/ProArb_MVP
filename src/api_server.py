@@ -14,8 +14,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from dataclasses import asdict
 
-from fetch_data.polymarket.polymarket_client import PolymarketClient
-from fetch_data.deribit.deribit_client import DeribitClient
+from .fetch_data.polymarket.polymarket_client import PolymarketClient
+from .fetch_data.deribit.deribit_client import DeribitClient
 from src.strategy.strategy2 import Strategy_input, cal_strategy_result, StrategyOutput
 
 from .services.api_models import (

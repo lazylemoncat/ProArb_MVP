@@ -11,6 +11,12 @@ WS_TIMEOUT = 10.0  # WebSocket 等待 orderbook 的超时时间（秒）
 # SSL 配置 - 使用 certifi 提供的 CA 证书
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
+class EmptyOrderBookException(Exception):
+    def __init__(self, asset_id: str, *args: object) -> None:
+        self.asset_id = asset_id
+        self.message = f"Empty orderbook for asset_id: '{asset_id}'."
+        super().__init__(self.message, *args)
+
 class PolymarketWS:
     @classmethod
     async def fetch_orderbook(
@@ -27,7 +33,7 @@ class PolymarketWS:
 
                 if isinstance(data, list):
                     if len(data) == 0:
-                        raise ValueError("Empty websocket data from Polymarket")
+                        raise EmptyOrderBookException(asset_id)
                     data = data[0]
 
                 if data.get("event_type") != "book":
@@ -38,7 +44,7 @@ class PolymarketWS:
                 # 先取原始的 orderbook 列表（还是 list[dict]）
                 raw_book = data.get("asks", []) if side == "ask" else data.get("bids", [])
                 if not raw_book:
-                    raise ValueError(f"Empty orderbook for asset_id {asset_id}")
+                    raise EmptyOrderBookException(asset_id)
 
                 book: list[tuple[float, float]] = []
                 for level in raw_book:

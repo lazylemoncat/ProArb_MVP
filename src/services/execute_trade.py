@@ -1,47 +1,18 @@
 import logging
 from datetime import datetime, timezone
 
-from ..fetch_data.polymarket.polymarket_client import PolymarketClient
-from ..filters.filters import (
-    Trade_filter,
-    Trade_filter_input,
-    check_should_trade_signal,
-)
-from ..strategy.strategy2 import Strategy_input, cal_strategy_result
+from ..fetch_data.deribit.deribit_client import DeribitMarketContext
+from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..telegram.TG_bot import TG_bot
 from ..trading.deribit_trade import DeribitUserCfg
 from ..trading.deribit_trade_client import Deribit_trade_client
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.dataloader import Env_config
-from ..fetch_data.deribit.deribit_client import DeribitMarketContext
-from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..utils.save_position import save_position
 
 logger = logging.getLogger(__name__)
 
-async def send_opportunity(
-        alert_bot, 
-        market_title: str, 
-        net_ev: float, 
-        strategy: int,
-        prob_diff: float,
-        pm_price: float,
-        deribit_price: float,
-        inv_base_usd: float,
-    ):
-    try:
-        now_ts = datetime.now(timezone.utc)
-
-        await alert_bot.publish((
-                f"{market_title} | EV: +${round(net_ev, 3)}\n"
-                f"策略{strategy}, 概率差{round(prob_diff, 3)}\n"
-                f"PM ${pm_price}, Deribit ${round(deribit_price, 3)}\n"
-                f"建议投资${inv_base_usd}\n"
-                f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
-            ))
-    except Exception as exc:
-        logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
-
+# TODO 重构
 async def execute_trade(
     trade_signal: bool, 
     dry_run: bool,
@@ -52,11 +23,11 @@ async def execute_trade(
     strategy_choosed: int,
     env_config: Env_config,
     trading_bot: TG_bot,
-    alert_bot: TG_bot,
-    prob_diff: float,
-    deribit_price: float,
-    roi_pct: float,
-    trade_filter: Trade_filter
+    limit_price: float,
+    token_id: str,
+    fee_total: float,
+    slippage_pct: float,
+    net_ev: float
 ):
     # 参数验证
     if not trade_signal:
@@ -65,85 +36,87 @@ async def execute_trade(
     if inv_usd <= 0:
         assert False
     
-    yes_token_id = poly_ctx.yes_token_id
-    pm_open = await PolymarketClient.get_polymarket_slippage(
-        yes_token_id,
-        inv_usd,
-        side="ask",
-        amount_type="usd",
-    )
-    yes_avg_price = pm_open.avg_price
-    slippage_pct_1 = pm_open.slippage_pct
+    # yes_token_id = poly_ctx.yes_token_id
+    # pm_open = await PolymarketClient.get_polymarket_slippage(
+    #     yes_token_id,
+    #     inv_usd,
+    #     side="ask",
+    #     amount_type="usd",
+    # )
+    # yes_avg_price = pm_open.avg_price
+    # slippage_pct_1 = pm_open.slippage_pct
     
-    no_token_id = poly_ctx.no_token_id
-    pm_open = await PolymarketClient.get_polymarket_slippage(
-        no_token_id,
-        inv_usd,
-        side="ask",
-        amount_type="usd",
-    )
-    no_avg_price = pm_open.avg_price
-    slippage_pct_2 = pm_open.slippage_pct
+    # no_token_id = poly_ctx.no_token_id
+    # pm_open = await PolymarketClient.get_polymarket_slippage(
+    #     no_token_id,
+    #     inv_usd,
+    #     side="ask",
+    #     amount_type="usd",
+    # )
+    # no_avg_price = pm_open.avg_price
+    # slippage_pct_2 = pm_open.slippage_pct
 
-    pm_avg_open = yes_avg_price if strategy_choosed == 1 else no_avg_price
-    slippage_pct = slippage_pct_1 if strategy_choosed == 1 else slippage_pct_2
-    token_id = yes_token_id if strategy_choosed == 1 else no_token_id
+    # pm_avg_open = yes_avg_price if strategy_choosed == 1 else no_avg_price
+    # slippage_pct = slippage_pct_1 if strategy_choosed == 1 else slippage_pct_2
+    # token_id = yes_token_id if strategy_choosed == 1 else no_token_id
 
-    if contract_amount < 0.1:
-        assert False
+    # if contract_amount < 0.1:
+    #     assert False
     
-    # 获取实际成交价格
-    limit_price = round(pm_avg_open, 2)
-    # 获取 db 手续费, pm 没有手续费
-    db_fee = 0.0003 * float(deribit_ctx.spot) * contract_amount
-    k1_fee = 0.125 * (deribit_ctx.k1_ask_usd if strategy_choosed == 2 else deribit_ctx.k1_bid_usd) * contract_amount
-    k2_fee = 0.125 * (deribit_ctx.k2_bid_usd if strategy_choosed == 2 else deribit_ctx.k2_ask_usd) * contract_amount
-    fee_total = max(min(db_fee, k1_fee), min(db_fee, k2_fee))
-    # 获取滑点
-    slippage = inv_usd * slippage_pct
-    # 获取净利润
-    strategy_input = Strategy_input(
-        inv_usd=inv_usd,
-        strategy=strategy_choosed,
-        spot_price=deribit_ctx.spot,
-        k1_price=deribit_ctx.k1_strike,
-        k2_price=deribit_ctx.k2_strike,
-        k_poly_price=deribit_ctx.K_poly,
-        days_to_expiry=deribit_ctx.days_to_expairy,
-        sigma=deribit_ctx.mark_iv / 100.0,
-        pm_yes_price=yes_avg_price,
-        pm_no_price=no_avg_price,
-        is_DST=datetime.now().dst() is not None,
-        k1_ask_btc=deribit_ctx.k1_ask_btc,
-        k1_bid_btc=deribit_ctx.k1_bid_btc,
-        k2_ask_btc=deribit_ctx.k2_ask_btc,
-        k2_bid_btc=deribit_ctx.k2_bid_btc
-    )
-    strategy_result = cal_strategy_result(strategy_input)
-    gross_ev = strategy_result.gross_ev
-    net_ev = gross_ev - fee_total - slippage
+    # # 获取实际成交价格
+    # limit_price = round(pm_avg_open, 2)
+    # # 获取 db 手续费, pm 没有手续费
+    # db_fee = 0.0003 * float(deribit_ctx.spot) * contract_amount
+    # k1_fee = 0.125 * (deribit_ctx.k1_ask_usd if strategy_choosed == 2 else deribit_ctx.k1_bid_usd) * contract_amount
+    # k2_fee = 0.125 * (deribit_ctx.k2_bid_usd if strategy_choosed == 2 else deribit_ctx.k2_ask_usd) * contract_amount
+    # fee_total = max(min(db_fee, k1_fee), min(db_fee, k2_fee))
+    # # 获取滑点
+    # slippage = inv_usd * slippage_pct
+    # # 获取净利润
+    # strategy_input = Strategy_input(
+    #     inv_usd=inv_usd,
+    #     strategy=strategy_choosed,
+    #     spot_price=deribit_ctx.spot,
+    #     k1_price=deribit_ctx.k1_strike,
+    #     k2_price=deribit_ctx.k2_strike,
+    #     k_poly_price=deribit_ctx.K_poly,
+    #     days_to_expiry=deribit_ctx.days_to_expairy,
+    #     sigma=deribit_ctx.mark_iv / 100.0,
+    #     pm_yes_price=yes_avg_price,
+    #     pm_no_price=no_avg_price,
+    #     is_DST=datetime.now().dst() is not None,
+    #     k1_ask_btc=deribit_ctx.k1_ask_btc,
+    #     k1_bid_btc=deribit_ctx.k1_bid_btc,
+    #     k2_ask_btc=deribit_ctx.k2_ask_btc,
+    #     k2_bid_btc=deribit_ctx.k2_bid_btc
+    # )
+    # strategy_result = cal_strategy_result(strategy_input)
+    # gross_ev = strategy_result.gross_ev
+    # net_ev = gross_ev - fee_total - slippage
 
-    if net_ev <= 0:
-        return False
+    # if net_ev <= 0:
+    #     return False
     
-    prob_diff = (deribit_price - limit_price) * 100.0
-    prob_edge_pct = abs(prob_diff) / 100.0
-    trade_filter_input = Trade_filter_input(
-        inv_usd=inv_usd,
-        market_id=poly_ctx.market_id,
-        contract_amount=contract_amount,
-        pm_price=limit_price,
-        net_ev=net_ev,
-        roi_pct=roi_pct,
-        prob_edge_pct=prob_edge_pct
-    )
-    trade_signal, trade_details = check_should_trade_signal(trade_filter_input, trade_filter)
+    # prob_diff = (deribit_price - limit_price) * 100.0
+    # prob_edge_pct = abs(prob_diff) / 100.0
+    # trade_filter_input = Trade_filter_input(
+    #     inv_usd=inv_usd,
+    #     market_id=poly_ctx.market_id,
+    #     contract_amount=contract_amount,
+    #     pm_price=limit_price,
+    #     net_ev=net_ev,
+    #     roi_pct=roi_pct,
+    #     prob_edge_pct=prob_edge_pct
+    # )
+    # trade_signal, trade_details = check_should_trade_signal(trade_filter_input, trade_filter)
     if not trade_signal:
-        await alert_bot.publish(str(trade_details))
-        logger.info(trade_details)
+        # await alert_bot.publish(str(trade_details))
+        # logger.info(trade_details)
+        print("# await alert_bot.publish(str(trade_details))")
         return False
     # 交易
     await trading_bot.publish(f"{poly_ctx.market_id} 正在进行交易")
+    pm_order_id = ""
     if not dry_run:
         deribit_cfg = DeribitUserCfg(
             user_id=env_config.deribit_user_id,
@@ -169,20 +142,22 @@ async def execute_trade(
         except Exception:
             logger.error(f"db 交易失败, market_id: {poly_ctx.market_id}")
             raise Exception
-        save_position(
-            pm_ctx=poly_ctx,
-            db_ctx=deribit_ctx,
-            trade_id=str(pm_order_id),
-            direction="no",
-            status="open",
-            strategy=strategy_choosed,
-            pm_entry_cost=inv_usd,
-            entry_price_pm=limit_price,
-            contracts=contract_amount,
-            dr_entry_cost=fee_total,
-            expiry_timestamp=deribit_ctx.k1_expiration_timestamp,
-            csv_path="./data/positions.csv"
-        )
+
+    save_position(
+        dry_run=dry_run,
+        pm_ctx=poly_ctx,
+        db_ctx=deribit_ctx,
+        trade_id=str(pm_order_id),
+        direction="no",
+        status="open",
+        strategy=strategy_choosed,
+        pm_entry_cost=inv_usd,
+        entry_price_pm=limit_price,
+        contracts=contract_amount,
+        dr_entry_cost=fee_total,
+        expiry_timestamp=deribit_ctx.k1_expiration_timestamp,
+        csv_path="./data/positions.csv"
+    )
     # 通知
     try:
         await trading_bot.publish((
