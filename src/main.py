@@ -183,6 +183,9 @@ async def investment_runner(
             if previous_snapshot is None:
                 signal_state[signal_key] = now_snapshot
 
+            # 写入本次检测结果
+            save_result(pm_ctx, deribit_ctx, "./data/raw_results.csv")
+
             # 发送套利机会到 Alert Bot
             if record_signal:
                 await send_opportunity(
