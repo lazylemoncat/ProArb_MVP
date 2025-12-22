@@ -175,7 +175,7 @@ async def execute_trade(
             f"{datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
         ))
     except Exception as e:
-        logger.error(e)
+        logger.error(e, exc_info=True)
         raise e
     finally:
         # msg: str = (

@@ -66,6 +66,9 @@ def init_markets(
                 day_offset=day_offset,
             )
 
+        if k1_exp != k2_exp:
+            continue
+
         if expected_expiration_date:
             actual_expiration_date = datetime.fromtimestamp(
                 k1_exp / 1000.0, tz=timezone.utc
