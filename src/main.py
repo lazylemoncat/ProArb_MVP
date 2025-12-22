@@ -11,6 +11,7 @@ from .fetch_data.deribit.deribit_client import (
     DeribitClient,
     DeribitMarketContext,
     DeribitUserCfg,
+    EmptyDeribitOptionException
 )
 from .fetch_data.polymarket.polymarket_client import (
     PolymarketClient,
@@ -291,6 +292,9 @@ async def main_monitor(
             )
         # 空 PM orderbook
         except EmptyOrderBookException:
+            continue
+        # 空 DB option
+        except EmptyDeribitOptionException:
             continue
         except Exception as e:
             logger.warning(e, exc_info=True)

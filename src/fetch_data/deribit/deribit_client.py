@@ -72,6 +72,12 @@ class DeribitMarketContext:
     k2_bid_2_usd: list
     k2_bid_3_usd: list
 
+class EmptyDeribitOptionException(Exception):
+    def __init__(self, inst_k1: str, inst_k2: str, *args: object) -> None:
+        self.inst_k1 = inst_k1
+        self.message = f"Empty deribit option for inst_k1: '{inst_k1}, inst_k2: {inst_k2}'."
+        super().__init__(self.message, *args)
+
 @dataclass
 class Deribit_option_data:
     instrument_name: str
@@ -158,7 +164,7 @@ class DeribitClient:
             spot_lower_info = next((d for d in deribit_list if d.instrument_name == inst_lower), None)
             spot_upper_info = next((d for d in deribit_list if d.instrument_name == inst_upper), None)
             if k1_info is None or k2_info is None or spot_lower_info is None or spot_upper_info is None:
-                raise RuntimeError("missing deribit option quotes")
+                raise EmptyDeribitOptionException(inst_k1, inst_k2)
 
             k1_bid_btc = float(k1_info.bid_price)
             k1_ask_btc = float(k1_info.ask_price)
