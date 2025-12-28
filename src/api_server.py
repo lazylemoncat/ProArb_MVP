@@ -1,533 +1,377 @@
-from __future__ import annotations
-
 import asyncio
-import csv
-import json
 import logging
-import os
-import time
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
+from typing import Literal
 
-from fastapi import APIRouter, FastAPI, HTTPException, Query
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
-from dataclasses import asdict
+import httpx
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from httpx import ASGITransport
+from pydantic import BaseModel
 
-from .fetch_data.polymarket.polymarket_client import PolymarketClient
-from .fetch_data.deribit.deribit_client import DeribitClient
-from src.strategy.strategy2 import Strategy_input, cal_strategy_result, StrategyOutput
-
-from .services.api_models import (
-    ApiErrorResponse,
-    DBSnapshotResponse,
-    EVResponse,
-    HealthResponse,
-    PMSnapshotResponse,
-    TradeExecuteRequest,
-    TradeExecuteResponse,
-    TradeSimRequest,
-    TradeSimResponse,
-)
-from .services.data_adapter import (
-    CACHE,
-    load_db_snapshot,
-    load_pm_snapshot,
-    refresh_cache,
-)
-from .services.trade_service import (
-    TradeApiError,
-    execute_trade,
-    simulate_trade,
-)
 from .telegram.TG_bot import TG_bot
-from .utils.dataloader import load_all_configs, Env_config, Config, Trading_config 
+from .utils.dataloader import load_all_configs
 
+LOG_DIR = Path("data")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-def _round_floats(value: Any, precision: int = 6) -> Any:
-    """Recursively round float values to the desired precision for JSON output."""
-    if isinstance(value, float):
-        return round(value, precision)
-    if isinstance(value, dict):
-        return {k: _round_floats(v, precision) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_round_floats(v, precision) for v in value]
-    if isinstance(value, tuple):
-        return tuple(_round_floats(v, precision) for v in value)
-    return value
+# 这个是“当前正在写入”的文件（每天午夜会滚动）
+ACTIVE_LOG = LOG_DIR / "server_proarb.log"
 
-
-class SixDecimalJSONResponse(JSONResponse):
-    """JSON response that rounds all float values to 6 decimal places."""
-
-    def render(self, content: Any) -> bytes:
-        encoded = jsonable_encoder(content)
-        rounded = _round_floats(encoded, precision=6)
-        return json.dumps(rounded, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
-
-
-app = FastAPI(title="arb-engine", default_response_class=SixDecimalJSONResponse)
-router = APIRouter()
-
-
-
-def _get_config() -> Tuple[Env_config, Config, Trading_config]:
-    env, config, trading_config = load_all_configs()
-    return env, config, trading_config
-
-env, config, trading_config = _get_config()
-REFRESH_SECONDS = float(config.thresholds.check_interval_sec)
-ENDPOINT_BROADCAST_SECONDS = 3600
-
-logging.basicConfig(
-    level="INFO",
-    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    filename="data/proarb_server.log",  # 指定日志文件
-    filemode="a"  # 'a'表示追加模式，'w'表示覆盖模式
+handler = TimedRotatingFileHandler(
+    filename=str(ACTIVE_LOG),
+    when="midnight",      # 每天午夜切分
+    interval=1,
+    backupCount=30,       # 保留 30 天（按需调整）
+    utc=True,             # 是否用 UTC 作为“午夜”和日期（若要本地时间改成 False）
+    encoding="utf-8",
 )
+
+# 默认滚动名形如：server_proarb.log.2025_12_28
+handler.suffix = "%Y_%m_%d"
+
+# 把默认滚动名改成：server_proarb_2025_12_28.log
+def namer(default_name: str) -> str:
+    p = Path(default_name)
+    date_part = p.name.split(".")[-1]  # 取到 2025_12_28
+    return str(p.with_name(f"server_proarb_{date_part}.log"))
+
+handler.namer = namer
+
+formatter = logging.Formatter(
+    "%(asctime)s %(levelname)s %(name)s - %(message)s"
+)
+handler.setFormatter(formatter)
+
+# 建议配到 root logger，确保你写的 logging.exception(...) 也进同一套文件
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.handlers.clear()          # 避免重复 handler（多次 import / reload 时常见）
+root_logger.addHandler(handler)
+
 logger = logging.getLogger(__name__)
 
+env, config, trading_config = load_all_configs()
 
-def _get_csv_path() -> str:
-    _, cfg, _ = _get_config()
-    cfg = asdict(cfg)
-    thresholds = cfg.get("thresholds") or {}
-    return thresholds.get("OUTPUT_CSV", "data/results.csv")
-
-
-def _position_csv_path() -> str:
-    return "data/positions.csv"
-
-
-def _should_force_dry_trade() -> bool:
-    _, cfg, _ = _get_config()
-    cfg = asdict(cfg)
-    thresholds = cfg.get("thresholds") or {}
-    return bool(thresholds.get("dry_trade", False))
-
-
-def _list_get_api_paths() -> list[str]:
-    paths: set[str] = set()
-    for route in app.router.routes:
-        methods = getattr(route, "methods", set())
-        path = getattr(route, "path", "")
-        if "GET" in methods and str(path).startswith("/api/"):
-            paths.add(str(path))
-    return sorted(paths)
-
-
-def _format_endpoint_message(paths: list[str]) -> str:
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    lines = [f"GET API endpoints ({timestamp} UTC)"]
-    if not paths:
-        lines.append("- 无可用端点")
-    else:
-        lines.extend(f"- {p}" for p in paths)
-    return "\n".join(lines)
-
-
-def _init_telegram_bots_for_endpoints() -> list[TG_bot]:
-    env, cfg, _ = _get_config()
-    env = asdict(env)
-    cfg = asdict(cfg)
-
-    if not env.get("TELEGRAM_ENABLED", True):
-        logger.info("telegram disabled; skip endpoint broadcast")
-        return []
-
-    chat_id = env.get("TELEGRAM_CHAT_ID")
-    bots: list[TG_bot] = []
-
-    try:
-        if env.get("TELEGRAM_ALART_ENABLED") and env.get("TELEGRAM_BOT_TOKEN_ALERT"):
-            bots.append(TG_bot(name="alert", token=env["TELEGRAM_BOT_TOKEN_ALERT"], chat_id=chat_id))
-
-        if env.get("TELEGRAM_TRADING_ENABLED") and env.get("TELEGRAM_BOT_TOKEN_TRADING"):
-            bots.append(TG_bot(name="trading", token=env["TELEGRAM_BOT_TOKEN_TRADING"], chat_id=chat_id))
-    except Exception as exc:
-        logger.exception("failed to initialize telegram bots for endpoints: %s", exc)
-        return []
-
-    if not bots:
-        logger.info("no telegram bots configured for endpoint broadcast")
-
-    return bots
-
-
-async def _broadcast_get_endpoints_loop() -> None:
-    bots = _init_telegram_bots_for_endpoints()
-    if not bots:
-        return
-
-    while True:
-        try:
-            paths = _list_get_api_paths()
-            message = _format_endpoint_message(paths)
-            for bot in bots:
-                success, _ = await bot.publish(message)
-                if not success:
-                    logger.warning("failed to publish get endpoints via bot=%s", bot.name)
-        except Exception as exc:
-            logger.exception("failed to broadcast get endpoints: %s", exc)
-
-        await asyncio.sleep(ENDPOINT_BROADCAST_SECONDS)
-
-
-async def _background_loop() -> None:
+async def hourly_health_job(app: FastAPI) -> None:
     """
-    后台刷新循环：每 10 秒读一次 CSV，刷新快照缓存（pm/db/ev）。
+    每小时调用一次 /api/health,并用两个 bot 发送 health resp
+    使用 ASGITransport 直接在进程内调用 FastAPI(不走真实网络端口)
     """
-    csv_path = _get_csv_path()
-    logger.info("background loop starting refresh_seconds=%s csv=%s", REFRESH_SECONDS, csv_path)
-
-    while True:
-        try:
-            refresh_cache(csv_path)
-        except Exception as exc:
-            logger.exception("background refresh failed: %s", exc)
-        await asyncio.sleep(REFRESH_SECONDS)
-
-
-@app.on_event("startup")
-async def _on_startup() -> None:
-    asyncio.create_task(_background_loop())
-    asyncio.create_task(_broadcast_get_endpoints_loop())
-
-
-@app.exception_handler(TradeApiError)
-async def _trade_api_error_handler(request, exc: TradeApiError):
-    payload = ApiErrorResponse(
-        error=True,
-        error_code=exc.error_code,
-        message=exc.message,
-        timestamp=int(time.time()),
-        details=exc.details,
+    transport = ASGITransport(app=app)
+    alert_bot = TG_bot(
+        name="alert",
+        token=env.TELEGRAM_BOT_TOKEN_ALERT,
+        chat_id=env.TELEGRAM_CHAT_ID
     )
-    return SixDecimalJSONResponse(status_code=exc.status_code, content=payload.model_dump())
+    trading_bot = TG_bot(
+        name="trading",
+        token=env.TELEGRAM_BOT_TOKEN_TRADING,
+        chat_id=env.TELEGRAM_CHAT_ID
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://app") as client:
+        while True:
+            try:
+                resp = await client.get("/api/health")
+                resp.raise_for_status()
 
+                await alert_bot.publish(f"alert_bot health : {str(resp.json())}")
+                await trading_bot.publish(f"trading_bot health : {str(resp.json())}")
+            except Exception:
+                logging.exception("Hourly health job failed")
+
+            await asyncio.sleep(60 * 60)  # 3600 秒
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(hourly_health_job(app))
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+app = FastAPI(lifespan=lifespan)
+
+class HealthResponse(BaseModel):
+    status: Literal["OK"]
+    service: Literal["arb-engine"]
+    timestamp: str # ISO 格式
 
 @app.get("/api/health", response_model=HealthResponse)
-async def api_health() -> HealthResponse:
-    return HealthResponse(status="ok", service="arb-engine", timestamp=int(time.time()))
+def get_health():
+    return HealthResponse(
+        status="OK",
+        service="arb-engine",
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds")
+    )
 
+class PMResponse(BaseModel):
+    timestamp: str # ISO 格式
+    mark_id: str
+    event_title: str
+    asset: Literal["BTC"]
+    strike: int
+    yes_price: float
+    no_price: float
+    basic_orderbook: dict
 
-@app.get("/api/pm", response_model=PMSnapshotResponse)
-async def api_pm(market_id: Optional[str] = Query(default=None)) -> PMSnapshotResponse:
-    csv_path = _get_csv_path()
+@app.get("/api/pm", response_model=PMResponse)
+def get_pm():
+    # TODO 创建 PM csv
+    return PMResponse(
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        mark_id="",
+        event_title="",
+        asset="BTC",
+        strike=0,
+        yes_price=0,
+        no_price=0,
+        basic_orderbook={
+            "yes_mid": 0,
+            "no_mid": 0,
+            "last_updated": 0
+        }
+    )
 
-    try:
-        if market_id is None:
-            if CACHE.pm is None:
-                refresh_cache(csv_path)
-            if CACHE.pm is None:
-                raise HTTPException(status_code=503, detail=f"pm snapshot not available: {CACHE.last_error}")
-            return CACHE.pm
-        return load_pm_snapshot(csv_path, market_id=market_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+class DBRespone(BaseModel):
+    timestamp: str # ISO 格式
+    market_id: str
+    asset: Literal["BTC"]
+    expiry_date: str
+    days_to_expiry: float
+    strikes: dict
+    spot_price: dict
+    options_pricing: dict
+    vertical_spread: dict
 
+@app.get("/api/db", response_model=DBRespone)
+def get_db():
+    # TODO 创建 db csv
+    return DBRespone(
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        market_id="",
+        asset="BTC",
+        expiry_date="",
+        days_to_expiry=0,
+        strikes={
+            "K1": 0,
+            "K2": 0,
+            "K_poly": 0,
+        },
+        spot_price={
+            "btc_usd": 0,
+            "last_updated": 0
+        },
+        options_pricing={
+            "K1_call_mid_btc": 0,
+            "K2_call_mid_btc": 0,
+            "K1_call_mid_usd": 0,
+            "K2_call_mid_usd": 0
+        },
+        vertical_spread={
+            "spread_mid_btc": 0,
+            "spread_mid_usd": 0,
+            "implied_probability": 0
+        }
+    )
 
-@app.get("/api/db", response_model=DBSnapshotResponse)
-async def api_db(market_id: Optional[str] = Query(default=None)) -> DBSnapshotResponse:
-    csv_path = _get_csv_path()
-
-    try:
-        if market_id is None:
-            if CACHE.db is None:
-                refresh_cache(csv_path)
-            if CACHE.db is None:
-                raise HTTPException(status_code=503, detail=f"db snapshot not available: {CACHE.last_error}")
-            return CACHE.db
-        return load_db_snapshot(csv_path, market_id=market_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-
+class EVResponse(BaseModel):
+    signal_id: str # 主键，唯一标识这次决策
+    timestamp: str # ISO 格式
+    market_title: str
+    strategy: Literal[1, 2]
+    direction: Literal["YES", "NO"]
+    target_usd: float # 下单金额
+    k_poly: float # pm 目标价格
+    dr_k1_strike: int # K1
+    dr_k2_strike: int # K2
+    dr_index_price: float # 现货价
+    days_to_expiry: float # 入场剩余到期天数
+    pm_yes_avg_price: float # PM yes 平均价格
+    pm_no_avg_price: float # PM no 平均价格
+    pm_shares: float # PM 份数
+    pm_slippage_usd: float # 滑点金额
+    dr_contracts: float # 实际合约数量
+    dr_k1_price: float # 根据方向决定是 ask 还是 bid
+    dr_k2_price: float # 根据方向决定是 ask 还是 bid
+    dr_iv: float # 模型使用的波动率
+    dr_k1_iv: float
+    dr_k2_iv: float
+    dr_iv_floor: float # 与现货最接近的合约的 floor 的 iv
+    dr_iv_celling: float
+    dr_prob: float # Deribit 隐含概率(T0)
+    ev_gross_usd: float # 毛 EV
+    ev_theta_adj_usd: float # 修正后的毛利
+    ev_model_usd: float # 最终净利润
+    roi_model_pct: float # 模型 ROI(%)
 
 @app.get("/api/ev", response_model=EVResponse)
-async def api_ev() -> EVResponse:
-    csv_path = _get_csv_path()
-
-    if CACHE.ev is None:
-        refresh_cache(csv_path)
-    if CACHE.ev is None:
-        raise HTTPException(status_code=503, detail=f"ev snapshot not available: {CACHE.last_error}")
-    return CACHE.ev
-
-
-# ----------------------
-# Trade endpoints (POST)
-# ----------------------
-
-@app.post("/api/trade/sim", response_model=TradeSimResponse)
-async def api_trade_sim(payload: TradeSimRequest) -> TradeSimResponse:
-    csv_path = _get_csv_path()
-    result = simulate_trade(csv_path=csv_path, market_id=payload.market_id, investment_usd=payload.investment_usd)
-    return TradeSimResponse(
-        timestamp=int(time.time()),
-        market_id=payload.market_id,
-        investment_usd=payload.investment_usd,
-        result=result,
-        status="SIMULATION",
+def get_ev():
+    return EVResponse(
+        signal_id="",
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        market_title="",
+        strategy=1,
+        direction="NO",
+        target_usd=0,
+        k_poly=0,
+        dr_k1_strike=0,
+        dr_k2_strike=0,
+        dr_index_price=0,
+        days_to_expiry=0,
+        pm_yes_avg_price=0,
+        pm_no_avg_price=0,
+        pm_shares=0,
+        pm_slippage_usd=0,
+        dr_contracts=0,
+        dr_k1_price=0,
+        dr_k2_price=0,
+        dr_iv=0,
+        dr_k1_iv=0,
+        dr_k2_iv=0,
+        dr_iv_floor=0,
+        dr_iv_celling=0,
+        dr_prob=0,
+        ev_gross_usd=0,
+        ev_theta_adj_usd=0,
+        ev_model_usd=0,
+        roi_model_pct=0
     )
 
+class SimTradeRequest(BaseModel):
+    market_title: str
+    investment_usd: float
 
-router = APIRouter()
+class SimTradeResponse(BaseModel):
+    timestamp: str
+    market_title: str
+    result: dict
+    status: Literal["SIMULATION"]
 
-@router.post("/api/trade/execute")
-async def api_trade_execute(payload: TradeExecuteRequest) -> TradeExecuteResponse:
-    csv_path = _get_csv_path()
-    dry_run = True if _should_force_dry_trade() else payload.dry_run
 
-    result, status, tx_id, message = await execute_trade(
-        csv_path=csv_path,
-        market_id=payload.market_id,
-        investment_usd=payload.investment_usd,
-        dry_run=dry_run,
-        should_record_signal=True
+@app.post("/trade/sim", response_model=SimTradeResponse)
+def simute_trade(payload: SimTradeRequest):
+    return SimTradeResponse(
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        market_title="",
+        result={
+            "direction": "yes",
+            "ev_usd": 0,
+            "roi_pct": 0,
+            "total_cost_usd": 0,
+            "im_usd": 0,
+            "im_btc": 0,
+            "contracts": 0,
+            "slippage_pct": 0
+        },
+        status="SIMULATION"
     )
 
-    return TradeExecuteResponse(
-        timestamp=int(time.time()),
-        market_id=payload.market_id,
-        investment_usd=payload.investment_usd,
-        result=result,
-        status=status,
-        tx_id=tx_id,
-        message=message,
+class ExecuteRequest(BaseModel):
+    market_title: str
+    investment_usd: float
+    dry_run: bool = False
+
+class ExecuteResponse(BaseModel):
+    timestamp: str
+    market_title: str
+    investment_usd: float
+    result: dict
+    status: Literal["DRY_RUN", "LIVE_TRADE"]
+    tx_id: str
+    message: str
+
+@app.post("/api/trade/execute", response_model=ExecuteResponse)
+def execute_trade(payload: ExecuteRequest):
+    return ExecuteResponse(
+        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        market_title="",
+        investment_usd=0,
+        result={},
+        status="DRY_RUN",
+        tx_id="",
+        message=""
     )
 
-@app.get("/api/trade/positions")
-async def get_positions():
-    # TODO 修复 pnl
-    positions_file = _position_csv_path()
+class PositionResponse(BaseModel):
+    # 基础索引
+    signal_id: str # 关联策略 id
+    order_id: str # 交易所订单号
+    timestamp: str # 成交时间 ISO 格式
+    market_title: str
+    # 交易核心
+    status: Literal["OPEN", "CLOSE"] # 状态
+    action: Literal["buy", "sell"]
+    amount_usd: float # 投入金额
+    days_to_expiry: float # 离到期还有几天
+    # PM 数据
+    pm_data: dict
+    # DB 数据
+    dr_data: dict
 
-    if not os.path.exists(positions_file):
-        return {"positions": [], "summary": {"open_positions": 0, "total_margin_usd": 0, "unrealized_pnl_usd": 0}}
+@app.get("/api/positions", response_model=PositionResponse)
+def get_positions():
+    return PositionResponse(
+        signal_id="",
+        order_id="",
+        timestamp="",
+        market_title="",
+        status="CLOSE",
+        action="buy",
+        amount_usd=0,
+        days_to_expiry=0,
+        pm_data={},
+        dr_data={},
+    )
 
-    positions = []
-    total_margin = 0
-    total_unrealized_pnl = 0
-    open_positions_count = 0
-    deribit_price_cache: dict[str, dict[str, float]] = {}
-    deribit_spot_cache: dict[str, float] = {}
+class PnlResponse(BaseModel):
+    # 基础信息
+    signal_id: str
+    timestamp: str
+    market_title: str
+    # 核心财务指标
+    funding_usd: float # 未来永续合约的资金费用
+    cost_basic_usd: float # 实际投入的总成本(PM 成本 + DB 进场时的 USD 价值)
+    total_unrealized_pnl_usd: float # 当前总浮盈
+    # 影子账本
+    shadow_view: dict
+    # 真实账本
+    real_view: dict
 
-    def _get_deribit_mid_price(instrument: str) -> float:
-        if not instrument:
-            return 0.0
+@app.get("/api/pnl", response_model=PnlResponse)
+def get_pnls():
+    return PnlResponse(
+        signal_id="",
+        timestamp="",
+        market_title="",
+        funding_usd=0,
+        cost_basic_usd=0,
+        total_unrealized_pnl_usd=0,
+        shadow_view={},
+        real_view={}
+    )
 
-        currency = instrument.split("-")[0].upper()
-        if currency not in deribit_price_cache:
-            try:
-                option_list = DeribitClient.get_deribit_option_data(currency=currency)
-            except Exception as exc:  # pragma: no cover - 网络异常时直接返回0
-                logger.warning("Failed to fetch Deribit prices for %s: %s", currency, exc)
-                deribit_price_cache[currency] = {}
-            else:
-                price_map: dict[str, float] = {}
-                for opt in option_list:
-                    bid = float(getattr(opt, "bid_price", 0.0) or 0.0)
-                    ask = float(getattr(opt, "ask_price", 0.0) or 0.0)
-                    if bid > 0 and ask > 0:
-                        mid = (bid + ask) / 2
-                    else:
-                        mid = bid or ask
-                    price_map[opt.instrument_name] = mid
-                deribit_price_cache[currency] = price_map
+BASE_DIR = Path(__file__).resolve().parent.parent
+DOWNLOAD_DIR = BASE_DIR / "data"
 
-        return deribit_price_cache.get(currency, {}).get(instrument, 0.0)
+@app.get("/api/files/{filename}")
+def download_file(filename: str):
+    # 基础安全：禁止路径穿越（如 ../../etc/passwd）
+    file_path = (DOWNLOAD_DIR / filename).resolve()
+    if DOWNLOAD_DIR.resolve() not in file_path.parents:
+        raise HTTPException(status_code=400, detail="Invalid filename")
 
-    def _get_deribit_spot_usd(currency: str) -> float:
-        """获取 Deribit 现货价格（USD），避免重复请求。"""
-        key = currency.lower()
-        if key in deribit_spot_cache:
-            return deribit_spot_cache[key]
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
 
-        index_name = "btc_usd" if key == "btc" else "eth_usd"
-        try:
-            spot_price = float(DeribitClient.get_spot_price(index_name))
-        except Exception as exc:  # pragma: no cover - 网络异常直接返回0
-            logger.warning("Failed to fetch Deribit spot for %s: %s", currency, exc)
-            spot_price = 0.0
-
-        deribit_spot_cache[key] = spot_price
-        return spot_price
-
-    # 读取 CSV 文件中的数据
-    with open(positions_file, mode='r', encoding='utf-8') as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            market_id = row.get("market_id") or ""
-            inst_k1 = row.get("inst_k1") or ""
-            inst_k2 = row.get("inst_k2") or ""
-            k1_strike = float(row.get("K1") or 0.0)
-            k2_strike = float(row.get("K2") or "")
-            k_poly = float(row.get("K_poly") or 0.0)
-            expiry_timestamp = float(row.get("expiry_timestamp") or 0.0)
-            inv_usd = float(row.get("pm_entry_cost") or 0.0)
-            strategy_choosed = int(row.get("strategy") or 0.0)
-            contract_amount = float(row.get("contracts") or 0.0)
-
-            if not market_id:
-                continue
-            pm_context = await PolymarketClient.get_pm_context(market_id)
-            try:
-                db_context = DeribitClient.get_db_context(
-                    title=market_id,
-                    asset="BTC",
-                    inst_k1=inst_k1,
-                    inst_k2=inst_k2,
-                    k1_strike=k1_strike,
-                    k2_strike=k2_strike,
-                    k_poly=k_poly,
-                    expiry_timestamp=expiry_timestamp,
-                )
-            except Exception as e:
-                continue
-
-            yes_token_id = pm_context.yes_token_id
-            pm_open = await PolymarketClient.get_polymarket_slippage(
-                yes_token_id,
-                inv_usd,
-                side="buy",
-                amount_type="usd",
-            )
-            yes_avg_price = pm_open.avg_price
-            slippage_pct_1 = pm_open.slippage_pct
-            
-            no_token_id = pm_context.no_token_id
-            pm_open = await PolymarketClient.get_polymarket_slippage(
-                no_token_id,
-                inv_usd,
-                side="buy",
-                amount_type="usd",
-            )
-            no_avg_price = pm_open.avg_price
-            slippage_pct_2 = pm_open.slippage_pct
-
-            pm_avg_open = yes_avg_price if strategy_choosed == 1 else no_avg_price
-            slippage_pct = slippage_pct_1 if strategy_choosed == 1 else slippage_pct_2
-            token_id = yes_token_id if strategy_choosed == 1 else no_token_id
-
-            # 获取实际成交价格
-            limit_price = round(pm_avg_open, 2)
-            # 获取 db 手续费, pm 没有手续费
-            db_fee = 0.0003 * float(db_context.spot) * contract_amount
-            k1_fee = 0.125 * (db_context.k1_ask_usd if strategy_choosed == 2 else db_context.k1_bid_usd) * contract_amount
-            k2_fee = 0.125 * (db_context.k2_bid_usd if strategy_choosed == 2 else db_context.k2_ask_usd) * contract_amount
-            fee_total = max(min(db_fee, k1_fee), min(db_fee, k2_fee))
-            # 获取滑点
-            slippage = inv_usd * slippage_pct
-            # 获取净利润
-            strategy_input = Strategy_input(
-                inv_usd=inv_usd,
-                strategy=strategy_choosed,
-                spot_price=db_context.spot,
-                k1_price=db_context.k1_strike,
-                k2_price=db_context.k2_strike,
-                k_poly_price=db_context.K_poly,
-                days_to_expiry=db_context.days_to_expairy,
-                sigma=db_context.mark_iv / 100.0,
-                pm_yes_price=yes_avg_price,
-                pm_no_price=no_avg_price,
-                is_DST=datetime.now().dst() is not None,
-                k1_ask_btc=db_context.k1_ask_btc,
-                k1_bid_btc=db_context.k1_bid_btc,
-                k2_ask_btc=db_context.k2_ask_btc,
-                k2_bid_btc=db_context.k2_bid_btc
-            )
-
-            strategy_result = cal_strategy_result(strategy_input)
-            gross_ev = strategy_result.gross_ev
-            net_ev = gross_ev - fee_total - slippage
-
-
-            # entry_price_pm = float(row.get("entry_price_pm", 0) or 0)
-            # contracts = float(row.get("contracts", 0) or 0)
-            # im_usd = float(row.get("im_usd", 0) or 0)
-            # pm_tokens = float(row.get("pm_tokens", 0) or 0)
-            # pm_entry_cost = float(row.get("pm_entry_cost", 0) or 0)
-            # dr_entry_cost = float(row.get("dr_entry_cost", 0) or 0)
-            # strategy = int(float(row.get("strategy", 0) or 0))
-
-            # direction = (row.get("direction") or "").lower()
-
-            # yes_price, no_price = PolymarketClient.get_prices(market_id)
-            # current_price_pm = yes_price if direction == "yes" else no_price
-
-            # current_value = pm_tokens * current_price_pm
-
-            # price_k1 = _get_deribit_mid_price(inst_k1)
-            # price_k2 = _get_deribit_mid_price(inst_k2)
-            # deribit_value = 0.0
-            # # Deribit 期权报价以币本位计价，需折算为 USD
-            # currency = (inst_k1 or inst_k2).split("-")[0].upper() if (inst_k1 or inst_k2) else ""
-            # spot_usd = _get_deribit_spot_usd(currency) if currency else 0.0
-            # spread_value = 0
-            # if contracts:
-            #     # 计算持仓价值（注意方向）
-            #     # 价差市场价值 = (K1价格 - K2价格) × 合约数
-            #     spread_value = (price_k1 - price_k2) * contracts
-
-            #     if strategy == 1:
-            #         # 策略1：卖出牛市价差（Short Bull Spread）
-            #         # 持仓是负债，价差上涨对卖方不利
-            #         # 持仓价值 = -价差市场价值（负值）
-            #         deribit_value = -spread_value
-            #     elif strategy == 2:
-            #         # 策略2：买入牛市价差（Long Bull Spread）
-            #         # 持仓是资产，价差上涨对买方有利
-            #         # 持仓价值 = 价差市场价值（正值）
-            #         deribit_value = spread_value
-
-            # deribit_value_usd = deribit_value * spot_usd
-            # deribit_unrealized_pnl = deribit_value_usd + dr_entry_cost
-            # unrealized_pnl_usd = (current_value - pm_entry_cost) + deribit_unrealized_pnl
-            # current_ev_usd = current_value + deribit_value_usd
-
-            position = {
-                "trade_id": row.get("trade_id"),
-                "market_id": market_id,
-                "direction": row.get("direction"),
-                "contracts": contract_amount,
-                "entry_price_pm": inv_usd,
-                "entry_timestamp": row.get("entry_timestamp"),
-                "im_usd": strategy_result.im_value_usd,
-                "status": row.get("status"),
-                "current_price_pm": pm_context.no_price if strategy_choosed == 2 else pm_context.yes_price,
-                "deribit_price_k1": db_context.k1_mid_usd,
-                "deribit_price_k2": db_context.k2_mid_usd,
-                "deribit_unrealized_pnl_usd": 0,
-                "unrealized_pnl_usd": net_ev,
-                "current_ev_usd": net_ev,
-                "spot_usd": db_context.spot,
-                "dr_entry_cost": 0,
-                "spread_value": 0
-            }
-
-            positions.append(position)
-            status = (row.get("status") or "").upper()
-            if status in ("OPEN", "DRY_RUN", "EXECUTED"):
-                open_positions_count += 1
-                total_margin += position["im_usd"]
-                total_unrealized_pnl += position["unrealized_pnl_usd"]
-
-    summary = {
-        "open_positions": open_positions_count,
-        "total_margin_usd": total_margin,
-        "unrealized_pnl_usd": total_unrealized_pnl
-    }
-
-    return {"timestamp": int(time.time()), "positions": positions, "summary": summary}
-
-    # TODO 增加获取 instruments_map 的端点
-
-# 注册交易相关的路由，否则 /api/trade/execute 等端点不会暴露
-app.include_router(router)
+    # filename 参数会影响浏览器“另存为”的文件名
+    return FileResponse(
+        path=str(file_path),
+        filename=file_path.name,
+        media_type="application/octet-stream",  # 通用二进制
+    )
