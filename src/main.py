@@ -3,7 +3,7 @@ import logging
 from datetime import date, datetime, timezone
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 
@@ -79,7 +79,21 @@ root_logger.addHandler(handler)
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_PATH = "./data/results.csv"
+def with_date_suffix(path_str: str, d: Optional[date] = None, use_utc: bool = True) -> str:
+    """
+    将路径中的文件名改为：{stem}_YYYY_MM_DD{suffix}
+    例如: "./data/results.csv" -> "./data/results_2025_12_28.csv"
+    """
+    p = Path(path_str)
+
+    if d is None:
+        tz = timezone.utc if use_utc else None  # None 表示本地时间
+        now = datetime.now(tz=tz)
+        d = now.date()
+
+    new_name = f"{p.stem}_{d:%Y_%m_%d}{p.suffix}"
+    return str(p.with_name(new_name))
+
 
 
 # TODO 集成到 TG_BOT
@@ -123,7 +137,10 @@ async def investment_runner(
         trade_filter: Trade_filter,
         alert_bot: TG_bot,
         trading_bot: TG_bot,
-        dry_run: bool
+        dry_run: bool,
+        output_path: str,
+        raw_output_csv: str,
+        positions_csv: str
     ):
     for inv_base_usd in inv_bases:
         try:
@@ -219,7 +236,7 @@ async def investment_runner(
                 signal_state[signal_key] = now_snapshot
 
             # 写入本次检测结果
-            save_result(pm_ctx, deribit_ctx, "./data/raw_results.csv")
+            save_result(pm_ctx, deribit_ctx, raw_output_csv)
             # save_result_to_mysql(pm_ctx, deribit_ctx, mysql_cfg)
 
             # 发送套利机会到 Alert Bot
@@ -238,7 +255,7 @@ async def investment_runner(
                 )
                 signal_state[signal_key] = now_snapshot
                 # 写入本次检测结果
-                save_result(pm_ctx, deribit_ctx, OUTPUT_PATH)
+                save_result(pm_ctx, deribit_ctx, output_path)
             
             if trade_signal and time_condition:
                 # await trading_bot.publish(f"{pm_ctx.market_id} 正在进行交易")
@@ -257,7 +274,8 @@ async def investment_runner(
                     token_id=pm_ctx.no_token_id,
                     fee_total=fee_total,
                     slippage_pct=slippage_pct,
-                    net_ev=net_ev
+                    net_ev=net_ev,
+                    positions_csv=positions_csv
                 )
 
         except Exception as e:
@@ -278,10 +296,18 @@ async def main_monitor(
         trade_filter: Trade_filter,
         alert_bot: TG_bot,
         trading_bot: TG_bot,
-        dry_run: bool
+        dry_run: bool,
+        OUTPUT_PATH: str,
+        RAW_OUTPUT_CSV: str,
+        POSITIONS_CSV: str
     ):
     # 是否更换日期
     current_target_date, have_changed = loop_date(current_target_date, config.thresholds.day_off)
+
+    output_path = with_date_suffix(OUTPUT_PATH)
+    raw_output_csv = with_date_suffix(RAW_OUTPUT_CSV)
+    positions_csv = with_date_suffix(POSITIONS_CSV)
+
     if have_changed:
         # 轮换日期, 存储 instruments_map 供 api 获取
         events, instruments_map = build_event(
@@ -327,7 +353,10 @@ async def main_monitor(
                 trade_filter,
                 alert_bot,
                 trading_bot,
-                dry_run
+                dry_run,
+                output_path,
+                raw_output_csv,
+                positions_csv
             )
         # 空 PM orderbook
         except EmptyOrderBookException:
@@ -338,7 +367,6 @@ async def main_monitor(
         except Exception as e:
             logger.warning(e, exc_info=True)
             continue
-            raise e
 
     return current_target_date, events, instruments_map
 
@@ -353,6 +381,10 @@ async def early_exit_monitor():
 async def main():
     # 读取配置, 已含检查 env, config, trading_config 是否存在
     env, config, trading_config = load_all_configs(dotenv_path="dev.env")
+
+    OUTPUT_PATH = config.thresholds.OUTPUT_CSV
+    RAW_OUTPUT_CSV = config.thresholds.RAW_OUTPUT_CSV
+    POSITIONS_CSV = config.thresholds.POSITIONS_CSV
 
     logger.info("开始实时套利监控...")
 
@@ -418,7 +450,10 @@ async def main():
             trade_filter=trade_filter,
             alert_bot=alert_bot,
             trading_bot=trading_bot,
-            dry_run=dry_run
+            dry_run=dry_run,
+            OUTPUT_PATH=OUTPUT_PATH,
+            RAW_OUTPUT_CSV=RAW_OUTPUT_CSV,
+            POSITIONS_CSV=POSITIONS_CSV
         )
         # TODO 启动提前平仓检查
         await early_exit_monitor()

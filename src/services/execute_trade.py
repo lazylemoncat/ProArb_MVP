@@ -27,7 +27,8 @@ async def execute_trade(
     token_id: str,
     fee_total: float,
     slippage_pct: float,
-    net_ev: float
+    net_ev: float,
+    positions_csv: str
 ):
     # 参数验证
     if not trade_signal:
@@ -115,6 +116,7 @@ async def execute_trade(
         print("# await alert_bot.publish(str(trade_details))")
         return False
     # 交易
+    contract_amount = round(contract_amount, 1)
     await trading_bot.publish(f"{poly_ctx.market_id} 正在进行交易")
     pm_order_id = ""
     if not dry_run:
@@ -139,6 +141,7 @@ async def execute_trade(
                 inst_k2=deribit_ctx.inst_k2,
                 strategy=strategy_choosed,
             )
+            logger.warning(f"db 交易: {sps}, {db_order_ids}, {executed_contracts}")
         except Exception:
             logger.error(f"db 交易失败, market_id: {poly_ctx.market_id}")
             raise Exception
@@ -156,7 +159,7 @@ async def execute_trade(
         contracts=contract_amount,
         dr_entry_cost=fee_total,
         expiry_timestamp=deribit_ctx.k1_expiration_timestamp,
-        csv_path="./data/positions.csv"
+        csv_path=positions_csv
     )
     # 通知
     try:
