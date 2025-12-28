@@ -1,22 +1,23 @@
 import asyncio
 import logging
 from datetime import date, datetime, timezone
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 from typing import List
 
-from .services.execute_trade import execute_trade
-from .utils.CsvHandler import CsvHandler
+import pandas as pd
 
 from .build_event.build_event import build_event, loop_date
 from .fetch_data.deribit.deribit_client import (
     DeribitClient,
     DeribitMarketContext,
     DeribitUserCfg,
-    EmptyDeribitOptionException
+    EmptyDeribitOptionException,
 )
 from .fetch_data.polymarket.polymarket_client import (
+    EmptyOrderBookException,
     PolymarketClient,
     PolymarketContext,
-    EmptyOrderBookException
 )
 from .filters.filters import (
     Record_signal_filter,
@@ -26,22 +27,56 @@ from .filters.filters import (
     check_should_record_signal,
     check_should_trade_signal,
 )
+from .services.execute_trade import execute_trade
 from .strategy.strategy2 import Strategy_input, cal_strategy_result
+from .telegram.TG_bot import TG_bot
+from .utils.CsvHandler import CsvHandler
 from .utils.dataloader import (
     Config,
     Env_config,
     Trading_config,
     load_all_configs,
 )
-from .telegram.TG_bot import TG_bot
 from .utils.save_result2 import save_result
+from .utils.save_result_mysql import save_result_to_mysql
 
-logging.basicConfig(
-    level="INFO",
-    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-    filename="data/proarb.log",  # 指定日志文件
-    filemode="a"  # 'a'表示追加模式，'w'表示覆盖模式
+LOG_DIR = Path("data")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# 这个是“当前正在写入”的文件（每天午夜会滚动）
+ACTIVE_LOG = LOG_DIR / "server_proarb.log"
+
+handler = TimedRotatingFileHandler(
+    filename=str(ACTIVE_LOG),
+    when="midnight",      # 每天午夜切分
+    interval=1,
+    backupCount=30,       # 保留 30 天（按需调整）
+    utc=True,             # 是否用 UTC 作为“午夜”和日期（若要本地时间改成 False）
+    encoding="utf-8",
 )
+
+# 默认滚动名形如：server_proarb.log.2025_12_28
+handler.suffix = "%Y_%m_%d"
+
+# 把默认滚动名改成：server_proarb_2025_12_28.log
+def namer(default_name: str) -> str:
+    p = Path(default_name)
+    date_part = p.name.split(".")[-1]  # 取到 2025_12_28
+    return str(p.with_name(f"server_proarb_{date_part}.log"))
+
+handler.namer = namer
+
+formatter = logging.Formatter(
+    "%(asctime)s %(levelname)s %(name)s - %(message)s"
+)
+handler.setFormatter(formatter)
+
+# 建议配到 root logger，确保你写的 logging.exception(...) 也进同一套文件
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.handlers.clear()          # 避免重复 handler（多次 import / reload 时常见）
+root_logger.addHandler(handler)
+
 logger = logging.getLogger(__name__)
 
 OUTPUT_PATH = "./data/results.csv"
@@ -183,6 +218,10 @@ async def investment_runner(
             if previous_snapshot is None:
                 signal_state[signal_key] = now_snapshot
 
+            # 写入本次检测结果
+            save_result(pm_ctx, deribit_ctx, "./data/raw_results.csv")
+            # save_result_to_mysql(pm_ctx, deribit_ctx, mysql_cfg)
+
             # 发送套利机会到 Alert Bot
             if record_signal:
                 await send_opportunity(
@@ -304,6 +343,11 @@ async def main_monitor(
     return current_target_date, events, instruments_map
 
 async def early_exit_monitor():
+    # position_path = "./data/positions.csv"
+    # df = pd.read_csv(position_path)
+    # now = int(datetime.now(timezone.utc).timestamp())  # 当前UTC秒
+    # expired = df[(df["status"] == "open") & (now >= df["expiry_timestamp"])].copy()
+    
     pass
 
 async def main():
