@@ -39,6 +39,7 @@ from .utils.dataloader import (
 )
 from .utils.save_result2 import save_result
 from .utils.save_result_mysql import save_result_to_mysql
+from .trading.polymarket_trade_client import Polymarket_trade_client
 
 LOG_DIR = Path("data")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -370,13 +371,30 @@ async def main_monitor(
 
     return current_target_date, events, instruments_map
 
-async def early_exit_monitor():
-    # position_path = "./data/positions.csv"
-    # df = pd.read_csv(position_path)
-    # now = int(datetime.now(timezone.utc).timestamp())  # 当前UTC秒
-    # expired = df[(df["status"] == "open") & (now >= df["expiry_timestamp"])].copy()
+def process_row(row):
+    if str(row["status"]).upper() == "CLOSE":
+        return row
     
-    pass
+    # 当前UTC秒
+    now = int(datetime.now(timezone.utc).timestamp())  
+    expired = (now >= row["expiry_timestamp"])
+
+    if not expired:
+        return row
+    
+    strategy = row["strategy"]
+    token_id = row["yes_token_id"] if strategy == 1 else row["no_token_id"]
+    market_id = row["market_id"]
+    prices = PolymarketClient.get_prices(market_id)
+    price = prices[0] if strategy == 1 else prices[1]
+    Polymarket_trade_client.early_exit(token_id, price)
+    row["status"] = "close"
+    return row
+
+async def early_exit_monitor():
+    csv_df = pd.read_csv("./data/positions.csv")
+    csv_df = csv_df.apply(process_row, axis=1)
+    csv_df.to_csv("./data/positions.csv", index=False)
 
 async def main():
     # 读取配置, 已含检查 env, config, trading_config 是否存在
@@ -455,7 +473,8 @@ async def main():
             RAW_OUTPUT_CSV=RAW_OUTPUT_CSV,
             POSITIONS_CSV=POSITIONS_CSV
         )
-        # TODO 启动提前平仓检查
+
+        # 提前平仓检查
         await early_exit_monitor()
 
 if __name__ == "__main__":

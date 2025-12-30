@@ -2,6 +2,9 @@ import logging
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Dict, Optional
 
+from py_clob_client.clob_types import OrderArgs
+from py_clob_client.order_builder.constants import SELL
+
 from .polymarket_trade import Polymarket_trade
 
 logger = logging.getLogger(__name__)
@@ -11,6 +14,23 @@ def _q_down(x: Decimal, decimals: int) -> Decimal:
     return x.quantize(step, rounding=ROUND_DOWN)
 
 class Polymarket_trade_client:
+    @staticmethod
+    def early_exit(token_id: str, price: float):
+        client = Polymarket_trade.get_client()
+        trades = Polymarket_trade.get_trades(client, asset_id=token_id)
+        trade_size = trades[0]["size"]
+        token_id = trades[0]["asset_id"]
+        sell_order = client.create_and_post_order(
+            OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=float(trade_size),
+                side=SELL,
+            )
+        )
+        return sell_order
+
+
     @staticmethod
     def place_buy_by_investment(token_id: str, investment_usd: float, limit_price: float) -> tuple[Dict[str, Any], Optional[str]]:
         """

@@ -2,10 +2,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional
 
 from py_clob_client.client import ClobClient, PolyException
-from py_clob_client.clob_types import OrderArgs, OrderType
+from py_clob_client.clob_types import OrderArgs, OrderType, TradeParams
 
 from ..utils.dataloader import Env_config, load_all_configs
-
 
 _ENV_CONFIG: Env_config | None = None
 
@@ -46,6 +45,17 @@ class Polymarket_trade:
         # 设置API凭证
         client.set_api_creds(client.create_or_derive_api_creds())
         return client
+    
+    @staticmethod
+    def get_trades(
+        client: ClobClient,
+        asset_id: str | None = None
+    ):
+        if asset_id is None:
+            trades = client.get_trades()
+        else:
+            trades = client.get_trades(TradeParams(asset_id=asset_id))
+        return trades
 
     @staticmethod
     def create_order(
