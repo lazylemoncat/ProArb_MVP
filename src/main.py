@@ -44,7 +44,7 @@ LOG_DIR = Path("data")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # 这个是“当前正在写入”的文件（每天午夜会滚动）
-ACTIVE_LOG = LOG_DIR / "server_proarb.log"
+ACTIVE_LOG = LOG_DIR / "proarb.log"
 
 handler = TimedRotatingFileHandler(
     filename=str(ACTIVE_LOG),
@@ -306,7 +306,7 @@ async def main_monitor(
 
     output_path = with_date_suffix(OUTPUT_PATH)
     raw_output_csv = with_date_suffix(RAW_OUTPUT_CSV)
-    positions_csv = with_date_suffix(POSITIONS_CSV)
+    positions_csv = POSITIONS_CSV
 
     if have_changed:
         # 轮换日期, 存储 instruments_map 供 api 获取

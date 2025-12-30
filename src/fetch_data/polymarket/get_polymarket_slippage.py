@@ -97,7 +97,7 @@ def _simulate_fill(
         raise Insufficient_liquidity("Insufficient liquidity to execute any size")
 
     avg_price = total_cost / total_size
-    if side == "buy":
+    if side == "ask":
         slippage_pct = (avg_price - best_price) / best_price * 100
     else:
         slippage_pct = (best_price - avg_price) / best_price * 100
@@ -143,7 +143,7 @@ async def get_polymarket_slippage(
     best_side_price = book[0][0] if book else None
 
     # 反方向盘口（只需要最优一档）
-    other_side = "bid" if side == "ask" else "bid"
+    other_side = "bid" if side == "ask" else "ask"
     try:
         other_book = await PolymarketWS.fetch_orderbook(
             asset_id=asset_id,
@@ -154,7 +154,7 @@ async def get_polymarket_slippage(
 
     other_side_price = other_book[0][0] if other_book else None
 
-    if side == "buy":
+    if side == "ask":
         best_ask = best_side_price
         best_bid = other_side_price
     else:

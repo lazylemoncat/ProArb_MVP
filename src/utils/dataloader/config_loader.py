@@ -27,6 +27,7 @@ class EventConfig:
 class ThresholdsConfig:
     OUTPUT_CSV: str
     RAW_OUTPUT_CSV: str
+    POSITIONS_CSV: str
     ev_spread_min: float
     notify_net_ev_min: float
     check_interval_sec: int
@@ -57,6 +58,7 @@ def load_config(config_path: str = os.getenv("CONFIG_PATH", "config.yaml")):
     thresholds_config = ThresholdsConfig(
         OUTPUT_CSV=get_value_from_dict(row_config['thresholds'], 'OUTPUT_CSV'),
         RAW_OUTPUT_CSV=get_value_from_dict(row_config['thresholds'], "RAW_OUTPUT_CSV"),
+        POSITIONS_CSV=get_value_from_dict(row_config['thresholds'], "POSITIONS_CSV"),
         ev_spread_min=get_value_from_dict(row_config['thresholds'], 'ev_spread_min'),
         notify_net_ev_min=get_value_from_dict(row_config['thresholds'], 'notify_net_ev_min'),
         check_interval_sec=get_value_from_dict(row_config['thresholds'], 'check_interval_sec'),

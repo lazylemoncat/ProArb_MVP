@@ -1,0 +1,38 @@
+### health
+GET http://104.248.192.200:8000/api/health
+
+### pm
+GET http://104.248.192.200:8000/api/pm
+
+### db
+GET http://104.248.192.200:8000/api/db
+
+### ev
+GET http://104.248.192.200:8000/api/ev
+
+### sim trade
+POST http://104.248.192.200:8000/trade/sim
+content-type: application/json
+
+{
+    "market_title": "1",
+    "investment_usd": 1000
+}
+
+### execute
+POST http://104.248.192.200:8000/api/trade/execute
+content-type: application/json
+
+{
+    "market_title": "1",
+    "investment_usd": 1000
+}
+
+### position
+GET http://104.248.192.200:8000/api/positions
+
+### pnl
+GET http://104.248.192.200:8000/api/pnl
+
+### download server_proarb.log
+GET http://104.248.192.200:8000/api/files/server_proarb.log

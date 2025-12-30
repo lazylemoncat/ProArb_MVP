@@ -1,3 +1,4 @@
+import logging
 import math
 import time
 from dataclasses import dataclass
@@ -6,13 +7,46 @@ from typing import Any, Literal
 
 import websockets
 
-from ...strategy.probability_engine import bs_probability_gt
 from .deribit_api import DeribitAPI, DeribitUserCfg
-import logging
 
 logger = logging.getLogger(__name__)
 
 WS_URL = "wss://www.deribit.com/ws/api/v2"
+
+def _norm_cdf(x: float) -> float:
+    """标准正态分布Φ(x);用erf实现,避免scipy依赖。"""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+def bs_probability_gt(S: float, K: float, T: float, sigma: float, r: float = 0.05) -> float:
+    """
+    Black-Scholes 风险中性概率 P(S_T > K)
+
+    参数:
+        S: 当前标的价格
+        K: 行权价
+        T: 剩余到期时间（单位：年）
+        sigma: 隐含波动率(例如 0.7)
+        r: 无风险利率(默认 5%)
+    """
+    # 参数检查与边界处理
+    if S <= 0 or K <= 0:
+        raise ValueError("S 和 K 必须为正数")
+
+    if T <= 0:
+        # T 近似为 0 时返回稳定值，防止跳变
+        if S > K:
+            return 0.99999
+        elif S < K:
+            return 0.00001
+        else:
+            return 0.5
+
+    if sigma <= 0:
+        return 1.0 if S > K else 0.0
+
+    # Black-Scholes d2 计算
+    d2 = (math.log(S / K) + (r - 0.5 * sigma * sigma) * T) / (sigma * math.sqrt(T))
+    return _norm_cdf(d2)
 
 @dataclass
 class DeribitMarketContext:
