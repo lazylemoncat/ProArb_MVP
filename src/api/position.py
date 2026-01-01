@@ -12,5 +12,21 @@ def get_position():
 
     fields = PositionResponse.model_fields
     filtered_rows = [{k: v for k, v in r.items() if k in fields} for r in rows]
-    
+
+    return [PositionResponse.model_validate(r) for r in filtered_rows]
+
+@position_router.get("/api/close", response_model=list[PositionResponse])
+def get_closed_positions():
+    """
+    获取所有已关闭的仓位 (status == "CLOSE")
+    """
+    pos_df = pd.read_csv('./data/positions.csv')
+
+    # 筛选状态为 CLOSE 的行
+    closed_df = pos_df[pos_df['status'].str.upper() == 'CLOSE']
+    rows = closed_df.to_dict(orient="records")
+
+    fields = PositionResponse.model_fields
+    filtered_rows = [{k: v for k, v in r.items() if k in fields} for r in rows]
+
     return [PositionResponse.model_validate(r) for r in filtered_rows]

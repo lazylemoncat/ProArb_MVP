@@ -229,7 +229,8 @@ Validates whether to **execute trades**. Checks:
 - `GET /api/db` - Deribit market data
 - `POST /trade/sim` - Simulate trade (dry-run)
 - `POST /api/trade/execute` - Execute trade manually
-- `GET /api/positions` - Fetch current positions
+- `GET /api/position` - Fetch all positions (OPEN and CLOSE)
+- `GET /api/close` - Fetch closed positions only (status == "CLOSE")
 - `GET /api/pnl` - Get PnL summary
 - `GET /api/files/{filename}` - Download CSV logs/data
 
