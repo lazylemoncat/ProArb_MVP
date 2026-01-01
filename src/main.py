@@ -3,6 +3,7 @@ import logging
 from datetime import date, datetime, timezone
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+import time
 from typing import List, Optional
 
 import pandas as pd
@@ -40,6 +41,7 @@ from .utils.dataloader import (
 from .utils.save_result2 import save_result
 from .utils.save_result_mysql import save_result_to_mysql
 from .trading.polymarket_trade_client import Polymarket_trade_client
+from .maintain_data.maintain_data import maintain_data
 
 LOG_DIR = Path("data")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,23 +58,23 @@ handler = TimedRotatingFileHandler(
     encoding="utf-8",
 )
 
-# 默认滚动名形如：server_proarb.log.2025_12_28
+# 默认滚动名形如：proarb.log.2025_12_28
 handler.suffix = "%Y_%m_%d"
 
-# 把默认滚动名改成：server_proarb_2025_12_28.log
+# 把默认滚动名改成：proarb_2025_12_28.log
 def namer(default_name: str) -> str:
     p = Path(default_name)
     date_part = p.name.split(".")[-1]  # 取到 2025_12_28
-    return str(p.with_name(f"server_proarb_{date_part}.log"))
+    return str(p.with_name(f"proarb_{date_part}.log"))
 
 handler.namer = namer
 
 formatter = logging.Formatter(
-    "%(asctime)s %(levelname)s %(name)s - %(message)s"
+    fmt="%(asctime)s %(levelname)s %(name)s %(filename)s:%(lineno)d - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 handler.setFormatter(formatter)
 
-# 建议配到 root logger，确保你写的 logging.exception(...) 也进同一套文件
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 root_logger.handlers.clear()          # 避免重复 handler（多次 import / reload 时常见）
@@ -371,34 +373,36 @@ async def main_monitor(
 
     return current_target_date, events, instruments_map
 
-def process_row(row):
+def earlt_exit_process_row(row):
     if str(row["status"]).upper() == "CLOSE":
         return row
     
-    # 当前UTC秒
-    now = int(datetime.now(timezone.utc).timestamp())  
+    # 当前 UTC 毫秒
+    now = int(datetime.now(timezone.utc).timestamp() * 1000)  
     expired = (now >= row["expiry_timestamp"])
 
     if not expired:
         return row
     
+    logger.info(f"{row["market_id"]} early_exit")
+    row["status"] = "close"
     strategy = row["strategy"]
     token_id = row["yes_token_id"] if strategy == 1 else row["no_token_id"]
     market_id = row["market_id"]
     prices = PolymarketClient.get_prices(market_id)
     price = prices[0] if strategy == 1 else prices[1]
-    Polymarket_trade_client.early_exit(token_id, price)
-    row["status"] = "close"
+    if price >= 0.001 and price <= 0.999:
+        Polymarket_trade_client.early_exit(token_id, price)
     return row
 
 async def early_exit_monitor():
     csv_df = pd.read_csv("./data/positions.csv")
-    csv_df = csv_df.apply(process_row, axis=1)
+    csv_df = csv_df.apply(earlt_exit_process_row, axis=1)
     csv_df.to_csv("./data/positions.csv", index=False)
 
 async def main():
     # 读取配置, 已含检查 env, config, trading_config 是否存在
-    env, config, trading_config = load_all_configs(dotenv_path="dev.env")
+    env, config, trading_config = load_all_configs()
 
     OUTPUT_PATH = config.thresholds.OUTPUT_CSV
     RAW_OUTPUT_CSV = config.thresholds.RAW_OUTPUT_CSV
@@ -476,6 +480,12 @@ async def main():
 
         # 提前平仓检查
         await early_exit_monitor()
+
+        # 维护数据
+        await maintain_data()
+
+        # 每十秒运行一次
+        time.sleep(10)
 
 if __name__ == "__main__":
     asyncio.run(main())

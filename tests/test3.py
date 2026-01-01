@@ -1,6 +1,6 @@
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import OrderArgs, OrderType
-from py_clob_client.order_builder.constants import BUY
+from py_clob_client.clob_types import OrderArgs, OrderType, TradeParams
+from py_clob_client.order_builder.constants import BUY, SELL
 import os
 from dotenv import load_dotenv
 
@@ -16,14 +16,19 @@ client = ClobClient(host, key=key, chain_id=chain_id, signature_type=2, funder=P
 
 client.set_api_creds(client.create_or_derive_api_creds()) 
 
-order_args = OrderArgs(
-    price=0.01,
-    size=5.0,
-    side=BUY,
-    token_id="66604715064313675033536808011849390570102921362707254216904866359860317631372",
-)
-signed_order = client.create_order(order_args)
-
-## GTC(Good-Till-Cancelled) Order
-resp = client.post_order(signed_order, OrderType.GTC)
-print(resp)
+trades = client.get_trades(TradeParams(asset_id="88131829552274957112139728426016493105408110485466156054905686742341012893447"))
+# trades = client.get_trades()
+print(trades)
+# trade_size = trades[0]["size"]
+# token_id = trades[0]["asset_id"]
+# sell_order = client.create_and_post_order(
+#     OrderArgs(
+#         token_id=token_id,
+#         price=0.89,
+#         size=float(trade_size),
+#         side=SELL,
+#     )
+# )
+# print(sell_order)
+# resp = client.cancel_all()
+# print(resp)
