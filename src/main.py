@@ -278,7 +278,9 @@ async def investment_runner(
                     fee_total=fee_total,
                     slippage_pct=slippage_pct,
                     net_ev=net_ev,
-                    positions_csv=positions_csv
+                    positions_csv=positions_csv,
+                    gross_ev=gross_ev,
+                    roi_pct=result.roi_pct
                 )
 
         except Exception as e:

@@ -114,10 +114,21 @@ class SavePosition:
     k2_bid_2_usd: list
     k2_bid_3_usd: list
 
+    # EV 相关数据
+    pm_shares: float              # PM 份数 = pm_entry_cost / entry_price_pm
+    pm_slippage_usd: float        # PM 滑点成本 (USD)
+    slippage_pct: float           # 滑点百分比
+    dr_k1_price: float            # Deribit K1 实际成交价格(根据策略选择 ask/bid)
+    dr_k2_price: float            # Deribit K2 实际成交价格(根据策略选择 bid/ask)
+    ev_gross_usd: float           # 毛利润(未扣费用)
+    ev_theta_adj_usd: float       # 时间修正后的毛利润
+    ev_model_usd: float           # 净利润 (扣除手续费和滑点)
+    roi_model_pct: float          # ROI 百分比
+
 def save_position(
         dry_run: bool,
-        pm_ctx: PolymarketContext, 
-        db_ctx: DeribitMarketContext, 
+        pm_ctx: PolymarketContext,
+        db_ctx: DeribitMarketContext,
         trade_id: str,
         direction: str,
         status: str,
@@ -127,7 +138,12 @@ def save_position(
         contracts: float,
         dr_entry_cost: float,
         expiry_timestamp: float,
-        csv_path: str
+        csv_path: str,
+        # 新增参数
+        slippage_pct: float,
+        gross_ev: float,
+        net_ev: float,
+        roi_pct: float
     ):
     row_obj = SavePosition(
         entry_timestamp=pm_ctx.time,
@@ -228,6 +244,19 @@ def save_position(
         k2_bid_1_usd=db_ctx.k2_bid_1_usd,
         k2_bid_2_usd=db_ctx.k2_bid_2_usd,
         k2_bid_3_usd=db_ctx.k2_bid_3_usd,
+
+        # EV 相关数据计算
+        pm_shares=pm_entry_cost / entry_price_pm if entry_price_pm > 0 else 0,
+        pm_slippage_usd=pm_entry_cost * slippage_pct,
+        slippage_pct=slippage_pct,
+        # 策略2: long K1 (ask), short K2 (bid)
+        # 策略1: short K1 (bid), long K2 (ask)
+        dr_k1_price=db_ctx.k1_ask_usd if strategy == 2 else db_ctx.k1_bid_usd,
+        dr_k2_price=db_ctx.k2_bid_usd if strategy == 2 else db_ctx.k2_ask_usd,
+        ev_gross_usd=gross_ev,
+        ev_theta_adj_usd=gross_ev,  # theta adjustment 已包含在 gross_ev 中
+        ev_model_usd=net_ev,
+        roi_model_pct=roi_pct,
     )
 
     CsvHandler.save_to_csv(csv_path, row_dict=asdict(row_obj), class_obj=SavePosition)

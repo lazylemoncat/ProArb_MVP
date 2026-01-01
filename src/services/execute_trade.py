@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 
 # TODO 重构
 async def execute_trade(
-    trade_signal: bool, 
+    trade_signal: bool,
     dry_run: bool,
     inv_usd: float,
     contract_amount: float,
-    poly_ctx: PolymarketContext, 
+    poly_ctx: PolymarketContext,
     deribit_ctx: DeribitMarketContext,
     strategy_choosed: int,
     env_config: Env_config,
@@ -28,7 +28,10 @@ async def execute_trade(
     fee_total: float,
     slippage_pct: float,
     net_ev: float,
-    positions_csv: str
+    positions_csv: str,
+    # 新增参数
+    gross_ev: float,
+    roi_pct: float
 ):
     # 参数验证
     if not trade_signal:
@@ -159,7 +162,11 @@ async def execute_trade(
         contracts=contract_amount,
         dr_entry_cost=fee_total,
         expiry_timestamp=deribit_ctx.k1_expiration_timestamp,
-        csv_path=positions_csv
+        csv_path=positions_csv,
+        slippage_pct=slippage_pct,
+        gross_ev=gross_ev,
+        net_ev=net_ev,
+        roi_pct=roi_pct
     )
     # 通知
     try:
