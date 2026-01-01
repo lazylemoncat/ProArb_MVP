@@ -28,8 +28,11 @@ content-type: application/json
     "investment_usd": 1000
 }
 
-### position
-GET http://104.248.192.200:8000/api/positions
+### position (all)
+GET http://104.248.192.200:8000/api/position
+
+### position (closed only)
+GET http://104.248.192.200:8000/api/close
 
 ### pnl
 GET http://104.248.192.200:8000/api/pnl
