@@ -1,24 +1,85 @@
 import csv
+import logging
 from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
 class CsvHandler:
     @staticmethod
-    def check_csv(csv_path: str, expected_columns: list[str]):
+    def check_csv(csv_path: str, expected_columns: list[str], fill_value: Any = ""):
+        """
+        检查并确保 CSV 文件包含所有期望的列。
+
+        Args:
+            csv_path: CSV 文件路径
+            expected_columns: 期望的列名列表
+            fill_value: 新增列的默认填充值（默认为空字符串）
+
+        Returns:
+            bool: 操作是否成功
+
+        功能：
+        - 如果文件不存在，创建并写入表头
+        - 如果文件存在但缺少列，自动添加缺失的列（填充默认值）
+        - 保留现有的额外列（向后兼容）
+        """
         path = Path(csv_path)
-        
+
         # 创建父目录（如果不存在的话）
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # 检查文件是否存在
         if not path.exists():
             # 文件不存在时，创建文件并写入表头
             with open(path, mode='w', newline='', encoding='utf-8') as file:
                 writer = csv.writer(file)
                 writer.writerow(expected_columns)
-        # 如果文件已存在，什么也不做
-        return True
+            logger.info(f"创建新 CSV 文件: {csv_path}，列: {expected_columns}")
+            return True
+
+        # 文件存在，检查列是否完整
+        try:
+            # 读取现有 CSV
+            df = pd.read_csv(path)
+            existing_columns = df.columns.tolist()
+
+            # 找出缺失的列
+            missing_columns = [col for col in expected_columns if col not in existing_columns]
+
+            if missing_columns:
+                logger.warning(f"CSV 文件 {csv_path} 缺失列: {missing_columns}，自动添加...")
+
+                # 为缺失的列添加默认值
+                for col in missing_columns:
+                    df[col] = fill_value
+
+                # 重新排列列顺序：保留所有现有列 + 新增列
+                # 优先按 expected_columns 顺序，然后是额外的现有列
+                all_columns = []
+                for col in expected_columns:
+                    if col in df.columns:
+                        all_columns.append(col)
+
+                # 添加不在 expected_columns 中的额外列
+                for col in existing_columns:
+                    if col not in all_columns:
+                        all_columns.append(col)
+
+                df = df[all_columns]
+
+                # 保存更新后的 CSV
+                df.to_csv(path, index=False)
+                logger.info(f"已为 {csv_path} 添加缺失列: {missing_columns}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"检查 CSV 文件 {csv_path} 时出错: {e}", exc_info=True)
+            return False
     
     @staticmethod
     def save_to_csv(csv_path: str,  row_dict: dict[str, str | float], class_obj: Any):
