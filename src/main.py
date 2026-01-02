@@ -39,6 +39,7 @@ from .utils.dataloader import (
     load_all_configs,
 )
 from .utils.save_result2 import save_result
+from .utils.save_raw_data import save_raw_data
 from .utils.save_result_mysql import save_result_to_mysql
 from .trading.polymarket_trade_client import Polymarket_trade_client
 from .maintain_data.maintain_data import maintain_data
@@ -98,6 +99,22 @@ def with_date_suffix(path_str: str, d: Optional[date] = None, use_utc: bool = Tr
     return str(p.with_name(new_name))
 
 
+def with_raw_date_prefix(path_str: str, d: Optional[date] = None, use_utc: bool = True) -> str:
+    """
+    将路径中的文件名改为：YYYYMMDD_raw{suffix}
+    例如: "./data/raw_results.csv" -> "./data/20251228_raw.csv"
+    """
+    p = Path(path_str)
+
+    if d is None:
+        tz = timezone.utc if use_utc else None  # None 表示本地时间
+        now = datetime.now(tz=tz)
+        d = now.date()
+
+    new_name = f"{d:%Y%m%d}_raw{p.suffix}"
+    return str(p.with_name(new_name))
+
+
 
 # TODO 集成到 TG_BOT
 async def send_opportunity(
@@ -125,7 +142,7 @@ async def send_opportunity(
                 f"建议投资${inv_base_usd}\n"
                 f"通知原因: \n{alert_text}\n"
                 f"不交易原因: \n{trade_text}\n"
-                f"{now_ts.replace(microsecond=0).isoformat().replace("+00:00", "Z")}"
+                f"{now_ts.replace(microsecond=0).isoformat().replace('+00:00', 'Z')}"
         )
     except Exception as exc:
         logger.warning("Failed to publish Telegram opportunity notification: %s", exc, exc_info=True)
@@ -238,8 +255,8 @@ async def investment_runner(
             if previous_snapshot is None:
                 signal_state[signal_key] = now_snapshot
 
-            # 写入本次检测结果
-            save_result(pm_ctx, deribit_ctx, raw_output_csv)
+            # 写入本次检测结果（使用新的精简格式）
+            save_raw_data(pm_ctx, deribit_ctx, raw_output_csv)
             # save_result_to_mysql(pm_ctx, deribit_ctx, mysql_cfg)
 
             # 发送套利机会到 Alert Bot
@@ -310,7 +327,7 @@ async def main_monitor(
     current_target_date, have_changed = loop_date(current_target_date, config.thresholds.day_off)
 
     output_path = with_date_suffix(OUTPUT_PATH)
-    raw_output_csv = with_date_suffix(RAW_OUTPUT_CSV)
+    raw_output_csv = with_raw_date_prefix(RAW_OUTPUT_CSV)  # 使用新格式：YYYYMMDD_raw.csv
     positions_csv = POSITIONS_CSV
 
     if have_changed:
@@ -385,8 +402,8 @@ def earlt_exit_process_row(row):
 
     if not expired:
         return row
-    
-    logger.info(f"{row["market_id"]} early_exit")
+
+    logger.info(f"{row['market_id']} early_exit")
     row["status"] = "close"
     strategy = row["strategy"]
     token_id = row["yes_token_id"] if strategy == 1 else row["no_token_id"]
