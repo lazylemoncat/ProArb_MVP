@@ -25,11 +25,11 @@ def transform_position_row(row: dict) -> dict:
         "signal_id": row.get("trade_id", ""),
         "order_id": row.get("trade_id", ""),  # 使用 trade_id 作为 order_id
         "timestamp": str(row.get("entry_timestamp", "")),
-        "market_id": row.get("market_id", ""),
+        "market_id": str(row.get("market_id", "")),
 
         # B. 交易核心
         "status": str(row.get("status", "OPEN")).upper(),
-        "action": str(row.get("direction", "buy")).lower(),
+        "action": "sell" if str(row.get("direction")).lower() == "no" else "buy",
         "amount_usd": float(row.get("pm_entry_cost", 0)),
         "days_to_expiry": float(row.get("days_to_expairy", 0)),
 
