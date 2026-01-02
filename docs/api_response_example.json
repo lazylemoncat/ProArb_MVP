@@ -1,0 +1,57 @@
+{
+  "endpoint": "GET /api/position 或 GET /api/close",
+  "description": "返回仓位列表，每个仓位包含嵌套的 PM 和 DR 数据",
+  "example_response": [
+    {
+      "signal_id": "sig_123456",
+      "order_id": "ord_987654",
+      "timestamp": "2026-01-01T10:00:00Z",
+      "market_id": "0x1234567890abcdef",
+      "status": "OPEN",
+      "action": "buy",
+      "amount_usd": 200.0,
+      "days_to_expiry": 14.5,
+      "pm_data": {
+        "shares": 238.1,
+        "yes_avg_price_t0": 0.16,
+        "no_avg_price_t0": 0.84,
+        "slippage_usd": 1.2,
+        "yes_price": 0.16,
+        "no_price": 0.84
+      },
+      "dr_data": {
+        "index_price_t0": 92630.39,
+        "contracts": 0.12,
+        "fee_usd": 2.5,
+        "k1": {
+          "instrument": "BTC-15JAN26-95000-C",
+          "price_t0": 352.14,
+          "iv": 60.71,
+          "delta": null,
+          "theta": null,
+          "settlement_price": null
+        },
+        "k2": {
+          "instrument": "BTC-15JAN26-97000-C",
+          "price_t0": 83.34,
+          "iv": 65.5,
+          "delta": null,
+          "theta": null,
+          "settlement_price": null
+        },
+        "risk": {
+          "iv_t0": 60.71,
+          "prob_t0": 0.42,
+          "iv_floor": 45.0,
+          "iv_ceiling": 75.0
+        }
+      }
+    }
+  ],
+  "notes": [
+    "status 可能为 'OPEN' 或 'CLOSE'",
+    "action 可能为 'buy' 或 'sell'",
+    "delta, theta, settlement_price 字段当前为 null（待添加到 positions.csv）",
+    "/api/close 端点只返回 status='CLOSE' 的仓位"
+  ]
+}

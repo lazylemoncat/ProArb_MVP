@@ -83,21 +83,65 @@ class ExecuteResponse(BaseModel):
     tx_id: str
     message: str
 
+class PMData(BaseModel):
+    """Polymarket 数据"""
+    shares: float                   # pm_shares
+    yes_avg_price_t0: float         # pm_yes_avg_price_t0 (成交均价)
+    no_avg_price_t0: float          # pm_no_avg_price_t0
+    slippage_usd: float             # pm_slippage_usd
+    # 市场当前快照
+    yes_price: float                # pm_yes_price (当前盘口)
+    no_price: float                 # pm_no_price
+
+class DRK1Data(BaseModel):
+    """Deribit K1 数据"""
+    instrument: str                 # dr_k1_instruments
+    price_t0: float                 # dr_k1_price_t0 (成交价)
+    iv: float                       # dr_k1_iv
+    delta: float | None = None      # dr_k1_delta
+    theta: float | None = None      # dr_k1_theta
+    settlement_price: float | None = None  # dr_k1_settlement_price
+
+class DRK2Data(BaseModel):
+    """Deribit K2 数据"""
+    instrument: str                 # dr_k2_instruments
+    price_t0: float                 # dr_k2_price_t0
+    iv: float                       # dr_k2_iv
+    delta: float | None = None      # dr_k2_delta
+    theta: float | None = None      # dr_k2_theta
+    settlement_price: float | None = None  # dr_k2_settlement_price
+
+class DRRiskData(BaseModel):
+    """Deribit 风险指标"""
+    iv_t0: float                    # dr_iv_t0 (组合IV)
+    prob_t0: float                  # dr_prob_t0 (胜率)
+    iv_floor: float                 # dr_iv_floor
+    iv_ceiling: float               # dr_iv_ceiling
+
+class DRData(BaseModel):
+    """Deribit 数据"""
+    index_price_t0: float           # dr_index_price_t0
+    contracts: float                # dr_contracts (总张数)
+    fee_usd: float                  # dr_fee_usd
+    k1: DRK1Data                    # K1 详情
+    k2: DRK2Data                    # K2 详情
+    risk: DRRiskData                # 风险指标
+
 class PositionResponse(BaseModel):
-    # 基础索引
-    signal_id: str # 关联策略 id
-    order_id: str # 交易所订单号
-    timestamp: str # 成交时间 ISO 格式
-    market_title: str
-    # 交易核心
+    # A. 基础索引 (Identity)
+    signal_id: str                  # 关联策略 id
+    order_id: str                   # 交易所订单号
+    timestamp: str                  # 成交时间 ISO 格式
+    market_id: str                  # PM Market Hash
+    # B. 交易核心 (Action)
     status: Literal["OPEN", "CLOSE"] # 状态
     action: Literal["buy", "sell"]
-    amount_usd: float # 投入金额
-    days_to_expiry: float # 离到期还有几天
-    # PM 数据
-    pm_data: dict
-    # DB 数据
-    dr_data: dict
+    amount_usd: float               # 投入金额
+    days_to_expiry: float           # 离到期还有几天
+    # C. PM 数据
+    pm_data: PMData
+    # D. DR 数据
+    dr_data: DRData
 
 class PnlResponse(BaseModel):
     # 基础信息
