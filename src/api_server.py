@@ -146,21 +146,6 @@ def execute_trade(payload: ExecuteRequest):
         message=""
     )
 
-@app.get("/api/positions", response_model=PositionResponse)
-def get_positions():
-    return PositionResponse(
-        signal_id="",
-        order_id="",
-        timestamp="",
-        market_title="",
-        status="CLOSE",
-        action="buy",
-        amount_usd=0,
-        days_to_expiry=0,
-        pm_data={},
-        dr_data={},
-    )
-
 @app.get("/api/pnl", response_model=PnlResponse)
 def get_pnls():
     return PnlResponse(
