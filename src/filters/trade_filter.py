@@ -14,9 +14,12 @@
     概率差小于规定 0.01 时, 跳过交易
 """
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from datetime import date, datetime, timezone
 from pathlib import Path
+
+from ..utils.CsvHandler import CsvHandler
+from ..utils.save_position import SavePosition
 
 
 @dataclass
@@ -44,6 +47,10 @@ class Trade_filter:
     min_prob_edge_pct: float            # 最小允许概率差
 
 def _load_positions(csv_path: str = "data/positions.csv") -> list[dict]:
+    # 检查并确保 CSV 文件包含所有必需的列
+    positions_columns = [f.name for f in dataclass_fields(SavePosition)]
+    CsvHandler.check_csv(csv_path, positions_columns, fill_value="")
+
     path = Path(csv_path)
     if not path.exists():
         return []

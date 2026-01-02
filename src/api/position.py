@@ -1,10 +1,16 @@
 import pandas as pd
 from fastapi import APIRouter
 import ast
+from dataclasses import fields
 
 from .models import PositionResponse, PMData, DRData, DRK1Data, DRK2Data, DRRiskData
+from ..utils.CsvHandler import CsvHandler
+from ..utils.save_position import SavePosition
 
 position_router = APIRouter(tags=["position"])
+
+# 获取 positions.csv 的期望列
+POSITIONS_EXPECTED_COLUMNS = [f.name for f in fields(SavePosition)]
 
 def transform_position_row(row: dict) -> dict:
     """将 CSV 平铺数据转换为嵌套的 PositionResponse 格式"""
@@ -78,6 +84,9 @@ def get_position():
     """
     获取所有仓位 (OPEN 和 CLOSE)
     """
+    # 检查并确保 CSV 文件包含所有必需的列
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value="")
+
     pos_df = pd.read_csv('./data/positions.csv')
     rows = pos_df.to_dict(orient="records")
 
@@ -91,6 +100,9 @@ def get_closed_positions():
     """
     获取所有已关闭的仓位 (status == "CLOSE")
     """
+    # 检查并确保 CSV 文件包含所有必需的列
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value="")
+
     pos_df = pd.read_csv('./data/positions.csv')
 
     # 筛选状态为 CLOSE 的行

@@ -398,9 +398,18 @@ def earlt_exit_process_row(row):
     return row
 
 async def early_exit_monitor():
-    csv_df = pd.read_csv("./data/positions.csv")
+    from .utils.save_position import SavePosition
+    from dataclasses import fields
+
+    positions_csv = "./data/positions.csv"
+    positions_columns = [f.name for f in fields(SavePosition)]
+
+    # 检查并确保 positions.csv 包含所有必需的列
+    CsvHandler.check_csv(positions_csv, positions_columns, fill_value="")
+
+    csv_df = pd.read_csv(positions_csv)
     csv_df = csv_df.apply(earlt_exit_process_row, axis=1)
-    csv_df.to_csv("./data/positions.csv", index=False)
+    csv_df.to_csv(positions_csv, index=False)
 
 async def main():
     # 读取配置, 已含检查 env, config, trading_config 是否存在
