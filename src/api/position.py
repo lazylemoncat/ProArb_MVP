@@ -7,7 +7,22 @@ position_router = APIRouter(tags=["position"])
 
 @position_router.get("/api/position", response_model=list[PositionResponse])
 def get_position():
-    pos_df = pd.read_csv('./data/positions.csv')
+    CSV_TO_MODEL = {
+        "yes_token_id": "signal_id",
+        "trade_id": "order_id",
+        "entry_timestamp": "timestamp",
+        "market_title": "market_title",
+        "status": "status",
+        "pm_entry_cost": "amount_usd",
+        "days_to_expiry": "days_to_expiry",
+    }
+    
+    pos_df = pd.read_csv('./data/positions.csv').rename(columns=CSV_TO_MODEL)
+
+    pos_df["direction"] = pos_df["direction"].apply(lambda x: "SELL" if str(x).upper() == "NO" else "BUY")
+    pos_df["pm_data"] = {}
+    pos_df["dr_data"] = {}
+
     rows = pos_df.to_dict(orient="records")
 
     fields = PositionResponse.model_fields
