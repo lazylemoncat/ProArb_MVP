@@ -9,11 +9,10 @@ from ..fetch_data.deribit.deribit_client import DeribitMarketContext
 class RawData:
     """Raw market data snapshot with simplified field names"""
     fill_id: str                    # Unique fill ID
-    snapshot_id: str                # Snapshot identifier
-    YYYYMMDD_HHMMSS: str           # Timestamp in YYYYMMDD_HHMMSS format
+    snapshot_id: str                # YYYYMMDD_HHMMSS format timestamp
     utc: float                      # Unix timestamp in seconds
     market_id: str                  # Market identifier (e.g., BTC_108000_NO)
-    spot_usd: float                 # BTC spot price in USD
+    spot_usd: float                 # Spot price of BTC
 
     # Polymarket YES token orderbook (3 levels)
     pm_yes_bid1_price: float
@@ -129,10 +128,10 @@ def save_raw_data(
     if fill_id is None:
         fill_id = f"{now:%Y%m%d_%H%M%S}_{pm_ctx.market_id}"
     if snapshot_id is None:
-        snapshot_id = f"snap_{now:%Y%m%d_%H%M%S}"
+        # snapshot_id should be in YYYYMMDD_HHMMSS format
+        snapshot_id = now.strftime("%Y%m%d_%H%M%S")
 
-    # Format timestamp
-    timestamp_str = now.strftime("%Y%m%d_%H%M%S")
+    # Unix timestamp in seconds
     unix_timestamp = now.timestamp()
 
     # Extract K1 orderbook (bid/ask levels)
@@ -166,8 +165,7 @@ def save_raw_data(
     # Create RawData object
     row_obj = RawData(
         fill_id=fill_id,
-        snapshot_id=snapshot_id,
-        YYYYMMDD_HHMMSS=timestamp_str,
+        snapshot_id=snapshot_id,  # Already in YYYYMMDD_HHMMSS format
         utc=unix_timestamp,
         market_id=pm_ctx.market_id,
         spot_usd=db_ctx.spot,
