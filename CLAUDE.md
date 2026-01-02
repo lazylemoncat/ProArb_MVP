@@ -28,9 +28,8 @@
 ```
 ProArb_MVP/
 ├── src/
-│   ├── main.py                          # Main monitoring loop entry point
+│   ├── main.py                          # Main monitoring loop + early exit logic
 │   ├── api_server.py                    # FastAPI REST API server
-│   ├── early_exit_monitor.py            # Early position exit logic
 │   │
 │   ├── api/                             # API route handlers
 │   │   ├── health.py                    # Health check endpoint
@@ -79,8 +78,11 @@ ProArb_MVP/
 │   │   ├── maintain_data.py             # Data cleanup tasks
 │   │   └── ev.py                        # EV data management
 │   │
+│   ├── sql/                             # Database schemas
+│   │   └── 1.sql                        # MySQL schema for raw_results table
+│   │
 │   └── utils/
-│       ├── CsvHandler.py                # CSV read/write utilities
+│       ├── CsvHandler.py                # CSV read/write utilities with auto-column handling
 │       ├── save_result2.py              # Result logging to CSV
 │       ├── save_result_mysql.py         # MySQL result logging (optional)
 │       ├── save_position.py             # Position tracking
@@ -92,6 +94,12 @@ ProArb_MVP/
 │           └── dataloader.py            # Unified config loader
 │
 ├── tests/                               # Unit and integration tests
+│   ├── api/                             # API endpoint tests
+│   ├── maintain_data/                   # Data management tests
+│   ├── strategy/                        # Strategy calculation tests
+│   ├── telegram/                        # Telegram bot tests
+│   └── utils/                           # Utility function tests
+│
 ├── data/                                # Runtime data (CSV logs, positions)
 ├── docs/                                # Documentation
 ├── .github/workflows/                   # CI/CD pipelines
@@ -199,44 +207,112 @@ Validates whether to **execute trades**. Checks:
 
 **Important**: Uses `asyncio.gather()` to execute both legs concurrently where possible.
 
-### 5. Early Exit Monitor (`src/early_exit_monitor.py`)
+### 5. Early Exit Monitor (`early_exit_monitor()` in `src/main.py`)
 
-**Purpose**: Automatically close positions early if:
-- Loss exceeds threshold (default 0% = any loss triggers exit)
-- Time window check (08:00-16:00 UTC, configurable)
-- Sufficient liquidity available (≥1.0x position size)
+**Purpose**: Automatically close positions early if they meet exit criteria. Implemented as an async function within the main monitoring loop.
+
+**Location**: `src/main.py:400-412` (function) and `src/main.py:385-398` (row processing logic)
+
+**Exit Conditions**:
+- Position has reached expiry
+- Loss exceeds threshold (configurable via `trading_config.yaml`)
+- Time window check (08:00-16:00 UTC, if enabled)
+- Sufficient liquidity available (price between 0.001 and 0.999)
 
 **Flow**:
-1. Read `data/positions.csv`
+1. Read `data/positions.csv` using CsvHandler (auto-ensures all required columns exist)
 2. For each OPEN position:
    - Check if expiry reached
-   - Fetch current PM price
-   - Calculate unrealized PnL
-   - If loss > threshold → close PM position
-3. Update status to CLOSE
-4. Send Telegram notification
+   - Fetch current PM price via PolymarketClient
+   - Determine which token to sell (YES or NO based on strategy)
+   - If price within bounds (0.001-0.999) → execute early exit via Polymarket_trade_client
+   - Update status to "close"
+3. Save updated positions back to CSV
+4. Telegram notification sent by trade client
 
-**Runs**: Every 60 seconds (configurable via `trading_config.yaml:early_exit.check_interval_seconds`)
+**Integration**: Called within the main monitoring loop (typically every 10-60 seconds, runs as part of main loop cycle)
 
 ### 6. FastAPI Server (`src/api_server.py`)
 
 **Purpose**: Provides REST API for monitoring and manual trade execution.
 
 **Key Endpoints**:
-- `GET /api/health` - Health check
-- `GET /api/ev` - Get current EV calculations
-- `GET /api/pm` - Polymarket market data
-- `GET /api/db` - Deribit market data
-- `POST /trade/sim` - Simulate trade (dry-run)
-- `POST /api/trade/execute` - Execute trade manually
-- `GET /api/position` - Fetch all positions (OPEN and CLOSE)
+- `GET /api/health` - Health check (used by Docker healthcheck)
+- `GET /api/ev` - Get current EV calculations for all monitored markets
+- `GET /api/pm` - Polymarket market data (orderbook snapshots)
+- `GET /api/db` - Deribit market data (option prices, IV)
+- `POST /trade/sim` - Simulate trade (dry-run, no execution)
+- `POST /api/trade/execute` - Execute trade manually (bypasses some filters)
+- `GET /api/position` - Fetch all positions (OPEN and CLOSE) with nested structure
 - `GET /api/close` - Fetch closed positions only (status == "CLOSE")
-- `GET /api/pnl` - Get PnL summary
-- `GET /api/files/{filename}` - Download CSV logs/data
+- `GET /api/pnl` - Get PnL summary (total P&L, win rate, etc.)
+- `GET /api/files/{filename}` - Download CSV logs/data (with path traversal protection)
 
 **Runs on**: Port 8000 (uvicorn)
 
-**Managed by**: supervisord (runs alongside main monitor)
+**Managed by**: supervisord (runs alongside main monitor in same container)
+
+**Recent Changes**:
+- Position API restructured to nested format (PR #50)
+- Added `/api/close` endpoint for filtered closed positions (commit 8fb151b)
+
+### 7. CsvHandler Utility (`src/utils/CsvHandler.py`)
+
+**Purpose**: Robust CSV read/write operations with automatic schema management.
+
+**Key Features**:
+- **Auto-column handling**: Automatically adds missing columns to existing CSV files (PR #51)
+- **Dataclass integration**: Uses Python dataclasses to define expected schema
+- **Thread-safe operations**: Atomic read-modify-write for concurrent access
+- **Schema validation**: Ensures CSV files match expected structure
+
+**Key Methods**:
+- `check_csv(csv_path, expected_columns, fill_value)` - Ensures all columns exist, adds missing ones with fill_value
+- `save_to_csv(csv_path, row_dict, class_obj)` - Saves row based on dataclass schema
+- `delete_csv(csv_path, not_exists_ok)` - Safe file deletion
+
+**Usage Pattern**:
+```python
+from src.utils.CsvHandler import CsvHandler
+from src.utils.save_position import SavePosition
+from dataclasses import fields
+
+# Ensure CSV has all required columns
+positions_columns = [f.name for f in fields(SavePosition)]
+CsvHandler.check_csv("./data/positions.csv", positions_columns, fill_value="")
+
+# Save row
+CsvHandler.save_to_csv(csv_path, row_data, SavePosition)
+```
+
+**Why This Matters**: Prevents CSV corruption when adding new fields to dataclasses. Old CSV files automatically get new columns without manual migration.
+
+### 8. MySQL Database Support (`src/sql/` and `src/utils/save_result_mysql.py`)
+
+**Purpose**: Optional MySQL storage for historical data analysis.
+
+**Database Schema** (`src/sql/1.sql`):
+- **Database**: `proarb` (utf8mb4 charset)
+- **Table**: `raw_results` - Stores every market check (every 10 seconds)
+  - Polymarket data: event/market IDs, orderbook (bid/ask prices, 3 levels deep)
+  - Deribit data: option strikes (K1, K2), prices in BTC and USD, implied volatility
+  - Strategy data: spot price, expiration, time to expiry, calculated probabilities
+  - Indexed on: time, event_id + market_id, asset + time
+
+**Usage**:
+- CSV is primary storage (always used)
+- MySQL is optional (configured in code, not in config files)
+- Useful for historical analysis, backtesting, SQL queries
+- Schema supports 3-level orderbook depth for both YES/NO tokens
+
+**Setup**:
+```bash
+docker pull mysql:8.4.7
+# Run MySQL container
+mysql < src/sql/1.sql  # Create schema
+```
+
+**Integration**: `save_result_mysql.py` provides parallel saving alongside CSV (not currently active by default)
 
 ## Configuration Files
 
@@ -627,10 +703,16 @@ trading_config.trade_filter.min_roi_pct  # From trading_config.yaml
    ```python
    # Use CsvHandler for atomic CSV updates
    from src.utils.CsvHandler import CsvHandler
+   from dataclasses import fields
 
-   handler = CsvHandler(csv_path)
-   handler.update_row(condition, updates)  # Thread-safe
+   # Always ensure CSV has required columns before reading
+   CsvHandler.check_csv(csv_path, expected_columns, fill_value="")
+
+   # Then save rows using dataclass schema
+   CsvHandler.save_to_csv(csv_path, row_data, YourDataclass)
    ```
+
+   **Important**: Always call `CsvHandler.check_csv()` before reading CSV files to ensure schema compatibility. This auto-adds any missing columns from recent code updates.
 
 4. **Don't hardcode dates/timestamps**:
    ```python
@@ -838,6 +920,36 @@ When making changes:
 
 ---
 
-**Last Updated**: 2026-01-01
+**Last Updated**: 2026-01-02
 **Maintainer**: lazylemoncat
 **Repository**: lazylemoncat/ProArb_MVP
+
+---
+
+## Recent Changes & Changelog
+
+### 2026-01-02
+- **Documentation**: Updated CLAUDE.md with accurate repository structure
+  - Fixed: Removed non-existent `early_exit_monitor.py` file reference
+  - Added: `src/sql/` directory documentation with MySQL schema details
+  - Added: Comprehensive CsvHandler documentation (auto-column feature from PR #51)
+  - Added: MySQL database support section
+  - Enhanced: Early exit monitor documentation (now correctly documented as function in main.py)
+  - Enhanced: API endpoint documentation with recent changes
+  - Enhanced: Test directory structure details
+
+### 2026-01-01
+- **Feature**: Enhanced CsvHandler to auto-add missing columns (PR #51, commit dba2cc3)
+  - Prevents CSV corruption when dataclass fields are added
+  - Automatically migrates old CSV files to new schema
+- **Feature**: Position API restructured to nested format (PR #50, commit a55af41)
+  - Better JSON structure for frontend consumption
+- **Feature**: Added `/api/close` endpoint for filtered closed positions (commit 8fb151b)
+- **Feature**: Added early exit functionality to main monitoring loop (commit db8e1a4)
+  - Automatically closes losing positions based on configurable thresholds
+  - Integrated into main.py as async function
+- **Refactor**: Added daily log rotation for both API server and main monitor
+  - Logs stored as `proarb_YYYY_MM_DD.log` and `server_proarb_YYYY_MM_DD.log`
+  - Prevents unbounded disk growth
+- **Refactor**: CSV files now split by day (`results_YYYY_MM_DD.csv`, `raw_results_YYYY_MM_DD.csv`)
+- **Initial**: Comprehensive CLAUDE.md documentation created (commit 5c54148)
