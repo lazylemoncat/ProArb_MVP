@@ -5,66 +5,23 @@ import hashlib
 import logging
 from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+
+from .models import (
+    MarketDRData,
+    MarketOrderLevel,
+    MarketOptionLeg,
+    MarketPMData,
+    MarketResponse,
+    MarketTokenOrderbook,
+)
 
 logger = logging.getLogger(__name__)
 
 market_router = APIRouter()
-
-
-# ==================== Response Models ====================
-
-class OrderLevel(BaseModel):
-    """订单簿单个档位"""
-    price: float
-    size: float
-
-
-class TokenOrderbook(BaseModel):
-    """单个 token 的订单簿（YES 或 NO）"""
-    bids: List[OrderLevel]
-    asks: List[OrderLevel]
-
-
-class PMData(BaseModel):
-    """PolyMarket 数据 (YES/NO 两套深度)"""
-    yes: TokenOrderbook
-    no: TokenOrderbook
-
-
-class OptionLeg(BaseModel):
-    """期权单腿数据 (K1 或 K2)"""
-    name: str              # 合约名称
-    mark_iv: float         # 标记 IV
-    mark_price: float      # 标记价格
-    bids: List[OrderLevel]
-    asks: List[OrderLevel]
-
-
-class DRData(BaseModel):
-    """Deribit 数据 (K1/K2 两腿 + 全局数据)"""
-    valid: bool
-    index_price: float     # 现货价格
-    k1: OptionLeg
-    k2: OptionLeg
-
-
-class MarketResponse(BaseModel):
-    """市场快照响应"""
-    # A. 基础元数据
-    signal_id: str
-    timestamp: str         # ISO 格式
-    market_title: str
-
-    # B. PolyMarket 数据
-    pm_data: PMData
-
-    # C. Deribit 数据
-    dr_data: DRData
 
 
 # ==================== Helper Functions ====================
@@ -204,62 +161,62 @@ def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
         timestamp = datetime.now(timezone.utc).isoformat()
 
     # === PolyMarket 数据 ===
-    pm_data = PMData(
-        yes=TokenOrderbook(
+    pm_data = MarketPMData(
+        yes=MarketTokenOrderbook(
             bids=[
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('yes_bid_price_1', 0)),
                     size=float(row.get('yes_bid_price_size_1', 0))
                 ),
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('yes_bid_price_2', 0)),
                     size=float(row.get('yes_bid_price_size_2', 0))
                 ),
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('yes_bid_price_3', 0)),
                     size=float(row.get('yes_bid_price_size_3', 0))
                 )
             ],
             asks=[
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('yes_ask_price_1', 0)),
                     size=float(row.get('yes_ask_price_1_size', 0))
                 ),
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('yes_ask_price_2', 0)),
                     size=float(row.get('yes_ask_price_2_size', 0))
                 ),
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('yes_ask_price_3', 0)),
                     size=float(row.get('yes_ask_price_3_size', 0))
                 )
             ]
         ),
-        no=TokenOrderbook(
+        no=MarketTokenOrderbook(
             bids=[
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('no_bid_price_1', 0)),
                     size=float(row.get('no_bid_price_size_1', 0))
                 ),
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('no_bid_price_2', 0)),
                     size=float(row.get('no_bid_price_size_2', 0))
                 ),
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('no_bid_price_3', 0)),
                     size=float(row.get('no_bid_price_size_3', 0))
                 )
             ],
             asks=[
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('no_ask_price_1', 0)),
                     size=float(row.get('no_ask_price_1_size', 0))
                 ),
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('no_ask_price_2', 0)),
                     size=float(row.get('no_ask_price_2_size', 0))
                 ),
-                OrderLevel(
+                MarketOrderLevel(
                     price=float(row.get('no_ask_price_3', 0)),
                     size=float(row.get('no_ask_price_3_size', 0))
                 )
@@ -284,37 +241,37 @@ def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
     k2_ask_2 = parse_orderbook_field(row.get('k2_ask_2_usd'))
     k2_ask_3 = parse_orderbook_field(row.get('k2_ask_3_usd'))
 
-    dr_data = DRData(
+    dr_data = MarketDRData(
         valid=True,  # 假设数据有效（可以根据实际情况判断）
         index_price=float(row.get('spot', 0)),
-        k1=OptionLeg(
+        k1=MarketOptionLeg(
             name=str(row.get('inst_k1', '')),
             mark_iv=float(row.get('k1_iv', 0)),
             mark_price=float(row.get('k1_mid_usd', 0)),
             bids=[
-                OrderLevel(price=k1_bid_1[0], size=k1_bid_1[1]),
-                OrderLevel(price=k1_bid_2[0], size=k1_bid_2[1]),
-                OrderLevel(price=k1_bid_3[0], size=k1_bid_3[1])
+                MarketOrderLevel(price=k1_bid_1[0], size=k1_bid_1[1]),
+                MarketOrderLevel(price=k1_bid_2[0], size=k1_bid_2[1]),
+                MarketOrderLevel(price=k1_bid_3[0], size=k1_bid_3[1])
             ],
             asks=[
-                OrderLevel(price=k1_ask_1[0], size=k1_ask_1[1]),
-                OrderLevel(price=k1_ask_2[0], size=k1_ask_2[1]),
-                OrderLevel(price=k1_ask_3[0], size=k1_ask_3[1])
+                MarketOrderLevel(price=k1_ask_1[0], size=k1_ask_1[1]),
+                MarketOrderLevel(price=k1_ask_2[0], size=k1_ask_2[1]),
+                MarketOrderLevel(price=k1_ask_3[0], size=k1_ask_3[1])
             ]
         ),
-        k2=OptionLeg(
+        k2=MarketOptionLeg(
             name=str(row.get('inst_k2', '')),
             mark_iv=float(row.get('k2_iv', 0)),
             mark_price=float(row.get('k2_mid_usd', 0)),
             bids=[
-                OrderLevel(price=k2_bid_1[0], size=k2_bid_1[1]),
-                OrderLevel(price=k2_bid_2[0], size=k2_bid_2[1]),
-                OrderLevel(price=k2_bid_3[0], size=k2_bid_3[1])
+                MarketOrderLevel(price=k2_bid_1[0], size=k2_bid_1[1]),
+                MarketOrderLevel(price=k2_bid_2[0], size=k2_bid_2[1]),
+                MarketOrderLevel(price=k2_bid_3[0], size=k2_bid_3[1])
             ],
             asks=[
-                OrderLevel(price=k2_ask_1[0], size=k2_ask_1[1]),
-                OrderLevel(price=k2_ask_2[0], size=k2_ask_2[1]),
-                OrderLevel(price=k2_ask_3[0], size=k2_ask_3[1])
+                MarketOrderLevel(price=k2_ask_1[0], size=k2_ask_1[1]),
+                MarketOrderLevel(price=k2_ask_2[0], size=k2_ask_2[1]),
+                MarketOrderLevel(price=k2_ask_3[0], size=k2_ask_3[1])
             ]
         )
     )
@@ -387,63 +344,6 @@ async def get_market_snapshots(
 
         logger.info(f"Returning {len(results)} market snapshots")
         return results
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error reading market data: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to read market data: {str(e)}"
-        )
-
-
-@market_router.get("/api/market/{signal_id}", response_model=MarketResponse)
-async def get_market_snapshot_by_id(signal_id: str) -> MarketResponse:
-    """
-    根据 signal_id 获取单个市场快照
-
-    Args:
-        signal_id: 快照 ID（例如 SNAP_20251221_120010_BTC_100k_a3f9）
-
-    Returns:
-        单个市场快照
-    """
-    try:
-        # 获取 CSV 文件路径
-        csv_path = get_raw_csv_path()
-
-        if not csv_path.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Raw data file not found: {csv_path}"
-            )
-
-        # 读取 CSV
-        df = pd.read_csv(csv_path)
-
-        if df.empty:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Signal ID not found: {signal_id}"
-            )
-
-        # 遍历所有行，生成 signal_id 并匹配
-        for _, row in df.iterrows():
-            row_signal_id = generate_signal_id(
-                time_str=str(row.get('time', '')),
-                asset=str(row.get('asset', 'BTC')),
-                strike=float(row.get('K_poly', 0)),
-                market_id=str(row.get('market_id', ''))
-            )
-
-            if row_signal_id == signal_id:
-                return transform_row_to_market_response(row)
-
-        raise HTTPException(
-            status_code=404,
-            detail=f"Signal ID not found: {signal_id}"
-        )
 
     except HTTPException:
         raise

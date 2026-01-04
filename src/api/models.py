@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import List, Literal
 
 from pydantic import BaseModel
 
@@ -156,4 +156,55 @@ class PnlResponse(BaseModel):
     shadow_view: dict
     # 真实账本
     real_view: dict
+
+
+# ==================== Market Snapshot Models ====================
+
+class MarketOrderLevel(BaseModel):
+    """订单簿单个档位"""
+    price: float
+    size: float
+
+
+class MarketTokenOrderbook(BaseModel):
+    """单个 token 的订单簿（YES 或 NO）"""
+    bids: List[MarketOrderLevel]
+    asks: List[MarketOrderLevel]
+
+
+class MarketPMData(BaseModel):
+    """PolyMarket 数据 (YES/NO 两套深度)"""
+    yes: MarketTokenOrderbook
+    no: MarketTokenOrderbook
+
+
+class MarketOptionLeg(BaseModel):
+    """期权单腿数据 (K1 或 K2)"""
+    name: str              # 合约名称
+    mark_iv: float         # 标记 IV
+    mark_price: float      # 标记价格
+    bids: List[MarketOrderLevel]
+    asks: List[MarketOrderLevel]
+
+
+class MarketDRData(BaseModel):
+    """Deribit 数据 (K1/K2 两腿 + 全局数据)"""
+    valid: bool
+    index_price: float     # 现货价格
+    k1: MarketOptionLeg
+    k2: MarketOptionLeg
+
+
+class MarketResponse(BaseModel):
+    """市场快照响应"""
+    # A. 基础元数据
+    signal_id: str
+    timestamp: str         # ISO 格式
+    market_title: str
+
+    # B. PolyMarket 数据
+    pm_data: MarketPMData
+
+    # C. Deribit 数据
+    dr_data: MarketDRData
 
