@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from .api.health import health_router
 from .api.ev import ev_router
 from .api.position import position_router
+from .api.market import market_router
 from .api.lifespan import lifespan
 from .api.models import (
     DBRespone,
@@ -66,6 +67,7 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(ev_router)
 app.include_router(position_router)
+app.include_router(market_router)
 
 @app.get("/api/pm", response_model=PMResponse)
 def get_pm():
