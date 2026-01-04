@@ -1,7 +1,10 @@
+import logging
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from ..fetch_data.deribit.deribit_client import DeribitClient
+
+logger = logging.getLogger(__name__)
 
 
 def parse_timestamp(exp: Any) -> Optional[float]:
@@ -53,20 +56,28 @@ def init_markets(
                 k1_explicit / 1000.0, tz=timezone.utc
             ).date()
         else:
+            # 先找到 K1 的合约
             inst_k1, k1_exp = DeribitClient.find_option_instrument(
                 k1,
                 call=True,
                 currency=asset,
                 day_offset=day_offset,
             )
+            # 强制 K2 使用与 K1 相同的到期时间，确保一致性
             inst_k2, k2_exp = DeribitClient.find_option_instrument(
                 k2,
                 call=True,
                 currency=asset,
-                day_offset=day_offset,
+                exp_timestamp=k1_exp,  # 使用 K1 的到期时间
             )
 
         if k1_exp != k2_exp:
+            logger.warning(
+                f"跳过市场 '{title}': K1 和 K2 到期时间不一致 "
+                f"(K1: {datetime.fromtimestamp(k1_exp/1000, tz=timezone.utc)}, "
+                f"K2: {datetime.fromtimestamp(k2_exp/1000, tz=timezone.utc)})"
+            )
+            skipped_titles.append(title)
             continue
 
         if expected_expiration_date:
@@ -74,6 +85,10 @@ def init_markets(
                 k1_exp / 1000.0, tz=timezone.utc
             ).date()
             if actual_expiration_date != expected_expiration_date:
+                logger.warning(
+                    f"跳过市场 '{title}': 实际到期日 {actual_expiration_date} "
+                    f"与预期 {expected_expiration_date} 不匹配"
+                )
                 skipped_titles.append(title)
                 continue
 
