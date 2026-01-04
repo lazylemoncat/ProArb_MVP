@@ -18,6 +18,8 @@ class Polymarket_trade_client:
     def early_exit(token_id: str, price: float):
         client = Polymarket_trade.get_client()
         trades = Polymarket_trade.get_trades(client, asset_id=token_id)
+        if len(trades) == 0:
+            raise Exception("no trades")
         trade_size = trades[0]["size"]
         token_id = trades[0]["asset_id"]
         sell_order = client.create_and_post_order(

@@ -1,7 +1,7 @@
 # === 全局参数 ===
 thresholds:
   OUTPUT_CSV: "data/results.csv"
-  RAW_OUTPUT_CSV: "data/raw_results.csv"
+  RAW_OUTPUT_CSV: "data/raw.csv"
   POSITIONS_CSV: data/positions.csv
   ev_spread_min: 0.02             # 概率优势最小值
   notify_net_ev_min: 0.05         # 通知的最小净利润
