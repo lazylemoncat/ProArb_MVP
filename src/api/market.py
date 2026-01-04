@@ -289,7 +289,7 @@ def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
 
 @market_router.get("/api/market", response_model=List[MarketResponse])
 async def get_market_snapshots(
-    limit: int = Query(default=10, ge=1, le=1000, description="返回的快照数量"),
+    limit: Optional[int] = Query(default=None, ge=1, description="返回的快照数量（默认返回所有）"),
     offset: int = Query(default=0, ge=0, description="跳过的记录数"),
     market_title: Optional[str] = Query(default=None, description="按市场标题过滤")
 ) -> List[MarketResponse]:
@@ -297,7 +297,7 @@ async def get_market_snapshots(
     获取市场快照数据（从 raw.csv 读取）
 
     Args:
-        limit: 返回的记录数量（默认 10，最大 1000）
+        limit: 返回的记录数量（None 表示返回所有，默认返回所有）
         offset: 跳过的记录数（用于分页）
         market_title: 可选的市场标题过滤器
 
@@ -330,7 +330,12 @@ async def get_market_snapshots(
             df = df.sort_values('time', ascending=False)
 
         # 分页
-        df_page = df.iloc[offset:offset + limit]
+        if limit is None:
+            # 返回从 offset 开始的所有数据
+            df_page = df.iloc[offset:]
+        else:
+            # 返回指定数量
+            df_page = df.iloc[offset:offset + limit]
 
         # 转换为响应对象
         results = []
