@@ -58,17 +58,17 @@ def transform_position_row(row: dict) -> dict:
                 "instrument": str(row.get("inst_k1", "")),
                 "price_t0": float(row.get("dr_k1_price", 0)),
                 "iv": float(row.get("k1_iv", 0)),
-                "delta": None,  # TODO: 需要添加到 positions.csv
-                "theta": None,  # TODO: 需要添加到 positions.csv
-                "settlement_price": None,
+                "delta": float(row.get("k1_delta", 0)) if row.get("k1_delta") not in [None, "", "0.0", 0] else None,
+                "theta": float(row.get("k1_theta", 0)) if row.get("k1_theta") not in [None, "", "0.0", 0] else None,
+                "settlement_price": float(row.get("settlement_price", 0)) if row.get("settlement_price") not in [None, "", "0.0", 0] else None,
             },
             "k2": {
                 "instrument": str(row.get("inst_k2", "")),
                 "price_t0": float(row.get("dr_k2_price", 0)),
                 "iv": float(row.get("k2_iv", 0)),
-                "delta": None,  # TODO: 需要添加到 positions.csv
-                "theta": None,  # TODO: 需要添加到 positions.csv
-                "settlement_price": None,
+                "delta": float(row.get("k2_delta", 0)) if row.get("k2_delta") not in [None, "", "0.0", 0] else None,
+                "theta": float(row.get("k2_theta", 0)) if row.get("k2_theta") not in [None, "", "0.0", 0] else None,
+                "settlement_price": float(row.get("settlement_price", 0)) if row.get("settlement_price") not in [None, "", "0.0", 0] else None,
             },
             "risk": {
                 "iv_t0": float(row.get("mark_iv", 0)),
@@ -85,7 +85,7 @@ def get_position():
     获取所有仓位 (OPEN 和 CLOSE)
     """
     # 检查并确保 CSV 文件包含所有必需的列
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value="")
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0)
 
     pos_df = pd.read_csv('./data/positions.csv')
     rows = pos_df.to_dict(orient="records")
@@ -101,7 +101,7 @@ def get_closed_positions():
     获取所有已关闭的仓位 (status == "CLOSE")
     """
     # 检查并确保 CSV 文件包含所有必需的列
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value="")
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0)
 
     pos_df = pd.read_csv('./data/positions.csv')
 

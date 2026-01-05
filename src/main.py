@@ -422,7 +422,7 @@ async def early_exit_monitor():
     positions_columns = [f.name for f in fields(SavePosition)]
 
     # 检查并确保 positions.csv 包含所有必需的列
-    CsvHandler.check_csv(positions_csv, positions_columns, fill_value="")
+    CsvHandler.check_csv(positions_csv, positions_columns, fill_value=0.0)
 
     csv_df = pd.read_csv(positions_csv)
     csv_df = csv_df.apply(earlt_exit_process_row, axis=1)

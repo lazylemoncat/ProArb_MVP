@@ -286,3 +286,54 @@ class DeribitAPI:
             "delivery_price": float(data["result"]["index_price"]),
             "timestamp": int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000),
         }
+
+    @staticmethod
+    def get_ticker(instrument_name: str) -> dict[str, Any]:
+        """
+        获取期权合约的 ticker 数据，包括 Greeks (delta, theta, gamma, vega) 和结算价
+
+        参数：
+            instrument_name: 合约名称，例如 "BTC-16JAN26-89000-C"
+
+        返回：
+            {
+                "delta": float,              # Delta 值
+                "theta": float,              # Theta 值 (每天)
+                "gamma": float,              # Gamma 值
+                "vega": float,               # Vega 值
+                "settlement_price": float,   # 结算价格
+                "mark_price": float,         # 标记价格
+                "mark_iv": float,            # 标记隐含波动率
+                "last_price": float,         # 最新成交价
+                "timestamp": int,            # 时间戳（毫秒）
+            }
+
+        异常：
+            requests.HTTPError: API 请求失败
+            ValueError: 无效的响应数据
+        """
+        url = f"{BASE_URL}/public/ticker"
+        params = {"instrument_name": instrument_name}
+        resp = REQUESTS_SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
+        resp.raise_for_status()
+
+        data = resp.json()
+        result = data.get("result", {})
+
+        if not result:
+            raise ValueError(f"Invalid ticker response for {instrument_name}")
+
+        # 提取 Greeks 和价格信息
+        greeks = result.get("greeks", {})
+
+        return {
+            "delta": float(greeks.get("delta", 0.0)),
+            "theta": float(greeks.get("theta", 0.0)),
+            "gamma": float(greeks.get("gamma", 0.0)),
+            "vega": float(greeks.get("vega", 0.0)),
+            "settlement_price": float(result.get("settlement_price", 0.0)),
+            "mark_price": float(result.get("mark_price", 0.0)),
+            "mark_iv": float(result.get("mark_iv", 0.0)),
+            "last_price": float(result.get("last_price", 0.0)),
+            "timestamp": int(result.get("timestamp", 0)),
+        }
