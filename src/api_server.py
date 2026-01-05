@@ -74,7 +74,7 @@ def get_pm():
     # TODO 创建 PM csv
     return PMResponse(
         timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        mark_id="",
+        market_id="",
         event_title="",
         asset="BTC",
         strike=0,

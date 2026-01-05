@@ -10,7 +10,7 @@ class HealthResponse(BaseModel):
 
 class PMResponse(BaseModel):
     timestamp: str # ISO 格式
-    mark_id: str
+    market_id: str
     event_title: str
     asset: Literal["BTC"]
     strike: int
@@ -30,7 +30,7 @@ class DBRespone(BaseModel):
     vertical_spread: dict
 
 class EVResponse(BaseModel):
-    signal_id: str # 主键，唯一标识这次决策, pm order id
+    signal_id: str # 主键，唯一标识这次决策
     timestamp: str # ISO 格式
     market_title: str
     strategy: Literal[1, 2]

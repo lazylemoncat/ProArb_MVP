@@ -31,7 +31,7 @@ content-type: application/json
 ### position (all)
 GET http://104.248.192.200:8000/api/position
 
-### position (closed only)
+### close (closed only)
 GET http://104.248.192.200:8000/api/close
 
 ### pnl
@@ -39,3 +39,6 @@ GET http://104.248.192.200:8000/api/pnl
 
 ### download server_proarb.log
 GET http://104.248.192.200:8000/api/files/server_proarb.log
+
+### market
+GET http://104.248.192.200:8000/api/market?limit=10
