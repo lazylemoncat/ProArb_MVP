@@ -10,8 +10,9 @@ async def maintain_data():
     positions_csv = "./data/positions.csv"
 
     # 检查并确保 positions.csv 包含所有必需的列
+    # 使用 0.0 作为默认值以适配新增的数值型字段 (k1_delta, k1_theta, k2_delta, k2_theta, settlement_price)
     positions_columns = [f.name for f in fields(SavePosition)]
-    CsvHandler.check_csv(positions_csv, positions_columns, fill_value="")
+    CsvHandler.check_csv(positions_csv, positions_columns, fill_value=0.0)
 
     position_df = pd.read_csv(positions_csv)
 
