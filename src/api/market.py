@@ -121,14 +121,15 @@ def get_raw_csv_path(target_date: Optional[date] = None) -> Path:
     if target_date is None:
         target_date = datetime.now(timezone.utc).date()
 
-    date_str = target_date.strftime("%Y_%m_%d")
-    csv_path = Path(f"data/raw_results_{date_str}.csv")
+    # 使用格式: YYYYMMDD_raw.csv
+    date_str = target_date.strftime("%Y%m%d")
+    csv_path = Path(f"data/{date_str}_raw.csv")
 
     # 如果今天的文件不存在，尝试昨天的
     if not csv_path.exists():
         yesterday = target_date - timedelta(days=1)
-        date_str = yesterday.strftime("%Y_%m_%d")
-        csv_path = Path(f"data/raw_results_{date_str}.csv")
+        date_str = yesterday.strftime("%Y%m%d")
+        csv_path = Path(f"data/{date_str}_raw.csv")
 
     return csv_path
 
