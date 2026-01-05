@@ -60,7 +60,10 @@ def generate_signal_id(time_str: str, asset: str, strike: float, market_id: str)
     # 解析时间
     try:
         dt = pd.to_datetime(time_str)
-        if dt.tzinfo is None:
+        # 检查是否为 NaT (Not a Time)
+        if pd.isna(dt):
+            dt = datetime.now(timezone.utc)
+        elif dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
     except Exception:
         dt = datetime.now(timezone.utc)
@@ -155,9 +158,13 @@ def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
     # 解析时间
     try:
         dt = pd.to_datetime(row['time'])
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        timestamp = dt.isoformat()
+        # 检查是否为 NaT (Not a Time)
+        if pd.isna(dt):
+            timestamp = datetime.now(timezone.utc).isoformat()
+        else:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            timestamp = dt.isoformat()
     except Exception:
         timestamp = datetime.now(timezone.utc).isoformat()
 
