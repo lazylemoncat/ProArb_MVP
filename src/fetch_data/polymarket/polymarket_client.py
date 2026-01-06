@@ -135,7 +135,7 @@ class PolymarketClient:
             no_bid_prices = await PolymarketWS.fetch_orderbook(clob_token_ids["no_token_id"], side="bid")
             yes_ask_prices = await PolymarketWS.fetch_orderbook(clob_token_ids["yes_token_id"], side="ask")
             no_ask_prices = await PolymarketWS.fetch_orderbook(clob_token_ids["no_token_id"], side="ask")
-            def _get_tuple_in_list(_list: list, _index_i: int, _index_j: int, default: float=0):
+            def _get_tuple_in_list(_list: list, _index_i: int, _index_j: int, default=None):
                 if len(_list) >= _index_i + 1:
                     return _list[_index_i][_index_j]
                 return default
@@ -162,12 +162,12 @@ class PolymarketClient:
             no_bid_price_3 = _get_tuple_in_list(no_bid_prices, 2, 0)
             no_bid_price_size_3 = _get_tuple_in_list(no_bid_prices, 2, 1)
 
-            no_ask_price_1 = no_ask_prices[0][0]
-            no_ask_price_1_size = no_ask_prices[0][1]
-            no_ask_price_2 = no_ask_prices[1][0] if len(yes_bid_prices) >= 2 else 0
-            no_ask_price_2_size = no_ask_prices[1][1] if len(yes_bid_prices) >= 2 else 0
-            no_ask_price_3 = no_ask_prices[2][0] if len(no_ask_prices) >= 3 else 0
-            no_ask_price_3_size = no_ask_prices[2][1] if len(no_ask_prices) >= 3 else 0
+            no_ask_price_1 = _get_tuple_in_list(no_ask_prices, 0, 0)
+            no_ask_price_1_size = _get_tuple_in_list(no_ask_prices, 0, 1)
+            no_ask_price_2 = _get_tuple_in_list(no_ask_prices, 1, 0)
+            no_ask_price_2_size = _get_tuple_in_list(no_ask_prices, 1, 1)
+            no_ask_price_3 = _get_tuple_in_list(no_ask_prices, 2, 0)
+            no_ask_price_3_size = _get_tuple_in_list(no_ask_prices, 2, 1)
         except Exception as e:
             raise e
 
