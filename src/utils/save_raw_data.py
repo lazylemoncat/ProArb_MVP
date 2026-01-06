@@ -15,86 +15,86 @@ class RawData:
     spot_usd: float                 # Spot price of BTC
 
     # Polymarket YES token orderbook (3 levels)
-    pm_yes_bid1_price: float
-    pm_yes_bid1_shares: float
-    pm_yes_bid2_price: float
-    pm_yes_bid2_shares: float
-    pm_yes_bid3_price: float
-    pm_yes_bid3_shares: float
-    pm_yes_ask1_price: float
-    pm_yes_ask1_shares: float
-    pm_yes_ask2_price: float
-    pm_yes_ask2_shares: float
-    pm_yes_ask3_price: float
-    pm_yes_ask3_shares: float
+    pm_yes_bid1_price: Optional[float]
+    pm_yes_bid1_shares: Optional[float]
+    pm_yes_bid2_price: Optional[float]
+    pm_yes_bid2_shares: Optional[float]
+    pm_yes_bid3_price: Optional[float]
+    pm_yes_bid3_shares: Optional[float]
+    pm_yes_ask1_price: Optional[float]
+    pm_yes_ask1_shares: Optional[float]
+    pm_yes_ask2_price: Optional[float]
+    pm_yes_ask2_shares: Optional[float]
+    pm_yes_ask3_price: Optional[float]
+    pm_yes_ask3_shares: Optional[float]
 
     # Polymarket NO token orderbook (3 levels)
-    pm_no_bid1_price: float
-    pm_no_bid1_shares: float
-    pm_no_bid2_price: float
-    pm_no_bid2_shares: float
-    pm_no_bid3_price: float
-    pm_no_bid3_shares: float
-    pm_no_ask1_price: float
-    pm_no_ask1_shares: float
-    pm_no_ask2_price: float
-    pm_no_ask2_shares: float
-    pm_no_ask3_price: float
-    pm_no_ask3_shares: float
+    pm_no_bid1_price: Optional[float]
+    pm_no_bid1_shares: Optional[float]
+    pm_no_bid2_price: Optional[float]
+    pm_no_bid2_shares: Optional[float]
+    pm_no_bid3_price: Optional[float]
+    pm_no_bid3_shares: Optional[float]
+    pm_no_ask1_price: Optional[float]
+    pm_no_ask1_shares: Optional[float]
+    pm_no_ask2_price: Optional[float]
+    pm_no_ask2_shares: Optional[float]
+    pm_no_ask3_price: Optional[float]
+    pm_no_ask3_shares: Optional[float]
 
     # Deribit K1 option contract
     dr_k1_name: str                 # K1 contract name
-    dr_k1_bid1_price: float
-    dr_k1_bid1_size: float
-    dr_k1_bid2_price: float
-    dr_k1_bid2_size: float
-    dr_k1_bid3_price: float
-    dr_k1_bid3_size: float
-    dr_k1_ask1_price: float
-    dr_k1_ask1_size: float
-    dr_k1_ask2_price: float
-    dr_k1_ask2_size: float
-    dr_k1_ask3_price: float
-    dr_k1_ask3_size: float
-    dr_k1_iv: float                 # K1 implied volatility
-    dr_k1_delta: float              # K1 delta
+    dr_k1_bid1_price: Optional[float]
+    dr_k1_bid1_size: Optional[float]
+    dr_k1_bid2_price: Optional[float]
+    dr_k1_bid2_size: Optional[float]
+    dr_k1_bid3_price: Optional[float]
+    dr_k1_bid3_size: Optional[float]
+    dr_k1_ask1_price: Optional[float]
+    dr_k1_ask1_size: Optional[float]
+    dr_k1_ask2_price: Optional[float]
+    dr_k1_ask2_size: Optional[float]
+    dr_k1_ask3_price: Optional[float]
+    dr_k1_ask3_size: Optional[float]
+    dr_k1_iv: Optional[float]                 # K1 implied volatility
+    dr_k1_delta: Optional[float]              # K1 delta
 
     # Deribit K2 option contract
     dr_k2_name: str                 # K2 contract name
-    dr_k2_bid1_price: float
-    dr_k2_bid1_size: float
-    dr_k2_bid2_price: float
-    dr_k2_bid2_size: float
-    dr_k2_bid3_price: float
-    dr_k2_bid3_size: float
-    dr_k2_ask1_price: float
-    dr_k2_ask1_size: float
-    dr_k2_ask2_price: float
-    dr_k2_ask2_size: float
-    dr_k2_ask3_price: float
-    dr_k2_ask3_size: float
-    dr_k2_iv: float                 # K2 implied volatility
-    dr_k2_delta: float              # K2 delta
+    dr_k2_bid1_price: Optional[float]
+    dr_k2_bid1_size: Optional[float]
+    dr_k2_bid2_price: Optional[float]
+    dr_k2_bid2_size: Optional[float]
+    dr_k2_bid3_price: Optional[float]
+    dr_k2_bid3_size: Optional[float]
+    dr_k2_ask1_price: Optional[float]
+    dr_k2_ask1_size: Optional[float]
+    dr_k2_ask2_price: Optional[float]
+    dr_k2_ask2_size: Optional[float]
+    dr_k2_ask3_price: Optional[float]
+    dr_k2_ask3_size: Optional[float]
+    dr_k2_iv: Optional[float]                 # K2 implied volatility
+    dr_k2_delta: Optional[float]              # K2 delta
 
     # Deribit metadata
     dr_size_unit: str               # Size unit: "contracts" or "btc"
-    dr_iv_floor: float              # Floor IV
-    dr_iv_ceiling: float            # Ceiling IV
+    dr_iv_floor: Optional[float]              # Floor IV
+    dr_iv_ceiling: Optional[float]            # Ceiling IV
     dr_data_valid: bool             # Data validity flag
 
 
-def extract_orderbook_level(orderbook_list: list, index: int, default_price: float = 0.0, default_size: float = 0.0) -> tuple[float, float]:
+def extract_orderbook_level(orderbook_list: list, index: int, default_price: Optional[float] = None, default_size: Optional[float] = None) -> tuple[Optional[float], Optional[float]]:
     """
     Extract price and size from orderbook level.
 
     Args:
         orderbook_list: List of [price, size] pairs
         index: Index of the level to extract (0, 1, or 2)
-        default_price: Default price if level doesn't exist
-        default_size: Default size if level doesn't exist
+        default_price: Default price if level doesn't exist (defaults to None)
+        default_size: Default size if level doesn't exist (defaults to None)
 
     Returns:
-        Tuple of (price, size)
+        Tuple of (price, size), or (None, None) if data doesn't exist
     """
     if orderbook_list and len(orderbook_list) > index and orderbook_list[index]:
         level = orderbook_list[index]
@@ -151,8 +151,8 @@ def save_raw_data(
     k2_ask3_price, k2_ask3_size = extract_orderbook_level(db_ctx.k2_ask_3_usd, 0)
 
     # Get IV floor/ceiling from spot_iv_lower/upper tuples
-    iv_floor = db_ctx.spot_iv_lower[1] if db_ctx.spot_iv_lower and len(db_ctx.spot_iv_lower) > 1 else 0.0
-    iv_ceiling = db_ctx.spot_iv_upper[1] if db_ctx.spot_iv_upper and len(db_ctx.spot_iv_upper) > 1 else 0.0
+    iv_floor = db_ctx.spot_iv_lower[1] if db_ctx.spot_iv_lower and len(db_ctx.spot_iv_lower) > 1 else None
+    iv_ceiling = db_ctx.spot_iv_upper[1] if db_ctx.spot_iv_upper and len(db_ctx.spot_iv_upper) > 1 else None
 
     # Determine data validity (simplified - you may want more sophisticated logic)
     data_valid = (
@@ -213,7 +213,7 @@ def save_raw_data(
         dr_k1_ask3_price=k1_ask3_price,
         dr_k1_ask3_size=k1_ask3_size,
         dr_k1_iv=db_ctx.k1_iv,
-        dr_k1_delta=0.0,  # TODO: Add delta field to DeribitMarketContext if available
+        dr_k1_delta=None,  # TODO: Add delta field to DeribitMarketContext if available
 
         # Deribit K2 contract
         dr_k2_name=db_ctx.inst_k2,
@@ -230,7 +230,7 @@ def save_raw_data(
         dr_k2_ask3_price=k2_ask3_price,
         dr_k2_ask3_size=k2_ask3_size,
         dr_k2_iv=db_ctx.k2_iv,
-        dr_k2_delta=0.0,  # TODO: Add delta field to DeribitMarketContext if available
+        dr_k2_delta=None,  # TODO: Add delta field to DeribitMarketContext if available
 
         # Deribit metadata
         dr_size_unit="btc",  # Assuming BTC-denominated, adjust if needed
