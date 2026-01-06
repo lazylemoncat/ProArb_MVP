@@ -5,3 +5,5 @@ docs/todo.md
 .env.dev
 /data
 dev.env
+*.egg-info/
+.pytest_cache/
