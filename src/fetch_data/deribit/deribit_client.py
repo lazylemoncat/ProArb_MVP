@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import math
 import time
@@ -6,12 +7,15 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 import websockets
+from websockets.exceptions import WebSocketException
 
 from .deribit_api import DeribitAPI, DeribitUserCfg
 
 logger = logging.getLogger(__name__)
 
 WS_URL = "wss://www.deribit.com/ws/api/v2"
+MAX_WS_RETRIES = 4  # Maximum retry attempts for WebSocket connections
+WS_RETRY_DELAYS = [2, 4, 8, 16]  # Exponential backoff delays in seconds
 
 def _norm_cdf(x: float) -> float:
     """标准正态分布Φ(x);用erf实现,避免scipy依赖。"""
@@ -139,19 +143,57 @@ class DeribitClient:
         instrument_name: str,
         depth: int = 3
     ):
-        async with websockets.connect(WS_URL) as websocket:
-            await DeribitAPI.websocket_auth(websocket, deribitUserCfg)
-            orderbook = await DeribitAPI.get_orderbook_by_instrument_name(
-                websocket,
-                deribitUserCfg,
-                instrument_name,
-                depth=depth
-            )
-            res = orderbook.get("result", {})
-            return {
-                "bids": res.get("bids", []),
-                "asks": res.get("asks", []),
-            }
+        """Get orderbook prices with retry logic for WebSocket connection failures"""
+        last_exception = None
+
+        for attempt in range(MAX_WS_RETRIES):
+            try:
+                async with websockets.connect(WS_URL) as websocket:
+                    await DeribitAPI.websocket_auth(websocket, deribitUserCfg)
+                    orderbook = await DeribitAPI.get_orderbook_by_instrument_name(
+                        websocket,
+                        deribitUserCfg,
+                        instrument_name,
+                        depth=depth
+                    )
+                    res = orderbook.get("result", {})
+                    return {
+                        "bids": res.get("bids", []),
+                        "asks": res.get("asks", []),
+                    }
+            except WebSocketException as e:
+                last_exception = e
+                if attempt < MAX_WS_RETRIES - 1:
+                    delay = WS_RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"WebSocket connection failed for {instrument_name} "
+                        f"(attempt {attempt + 1}/{MAX_WS_RETRIES}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"WebSocket connection failed for {instrument_name} "
+                        f"after {MAX_WS_RETRIES} attempts: {e}"
+                    )
+            except Exception as e:
+                last_exception = e
+                if attempt < MAX_WS_RETRIES - 1:
+                    delay = WS_RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"Unexpected error getting orderbook for {instrument_name} "
+                        f"(attempt {attempt + 1}/{MAX_WS_RETRIES}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Failed to get orderbook for {instrument_name} "
+                        f"after {MAX_WS_RETRIES} attempts: {e}"
+                    )
+
+        # If all retries failed, raise the last exception
+        raise last_exception
     
     @staticmethod
     async def get_db_context(
