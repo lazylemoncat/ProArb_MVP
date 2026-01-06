@@ -1,9 +1,12 @@
 import json
+import logging
+import time
 from typing import Any, Dict, Tuple
 
 import ssl
 import certifi
 import requests
+from requests.exceptions import RequestException, HTTPError
 
 BASE_URL = "https://gamma-api.polymarket.com"
 LIST_MARKET_URL = f"{BASE_URL}/markets"
@@ -14,51 +17,112 @@ GET_EVENT_BY_ID_URL = f"{BASE_URL}/events/{{event_id}}"
 
 CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 HTTP_TIMEOUT = 10  # 秒
+MAX_RETRIES = 4  # Maximum retry attempts
+RETRY_DELAYS = [2, 4, 8, 16]  # Exponential backoff delays in seconds
 
 # SSL 配置 - 使用 certifi 提供的 CA 证书
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 REQUESTS_SESSION = requests.Session()
 REQUESTS_SESSION.verify = certifi.where()
 
+logger = logging.getLogger(__name__)
+
+
+def _retry_request(func):
+    """Decorator to add retry logic with exponential backoff to API requests"""
+    def wrapper(*args, **kwargs):
+        last_exception = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = func(*args, **kwargs)
+                response.raise_for_status()
+                return response
+            except HTTPError as e:
+                last_exception = e
+                # Don't retry on 4xx client errors (except 429 rate limit)
+                if e.response is not None and 400 <= e.response.status_code < 500 and e.response.status_code != 429:
+                    logger.warning(f"Client error {e.response.status_code}, not retrying: {e}")
+                    raise
+
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_DELAYS[attempt]
+                    logger.warning(f"Request failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Request failed after {MAX_RETRIES} attempts: {e}")
+            except RequestException as e:
+                last_exception = e
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_DELAYS[attempt]
+                    logger.warning(f"Network error (attempt {attempt + 1}/{MAX_RETRIES}): {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Network error after {MAX_RETRIES} attempts: {e}")
+
+        # If all retries failed, raise the last exception
+        raise last_exception
+
+    return wrapper
+
 class PolymarketAPI:
     @staticmethod
     def get_market_list(closed: bool = False, offset: int = 0) -> list[Dict[str, Any]]:
         """获取所有市场列表"""
         url = LIST_MARKET_URL + "?closed=" + str(closed) + "&offset=" + str(offset)
-        response = REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
+
+        @_retry_request
+        def _request():
+            return REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
+
+        response = _request()
         return response.json()
-    
+
     @staticmethod
     def get_event_list(closed: bool = False, offset: int = 0) -> list[Dict[str, Any]]:
         """获取所有事件列表"""
         url = LIST_EVENT_URL + "?closed=" + str(closed) + "&offset=" + str(offset)
-        response = REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
+
+        @_retry_request
+        def _request():
+            return REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
+
+        response = _request()
         return response.json()
 
     @staticmethod
     def get_market_by_id(market_id: str) -> Dict[str, Any]:
         """根据市场 ID 获取市场详情"""
         url = GET_MARKET_BY_ID_URL.format(market_id=market_id)
-        response = REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
+
+        @_retry_request
+        def _request():
+            return REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
+
+        response = _request()
         return response.json()
 
     @staticmethod
     def get_market_public_search(querystring: str) -> Dict[str, Any]:
         """根据问题关键词搜索"""
         params = {"q": querystring}
-        response = REQUESTS_SESSION.get(PUBLIC_SEARCH_URL, params=params, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
+
+        @_retry_request
+        def _request():
+            return REQUESTS_SESSION.get(PUBLIC_SEARCH_URL, params=params, timeout=HTTP_TIMEOUT)
+
+        response = _request()
         return response.json()
-    
+
     @staticmethod
     def get_event_by_id(event_id: str) -> Dict[str, Any]:
         """根据 event_id 获取事件详情"""
         url = GET_EVENT_BY_ID_URL.format(event_id=event_id)
-        response = REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
+
+        @_retry_request
+        def _request():
+            return REQUESTS_SESSION.get(url, timeout=HTTP_TIMEOUT)
+
+        response = _request()
         return response.json()
     
     @staticmethod
