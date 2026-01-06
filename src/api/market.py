@@ -3,6 +3,7 @@
 """
 import hashlib
 import logging
+import math
 from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -82,6 +83,32 @@ def generate_signal_id(time_str: str, asset: str, strike: float, market_id: str)
     return f"SNAP_{date_part}_{time_part}_{asset}_{strike_part}_{hash_hex}"
 
 
+def safe_float(value, default: float = 0.0) -> float:
+    """
+    安全地将值转换为 float，处理 NaN 值
+
+    Args:
+        value: 要转换的值
+        default: 转换失败时的默认值
+
+    Returns:
+        float 值（保证不是 NaN）
+    """
+    if value is None or pd.isna(value):
+        return default
+    # 检查字符串形式的 NaN
+    if isinstance(value, str) and value.lower() in ('nan', 'inf', '-inf', ''):
+        return default
+    try:
+        result = float(value)
+        # 检查转换后的值是否为 NaN 或 Inf
+        if math.isnan(result) or math.isinf(result):
+            return default
+        return result
+    except (ValueError, TypeError):
+        return default
+
+
 def parse_orderbook_field(field_value) -> List[float]:
     """
     解析订单簿字段（可能是字符串或列表）
@@ -137,6 +164,27 @@ def get_raw_csv_path(target_date: Optional[date] = None) -> Path:
     return csv_path
 
 
+def extract_asset_and_strike_from_market_id(market_id: str) -> tuple[str, float]:
+    """
+    从 market_id 中提取 asset 和 strike
+
+    Args:
+        market_id: 市场ID，格式如 "BTC_108000_NO" 或 "ETH_3500_YES"
+
+    Returns:
+        (asset, strike) 元组
+    """
+    try:
+        parts = market_id.split('_')
+        if len(parts) >= 2:
+            asset = parts[0]  # BTC 或 ETH
+            strike = float(parts[1])  # 108000
+            return asset, strike
+    except (ValueError, IndexError):
+        pass
+    return 'BTC', 0.0
+
+
 def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
     """
     将 CSV 行数据转换为 MarketResponse
@@ -147,147 +195,171 @@ def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
     Returns:
         MarketResponse 对象
     """
+    # RawData 格式使用 market_id 字段
+    market_id = str(row.get('market_id', ''))
+
+    # 从 market_id 提取 asset 和 strike
+    asset, strike = extract_asset_and_strike_from_market_id(market_id)
+
+    # RawData 使用 snapshot_id (YYYYMMDD_HHMMSS) 或 utc (unix timestamp)
+    time_str = str(row.get('snapshot_id', ''))
+    if not time_str:
+        # 尝试从 utc 字段生成时间字符串
+        utc_val = row.get('utc')
+        if utc_val and not pd.isna(utc_val):
+            try:
+                dt = datetime.fromtimestamp(float(utc_val), tz=timezone.utc)
+                time_str = dt.strftime("%Y%m%d_%H%M%S")
+            except (ValueError, OSError):
+                time_str = ''
+
     # 生成 signal_id
     signal_id = generate_signal_id(
-        time_str=str(row.get('time', '')),
-        asset=str(row.get('asset', 'BTC')),
-        strike=float(row.get('K_poly', 0)),
-        market_id=str(row.get('market_id', ''))
+        time_str=time_str,
+        asset=asset,
+        strike=strike,
+        market_id=market_id
     )
 
-    # 解析时间
+    # 解析时间 - 使用 utc 字段（Unix 时间戳）
     try:
-        dt = pd.to_datetime(row['time'])
-        # 检查是否为 NaT (Not a Time)
-        if pd.isna(dt):
-            timestamp = datetime.now(timezone.utc).isoformat()
-        else:
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+        utc_val = row.get('utc')
+        if utc_val and not pd.isna(utc_val):
+            dt = datetime.fromtimestamp(float(utc_val), tz=timezone.utc)
             timestamp = dt.isoformat()
+        else:
+            # 尝试从 snapshot_id 解析
+            snapshot_id = str(row.get('snapshot_id', ''))
+            if snapshot_id:
+                dt = datetime.strptime(snapshot_id, "%Y%m%d_%H%M%S")
+                dt = dt.replace(tzinfo=timezone.utc)
+                timestamp = dt.isoformat()
+            else:
+                timestamp = datetime.now(timezone.utc).isoformat()
     except Exception:
         timestamp = datetime.now(timezone.utc).isoformat()
 
     # === PolyMarket 数据 ===
+    # 使用 RawData 格式的列名: pm_yes_bid1_price, pm_yes_bid1_shares, etc.
     pm_data = MarketPMData(
         yes=MarketTokenOrderbook(
             bids=[
                 MarketOrderLevel(
-                    price=float(row.get('yes_bid_price_1', 0)),
-                    size=float(row.get('yes_bid_price_size_1', 0))
+                    price=safe_float(row.get('pm_yes_bid1_price')),
+                    size=safe_float(row.get('pm_yes_bid1_shares'))
                 ),
                 MarketOrderLevel(
-                    price=float(row.get('yes_bid_price_2', 0)),
-                    size=float(row.get('yes_bid_price_size_2', 0))
+                    price=safe_float(row.get('pm_yes_bid2_price')),
+                    size=safe_float(row.get('pm_yes_bid2_shares'))
                 ),
                 MarketOrderLevel(
-                    price=float(row.get('yes_bid_price_3', 0)),
-                    size=float(row.get('yes_bid_price_size_3', 0))
+                    price=safe_float(row.get('pm_yes_bid3_price')),
+                    size=safe_float(row.get('pm_yes_bid3_shares'))
                 )
             ],
             asks=[
                 MarketOrderLevel(
-                    price=float(row.get('yes_ask_price_1', 0)),
-                    size=float(row.get('yes_ask_price_1_size', 0))
+                    price=safe_float(row.get('pm_yes_ask1_price')),
+                    size=safe_float(row.get('pm_yes_ask1_shares'))
                 ),
                 MarketOrderLevel(
-                    price=float(row.get('yes_ask_price_2', 0)),
-                    size=float(row.get('yes_ask_price_2_size', 0))
+                    price=safe_float(row.get('pm_yes_ask2_price')),
+                    size=safe_float(row.get('pm_yes_ask2_shares'))
                 ),
                 MarketOrderLevel(
-                    price=float(row.get('yes_ask_price_3', 0)),
-                    size=float(row.get('yes_ask_price_3_size', 0))
+                    price=safe_float(row.get('pm_yes_ask3_price')),
+                    size=safe_float(row.get('pm_yes_ask3_shares'))
                 )
             ]
         ),
         no=MarketTokenOrderbook(
             bids=[
                 MarketOrderLevel(
-                    price=float(row.get('no_bid_price_1', 0)),
-                    size=float(row.get('no_bid_price_size_1', 0))
+                    price=safe_float(row.get('pm_no_bid1_price')),
+                    size=safe_float(row.get('pm_no_bid1_shares'))
                 ),
                 MarketOrderLevel(
-                    price=float(row.get('no_bid_price_2', 0)),
-                    size=float(row.get('no_bid_price_size_2', 0))
+                    price=safe_float(row.get('pm_no_bid2_price')),
+                    size=safe_float(row.get('pm_no_bid2_shares'))
                 ),
                 MarketOrderLevel(
-                    price=float(row.get('no_bid_price_3', 0)),
-                    size=float(row.get('no_bid_price_size_3', 0))
+                    price=safe_float(row.get('pm_no_bid3_price')),
+                    size=safe_float(row.get('pm_no_bid3_shares'))
                 )
             ],
             asks=[
                 MarketOrderLevel(
-                    price=float(row.get('no_ask_price_1', 0)),
-                    size=float(row.get('no_ask_price_1_size', 0))
+                    price=safe_float(row.get('pm_no_ask1_price')),
+                    size=safe_float(row.get('pm_no_ask1_shares'))
                 ),
                 MarketOrderLevel(
-                    price=float(row.get('no_ask_price_2', 0)),
-                    size=float(row.get('no_ask_price_2_size', 0))
+                    price=safe_float(row.get('pm_no_ask2_price')),
+                    size=safe_float(row.get('pm_no_ask2_shares'))
                 ),
                 MarketOrderLevel(
-                    price=float(row.get('no_ask_price_3', 0)),
-                    size=float(row.get('no_ask_price_3_size', 0))
+                    price=safe_float(row.get('pm_no_ask3_price')),
+                    size=safe_float(row.get('pm_no_ask3_shares'))
                 )
             ]
         )
     )
 
     # === Deribit 数据 ===
-    # 解析 K1 订单簿
-    k1_bid_1 = parse_orderbook_field(row.get('k1_bid_1_usd'))
-    k1_bid_2 = parse_orderbook_field(row.get('k1_bid_2_usd'))
-    k1_bid_3 = parse_orderbook_field(row.get('k1_bid_3_usd'))
-    k1_ask_1 = parse_orderbook_field(row.get('k1_ask_1_usd'))
-    k1_ask_2 = parse_orderbook_field(row.get('k1_ask_2_usd'))
-    k1_ask_3 = parse_orderbook_field(row.get('k1_ask_3_usd'))
+    # 使用 RawData 格式的列名: dr_k1_bid1_price, dr_k1_bid1_size, etc.
+    # 计算 mark_price (mid price) 如果不存在则从 bid/ask 计算
+    k1_bid1_price = safe_float(row.get('dr_k1_bid1_price'))
+    k1_ask1_price = safe_float(row.get('dr_k1_ask1_price'))
+    k1_mid_usd = (k1_bid1_price + k1_ask1_price) / 2 if (k1_bid1_price > 0 or k1_ask1_price > 0) else 0.0
 
-    # 解析 K2 订单簿
-    k2_bid_1 = parse_orderbook_field(row.get('k2_bid_1_usd'))
-    k2_bid_2 = parse_orderbook_field(row.get('k2_bid_2_usd'))
-    k2_bid_3 = parse_orderbook_field(row.get('k2_bid_3_usd'))
-    k2_ask_1 = parse_orderbook_field(row.get('k2_ask_1_usd'))
-    k2_ask_2 = parse_orderbook_field(row.get('k2_ask_2_usd'))
-    k2_ask_3 = parse_orderbook_field(row.get('k2_ask_3_usd'))
+    k2_bid1_price = safe_float(row.get('dr_k2_bid1_price'))
+    k2_ask1_price = safe_float(row.get('dr_k2_ask1_price'))
+    k2_mid_usd = (k2_bid1_price + k2_ask1_price) / 2 if (k2_bid1_price > 0 or k2_ask1_price > 0) else 0.0
+
+    # 检查数据有效性
+    dr_valid = row.get('dr_data_valid', True)
+    if isinstance(dr_valid, str):
+        dr_valid = dr_valid.lower() == 'true'
 
     dr_data = MarketDRData(
-        valid=True,  # 假设数据有效（可以根据实际情况判断）
-        index_price=float(row.get('spot', 0)),
+        valid=bool(dr_valid),
+        index_price=safe_float(row.get('spot_usd')),
         k1=MarketOptionLeg(
-            name=str(row.get('inst_k1', '')),
-            mark_iv=float(row.get('k1_iv', 0)),
-            mark_price=float(row.get('k1_mid_usd', 0)),
+            name=str(row.get('dr_k1_name', '')),
+            mark_iv=safe_float(row.get('dr_k1_iv')),
+            mark_price=k1_mid_usd,
             bids=[
-                MarketOrderLevel(price=k1_bid_1[0], size=k1_bid_1[1]),
-                MarketOrderLevel(price=k1_bid_2[0], size=k1_bid_2[1]),
-                MarketOrderLevel(price=k1_bid_3[0], size=k1_bid_3[1])
+                MarketOrderLevel(price=safe_float(row.get('dr_k1_bid1_price')), size=safe_float(row.get('dr_k1_bid1_size'))),
+                MarketOrderLevel(price=safe_float(row.get('dr_k1_bid2_price')), size=safe_float(row.get('dr_k1_bid2_size'))),
+                MarketOrderLevel(price=safe_float(row.get('dr_k1_bid3_price')), size=safe_float(row.get('dr_k1_bid3_size')))
             ],
             asks=[
-                MarketOrderLevel(price=k1_ask_1[0], size=k1_ask_1[1]),
-                MarketOrderLevel(price=k1_ask_2[0], size=k1_ask_2[1]),
-                MarketOrderLevel(price=k1_ask_3[0], size=k1_ask_3[1])
+                MarketOrderLevel(price=safe_float(row.get('dr_k1_ask1_price')), size=safe_float(row.get('dr_k1_ask1_size'))),
+                MarketOrderLevel(price=safe_float(row.get('dr_k1_ask2_price')), size=safe_float(row.get('dr_k1_ask2_size'))),
+                MarketOrderLevel(price=safe_float(row.get('dr_k1_ask3_price')), size=safe_float(row.get('dr_k1_ask3_size')))
             ]
         ),
         k2=MarketOptionLeg(
-            name=str(row.get('inst_k2', '')),
-            mark_iv=float(row.get('k2_iv', 0)),
-            mark_price=float(row.get('k2_mid_usd', 0)),
+            name=str(row.get('dr_k2_name', '')),
+            mark_iv=safe_float(row.get('dr_k2_iv')),
+            mark_price=k2_mid_usd,
             bids=[
-                MarketOrderLevel(price=k2_bid_1[0], size=k2_bid_1[1]),
-                MarketOrderLevel(price=k2_bid_2[0], size=k2_bid_2[1]),
-                MarketOrderLevel(price=k2_bid_3[0], size=k2_bid_3[1])
+                MarketOrderLevel(price=safe_float(row.get('dr_k2_bid1_price')), size=safe_float(row.get('dr_k2_bid1_size'))),
+                MarketOrderLevel(price=safe_float(row.get('dr_k2_bid2_price')), size=safe_float(row.get('dr_k2_bid2_size'))),
+                MarketOrderLevel(price=safe_float(row.get('dr_k2_bid3_price')), size=safe_float(row.get('dr_k2_bid3_size')))
             ],
             asks=[
-                MarketOrderLevel(price=k2_ask_1[0], size=k2_ask_1[1]),
-                MarketOrderLevel(price=k2_ask_2[0], size=k2_ask_2[1]),
-                MarketOrderLevel(price=k2_ask_3[0], size=k2_ask_3[1])
+                MarketOrderLevel(price=safe_float(row.get('dr_k2_ask1_price')), size=safe_float(row.get('dr_k2_ask1_size'))),
+                MarketOrderLevel(price=safe_float(row.get('dr_k2_ask2_price')), size=safe_float(row.get('dr_k2_ask2_size'))),
+                MarketOrderLevel(price=safe_float(row.get('dr_k2_ask3_price')), size=safe_float(row.get('dr_k2_ask3_size')))
             ]
         )
     )
 
+    # RawData 使用 market_id 代替 market_title
     return MarketResponse(
         signal_id=signal_id,
         timestamp=timestamp,
-        market_title=str(row.get('market_title', '')),
+        market_title=market_id,  # 使用 market_id 作为标题
         pm_data=pm_data,
         dr_data=dr_data
     )
@@ -299,7 +371,9 @@ def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
 async def get_market_snapshots(
     limit: Optional[int] = Query(default=None, ge=1, description="返回的快照数量（默认返回所有）"),
     offset: int = Query(default=0, ge=0, description="跳过的记录数"),
-    market_title: Optional[str] = Query(default=None, description="按市场标题过滤")
+    market_title: Optional[str] = Query(default=None, description="按市场ID过滤"),
+    start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
+    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
 ) -> List[MarketResponse]:
     """
     获取市场快照数据（从 raw.csv 读取）
@@ -307,7 +381,9 @@ async def get_market_snapshots(
     Args:
         limit: 返回的记录数量（None 表示返回所有，默认返回所有）
         offset: 跳过的记录数（用于分页）
-        market_title: 可选的市场标题过滤器
+        market_title: 可选的市场ID过滤器
+        start_time: 起始时间过滤 (ISO 格式, UTC)
+        end_time: 结束时间过滤 (ISO 格式, UTC)
 
     Returns:
         市场快照列表
@@ -329,13 +405,28 @@ async def get_market_snapshots(
         if df.empty:
             return []
 
-        # 按市场标题过滤
+        # 按市场 ID 过滤 (RawData 使用 market_id 而不是 market_title)
         if market_title:
-            df = df[df['market_title'] == market_title]
+            df = df[df['market_id'] == market_title]
 
-        # 按时间倒序排序（最新的在前）
-        if 'time' in df.columns:
-            df = df.sort_values('time', ascending=False)
+        # 按时间范围过滤 - RawData 使用 utc 字段 (Unix timestamp)
+        if 'utc' in df.columns:
+            if start_time:
+                try:
+                    start_ts = pd.to_datetime(start_time).timestamp()
+                    df = df[df['utc'] >= start_ts]
+                except Exception as e:
+                    logger.warning(f"Invalid start_time format: {start_time}, error: {e}")
+
+            if end_time:
+                try:
+                    end_ts = pd.to_datetime(end_time).timestamp()
+                    df = df[df['utc'] <= end_ts]
+                except Exception as e:
+                    logger.warning(f"Invalid end_time format: {end_time}, error: {e}")
+
+            # 按时间倒序排序（最新的在前）
+            df = df.sort_values('utc', ascending=False)
 
         # 分页
         if limit is None:

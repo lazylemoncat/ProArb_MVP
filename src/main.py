@@ -41,6 +41,7 @@ from .utils.dataloader import (
 from .utils.save_result2 import save_result
 from .utils.save_raw_data import save_raw_data
 from .utils.save_result_mysql import save_result_to_mysql
+from .utils.save_ev import save_ev
 from .trading.polymarket_trade_client import Polymarket_trade_client
 from .maintain_data.maintain_data import maintain_data
 
@@ -114,6 +115,68 @@ def with_raw_date_prefix(path_str: str, d: Optional[date] = None, use_utc: bool 
     new_name = f"{d:%Y%m%d}_raw{p.suffix}"
     return str(p.with_name(new_name))
 
+
+def get_previous_day_raw_csv_path(base_path: str, use_utc: bool = True) -> str:
+    """
+    获取前一天的 raw.csv 文件路径
+
+    Args:
+        base_path: 基础路径模板, 例如 "./data/raw_results.csv"
+        use_utc: 是否使用 UTC 时间
+
+    Returns:
+        前一天的 raw.csv 路径, 例如 "./data/20251227_raw.csv"
+    """
+    from datetime import timedelta
+
+    tz = timezone.utc if use_utc else None
+    now = datetime.now(tz=tz)
+    yesterday = now.date() - timedelta(days=1)
+
+    return with_raw_date_prefix(base_path, d=yesterday, use_utc=use_utc)
+
+
+async def send_previous_day_raw_csv(bot: TG_bot, base_path: str) -> bool:
+    """
+    发送前一天的 raw.csv 文件到 Telegram
+
+    Args:
+        bot: Telegram bot 实例
+        base_path: raw.csv 基础路径模板
+
+    Returns:
+        是否发送成功
+    """
+    from datetime import timedelta
+
+    try:
+        # 获取前一天的文件路径
+        previous_day_path = get_previous_day_raw_csv_path(base_path)
+        previous_day_file = Path(previous_day_path)
+
+        if not previous_day_file.exists():
+            logger.warning(f"Previous day raw.csv not found: {previous_day_path}")
+            return False
+
+        # 获取文件日期用于消息
+        yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1))
+        caption = f"📊 Raw market data for {yesterday.strftime('%Y-%m-%d')} (UTC)"
+
+        success, msg_id = await bot.send_document(
+            file_path=str(previous_day_file),
+            caption=caption
+        )
+
+        if success:
+            logger.info(f"Successfully sent previous day raw.csv: {previous_day_path}")
+        else:
+            logger.warning(f"Failed to send previous day raw.csv: {previous_day_path}")
+
+        return success
+
+    except Exception as e:
+        logger.error(f"Error sending previous day raw.csv: {e}", exc_info=True)
+        return False
 
 
 # TODO 集成到 TG_BOT
@@ -262,13 +325,13 @@ async def investment_runner(
             # 发送套利机会到 Alert Bot
             if record_signal:
                 await send_opportunity(
-                    alert_bot, 
-                    pm_ctx.market_title, 
-                    result.gross_ev, 
-                    strategy, 
-                    prob_diff, 
-                    pm_price, 
-                    deribit_price, 
+                    alert_bot,
+                    pm_ctx.market_title,
+                    result.gross_ev,
+                    strategy,
+                    prob_diff,
+                    pm_price,
+                    deribit_price,
                     inv_base_usd,
                     record_details,
                     trade_details
@@ -276,6 +339,29 @@ async def investment_runner(
                 signal_state[signal_key] = now_snapshot
                 # 写入本次检测结果
                 save_result(pm_ctx, deribit_ctx, output_path)
+
+                # 保存 EV 数据到 ev.csv
+                signal_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{pm_ctx.market_id}"
+                pm_shares = inv_base_usd / pm_price if pm_price > 0 else 0
+                dr_k1_price = deribit_ctx.k1_ask_usd if strategy == 2 else deribit_ctx.k1_bid_usd
+                dr_k2_price = deribit_ctx.k2_bid_usd if strategy == 2 else deribit_ctx.k2_ask_usd
+                save_ev(
+                    signal_id=signal_id,
+                    pm_ctx=pm_ctx,
+                    db_ctx=deribit_ctx,
+                    strategy=strategy,
+                    pm_entry_cost=inv_base_usd,
+                    pm_shares=pm_shares,
+                    pm_slippage_usd=slippage,
+                    contracts=result.contract_amount,
+                    dr_k1_price=dr_k1_price,
+                    dr_k2_price=dr_k2_price,
+                    gross_ev=gross_ev,
+                    theta_adj_ev=gross_ev,  # theta adjustment included in gross_ev
+                    net_ev=net_ev,
+                    roi_pct=result.roi_pct,
+                    ev_csv_path="./data/ev.csv"
+                )
             
             if trade_signal and time_condition:
                 # await trading_bot.publish(f"{pm_ctx.market_id} 正在进行交易")
@@ -333,12 +419,15 @@ async def main_monitor(
     if have_changed:
         # 轮换日期, 存储 instruments_map 供 api 获取
         events, instruments_map = build_event(
-            current_target_date, 
-            config.thresholds.day_off, 
-            config, 
-            events, 
+            current_target_date,
+            config.thresholds.day_off,
+            config,
+            events,
             instruments_map
         )
+
+        # 发送前一天的 raw.csv 到 Telegram
+        await send_previous_day_raw_csv(alert_bot, RAW_OUTPUT_CSV)
 
     if not events:
         raise Exception("no events")
