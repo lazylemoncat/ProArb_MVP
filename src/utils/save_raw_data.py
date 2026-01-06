@@ -88,18 +88,21 @@ def extract_orderbook_level(orderbook_list: list, index: int, default_price: Opt
     Extract price and size from orderbook level.
 
     Args:
-        orderbook_list: List of [price, size] pairs
-        index: Index of the level to extract (0, 1, or 2)
+        orderbook_list: Single orderbook level as [price, size] or empty list []
+        index: Unused parameter kept for backward compatibility (always pass 0)
         default_price: Default price if level doesn't exist (defaults to None)
         default_size: Default size if level doesn't exist (defaults to None)
 
     Returns:
         Tuple of (price, size), or (None, None) if data doesn't exist
+
+    Note: This function expects orderbook_list to be a single level [price, size],
+          not a nested list. The index parameter is ignored.
     """
-    if orderbook_list and len(orderbook_list) > index and orderbook_list[index]:
-        level = orderbook_list[index]
-        if isinstance(level, (list, tuple)) and len(level) >= 2:
-            return float(level[0]), float(level[1])
+    # Direct check for [price, size] format - don't check if price is truthy
+    # because price can legitimately be 0.0
+    if isinstance(orderbook_list, (list, tuple)) and len(orderbook_list) >= 2:
+        return float(orderbook_list[0]), float(orderbook_list[1])
     return default_price, default_size
 
 
