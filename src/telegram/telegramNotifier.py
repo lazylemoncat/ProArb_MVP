@@ -6,6 +6,7 @@ TelegramNotifier: 用于通过 Telegram Bot API 发送消息.
 
 需要传参 token 和 chat_id, 或者通过环境变量 TELEGRAM_TOKEN 和 TELEGRAM_CHAT_ID 提供.
 """
+import io
 import logging
 from typing import Any, Dict, Optional, Tuple
 
@@ -84,13 +85,50 @@ class TelegramNotifier:
         return await self._request("sendMessage", payload)
 
     async def send_photo(self, photo_path: str, caption: Optional[str] = None, parse_mode: str = "Markdown") -> Tuple[bool, Optional[str]]:
+        """
+        Send a photo to Telegram.
+
+        Args:
+            photo_path: Path to the photo file
+            caption: Optional caption for the photo
+            parse_mode: Parse mode for caption (default: Markdown)
+
+        Returns:
+            Tuple of (success, message_id)
+        """
         payload = {"chat_id": self.chat_id, "caption": caption or "", "parse_mode": parse_mode}
+        # Read file content into memory to avoid file handle lifecycle issues
         with open(photo_path, "rb") as f:
-            files = {"photo": f}
-            return await self._request("sendPhoto", payload, files)
+            file_content = f.read()
+            file_name = photo_path.split("/")[-1]
+
+        # Create a file-like object from bytes
+        file_obj = io.BytesIO(file_content)
+        file_obj.name = file_name
+
+        files = {"photo": file_obj}
+        return await self._request("sendPhoto", payload, files)
 
     async def send_document(self, file_path: str, caption: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+        """
+        Send a document/file to Telegram.
+
+        Args:
+            file_path: Path to the file to send
+            caption: Optional caption for the document
+
+        Returns:
+            Tuple of (success, message_id)
+        """
         payload = {"chat_id": self.chat_id, "caption": caption or ""}
+        # Read file content into memory to avoid file handle lifecycle issues
         with open(file_path, "rb") as f:
-            files = {"document": f}
-            return await self._request("sendDocument", payload, files)
+            file_content = f.read()
+            file_name = file_path.split("/")[-1]
+
+        # Create a file-like object from bytes
+        file_obj = io.BytesIO(file_content)
+        file_obj.name = file_name
+
+        files = {"document": file_obj}
+        return await self._request("sendDocument", payload, files)

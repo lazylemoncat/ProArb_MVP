@@ -79,7 +79,7 @@ ProArb_MVP/
 │   │   └── ev.py                        # EV data management
 │   │
 │   ├── sql/                             # Database schemas
-│   │   └── 1.sql                        # MySQL schema for raw_results table
+│   │   └── 1.sql                        # MySQL schema for raw data table
 │   │
 │   └── utils/
 │       ├── CsvHandler.py                # CSV read/write utilities with auto-column handling
@@ -293,7 +293,7 @@ CsvHandler.save_to_csv(csv_path, row_data, SavePosition)
 
 **Database Schema** (`src/sql/1.sql`):
 - **Database**: `proarb` (utf8mb4 charset)
-- **Table**: `raw_results` - Stores every market check (every 10 seconds)
+- **Table**: Stores every market check (every 10 seconds)
   - Polymarket data: event/market IDs, orderbook (bid/ask prices, 3 levels deep)
   - Deribit data: option strikes (K1, K2), prices in BTC and USD, implied volatility
   - Strategy data: spot price, expiration, time to expiry, calculated probabilities
@@ -462,7 +462,7 @@ docker logs -f -n 200 proarb
 ```
 
 **File Persistence**:
-- Mount `./data` volume for CSV logs (`positions.csv`, `results.csv`, `raw_results.csv`, `proarb.log`)
+- Mount `./data` volume for CSV logs (`positions.csv`, `results.csv`, `YYYYMMDD_raw.csv`, `proarb.log`)
 - Mount config files as read-only
 - Use `.env` file for secrets
 
@@ -481,7 +481,7 @@ GitHub Actions workflow (`.github/workflows/docker-build-push.yml`) automaticall
 - `server_proarb.log` - Current day's API server logs
 - `server_proarb_YYYY_MM_DD.log` - Historical API logs
 - `results_YYYY_MM_DD.csv` - Daily filtered results (signals recorded)
-- `raw_results_YYYY_MM_DD.csv` - All checks (every 10s)
+- `YYYYMMDD_raw.csv` - All checks (every 10s, format: 20251228_raw.csv)
 - `positions.csv` - Current open/closed positions
 
 **Log Rotation**:
@@ -951,5 +951,6 @@ When making changes:
 - **Refactor**: Added daily log rotation for both API server and main monitor
   - Logs stored as `proarb_YYYY_MM_DD.log` and `server_proarb_YYYY_MM_DD.log`
   - Prevents unbounded disk growth
-- **Refactor**: CSV files now split by day (`results_YYYY_MM_DD.csv`, `raw_results_YYYY_MM_DD.csv`)
+- **Refactor**: CSV files now split by day (`results_YYYY_MM_DD.csv`, `YYYYMMDD_raw.csv`)
+  - Raw data format: `20251228_raw.csv` (date prefix)
 - **Initial**: Comprehensive CLAUDE.md documentation created (commit 5c54148)
