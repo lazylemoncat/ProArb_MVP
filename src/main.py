@@ -41,6 +41,7 @@ from .utils.dataloader import (
 from .utils.save_result2 import save_result
 from .utils.save_raw_data import save_raw_data
 from .utils.save_result_mysql import save_result_to_mysql
+from .utils.save_ev import save_ev
 from .trading.polymarket_trade_client import Polymarket_trade_client
 from .maintain_data.maintain_data import maintain_data
 
@@ -262,13 +263,13 @@ async def investment_runner(
             # 发送套利机会到 Alert Bot
             if record_signal:
                 await send_opportunity(
-                    alert_bot, 
-                    pm_ctx.market_title, 
-                    result.gross_ev, 
-                    strategy, 
-                    prob_diff, 
-                    pm_price, 
-                    deribit_price, 
+                    alert_bot,
+                    pm_ctx.market_title,
+                    result.gross_ev,
+                    strategy,
+                    prob_diff,
+                    pm_price,
+                    deribit_price,
                     inv_base_usd,
                     record_details,
                     trade_details
@@ -276,6 +277,29 @@ async def investment_runner(
                 signal_state[signal_key] = now_snapshot
                 # 写入本次检测结果
                 save_result(pm_ctx, deribit_ctx, output_path)
+
+                # 保存 EV 数据到 ev.csv
+                signal_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{pm_ctx.market_id}"
+                pm_shares = inv_base_usd / pm_price if pm_price > 0 else 0
+                dr_k1_price = deribit_ctx.k1_ask_usd if strategy == 2 else deribit_ctx.k1_bid_usd
+                dr_k2_price = deribit_ctx.k2_bid_usd if strategy == 2 else deribit_ctx.k2_ask_usd
+                save_ev(
+                    signal_id=signal_id,
+                    pm_ctx=pm_ctx,
+                    db_ctx=deribit_ctx,
+                    strategy=strategy,
+                    pm_entry_cost=inv_base_usd,
+                    pm_shares=pm_shares,
+                    pm_slippage_usd=slippage,
+                    contracts=result.contract_amount,
+                    dr_k1_price=dr_k1_price,
+                    dr_k2_price=dr_k2_price,
+                    gross_ev=gross_ev,
+                    theta_adj_ev=gross_ev,  # theta adjustment included in gross_ev
+                    net_ev=net_ev,
+                    roi_pct=result.roi_pct,
+                    ev_csv_path="./data/ev.csv"
+                )
             
             if trade_signal and time_condition:
                 # await trading_bot.publish(f"{pm_ctx.market_id} 正在进行交易")

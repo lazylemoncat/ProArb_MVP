@@ -1,21 +1,114 @@
-import pandas as pd
-from dataclasses import fields
+"""
+Maintain data module - manages ev.csv data integrity
+"""
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
 
-from .ev import maintain_ev
+import pandas as pd
+
+from ..api.models import EVResponse
 from ..utils.CsvHandler import CsvHandler
-from ..utils.save_position import SavePosition
+
+logger = logging.getLogger(__name__)
+
+
+def pydantic_field_names(model_cls) -> list[str]:
+    """
+    Return field names for a Pydantic BaseModel (supports Pydantic v2).
+    """
+    if hasattr(model_cls, "model_fields"):
+        return list(model_cls.model_fields.keys())
+    raise TypeError(f"{model_cls} is not a supported Pydantic model class")
+
 
 async def maintain_data():
+    """
+    Maintain ev.csv data integrity.
+
+    This function ensures the ev.csv file:
+    1. Has all required columns
+    2. Has valid data types
+    3. Has timestamps in UTC format
+    """
     ev_path = "./data/ev.csv"
-    positions_csv = "./data/positions.csv"
 
-    # 检查并确保 positions.csv 包含所有必需的列
-    # 使用 0.0 作为默认值以适配新增的数值型字段 (k1_delta, k1_theta, k2_delta, k2_theta, settlement_price)
-    positions_columns = [f.name for f in fields(SavePosition)]
-    CsvHandler.check_csv(positions_csv, positions_columns, fill_value=0.0)
+    # Ensure ev.csv exists with correct columns
+    expected_columns = pydantic_field_names(EVResponse)
+    CsvHandler.check_csv(ev_path, expected_columns=expected_columns)
 
-    position_df = pd.read_csv(positions_csv)
+    # Read and validate data
+    if not Path(ev_path).exists():
+        logger.info("ev.csv does not exist, skipping maintenance")
+        return
 
-    for row in position_df.itertuples(index=False):
-        tread_id = row.trade_id
-        await maintain_ev(ev_path, str(tread_id), position_df)
+    try:
+        df = pd.read_csv(ev_path)
+
+        if df.empty:
+            logger.info("ev.csv is empty, skipping maintenance")
+            return
+
+        # Ensure timestamps are in UTC ISO format
+        if "timestamp" in df.columns:
+            df["timestamp"] = df["timestamp"].apply(_normalize_timestamp_to_utc)
+
+        # Remove duplicate signal_ids (keep first)
+        if "signal_id" in df.columns:
+            original_count = len(df)
+            df = df.drop_duplicates(subset=["signal_id"], keep="first")
+            if len(df) < original_count:
+                logger.info(f"Removed {original_count - len(df)} duplicate entries from ev.csv")
+
+        # Save cleaned data
+        df.to_csv(ev_path, index=False)
+        logger.debug(f"Maintained ev.csv with {len(df)} entries")
+
+    except Exception as e:
+        logger.error(f"Error maintaining ev.csv: {e}", exc_info=True)
+
+
+def _normalize_timestamp_to_utc(ts_value) -> str:
+    """
+    Normalize timestamp to UTC ISO format string.
+
+    Args:
+        ts_value: Timestamp value (string, datetime, or numeric)
+
+    Returns:
+        UTC ISO format string (e.g., "2025-01-06T12:00:00+00:00")
+    """
+    if pd.isna(ts_value) or ts_value is None or ts_value == "":
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    try:
+        # If already a proper ISO string with timezone, return as-is
+        if isinstance(ts_value, str):
+            # Try to parse and ensure UTC
+            dt = pd.to_datetime(ts_value)
+            if pd.isna(dt):
+                return datetime.now(timezone.utc).isoformat(timespec="seconds")
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt.isoformat(timespec="seconds")
+
+        # If numeric (unix timestamp)
+        if isinstance(ts_value, (int, float)):
+            dt = datetime.fromtimestamp(float(ts_value), tz=timezone.utc)
+            return dt.isoformat(timespec="seconds")
+
+        # If datetime object
+        if isinstance(ts_value, datetime):
+            if ts_value.tzinfo is None:
+                ts_value = ts_value.replace(tzinfo=timezone.utc)
+            else:
+                ts_value = ts_value.astimezone(timezone.utc)
+            return ts_value.isoformat(timespec="seconds")
+
+    except Exception:
+        pass
+
+    # Fallback to current UTC time
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")

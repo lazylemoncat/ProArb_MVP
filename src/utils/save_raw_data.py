@@ -1,5 +1,5 @@
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from .CsvHandler import CsvHandler
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
@@ -126,8 +126,8 @@ def save_raw_data(
     Returns:
         RawData object that was saved
     """
-    # Generate IDs if not provided
-    now = pm_ctx.time if pm_ctx.time else datetime.now()
+    # Generate IDs if not provided (always use UTC)
+    now = pm_ctx.time if pm_ctx.time else datetime.now(timezone.utc)
     if fill_id is None:
         fill_id = f"{now:%Y%m%d_%H%M%S}_{pm_ctx.market_id}"
     if snapshot_id is None:
