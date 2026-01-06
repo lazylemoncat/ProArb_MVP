@@ -1,5 +1,8 @@
+import logging
+from typing import Optional
+
 import pandas as pd
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 import ast
 from dataclasses import fields
 
@@ -7,7 +10,72 @@ from .models import PositionResponse, PMData, DRData, DRK1Data, DRK2Data, DRRisk
 from ..utils.CsvHandler import CsvHandler
 from ..utils.save_position import SavePosition
 
+logger = logging.getLogger(__name__)
+
 position_router = APIRouter(tags=["position"])
+
+
+def parse_iso_timestamp(time_str: str) -> Optional[pd.Timestamp]:
+    """
+    解析 ISO 格式时间字符串为 pandas Timestamp
+
+    Args:
+        time_str: ISO 格式时间字符串
+
+    Returns:
+        pandas Timestamp 或 None (如果解析失败)
+    """
+    try:
+        return pd.to_datetime(time_str)
+    except Exception:
+        return None
+
+
+def filter_positions_by_time(
+    df: pd.DataFrame,
+    start_time: Optional[str],
+    end_time: Optional[str],
+    timestamp_col: str = "entry_timestamp"
+) -> pd.DataFrame:
+    """
+    按时间范围过滤 positions DataFrame
+
+    Args:
+        df: positions DataFrame
+        start_time: 起始时间 (ISO 格式)
+        end_time: 结束时间 (ISO 格式)
+        timestamp_col: 时间戳列名
+
+    Returns:
+        过滤后的 DataFrame
+    """
+    if df.empty or timestamp_col not in df.columns:
+        return df
+
+    # 转换时间戳列为 datetime
+    df['_ts_parsed'] = pd.to_datetime(df[timestamp_col], errors='coerce')
+
+    if start_time:
+        start_ts = parse_iso_timestamp(start_time)
+        if start_ts:
+            df = df[df['_ts_parsed'] >= start_ts]
+        else:
+            logger.warning(f"Invalid start_time format: {start_time}")
+
+    if end_time:
+        end_ts = parse_iso_timestamp(end_time)
+        if end_ts:
+            df = df[df['_ts_parsed'] <= end_ts]
+        else:
+            logger.warning(f"Invalid end_time format: {end_time}")
+
+    # 按时间倒序排序（最新的在前）
+    df = df.sort_values('_ts_parsed', ascending=False)
+
+    # 删除临时列
+    df = df.drop(columns=['_ts_parsed'])
+
+    return df
 
 # 获取 positions.csv 的期望列
 POSITIONS_EXPECTED_COLUMNS = [f.name for f in fields(SavePosition)]
@@ -80,14 +148,41 @@ def transform_position_row(row: dict) -> dict:
     }
 
 @position_router.get("/api/position", response_model=list[PositionResponse])
-def get_position():
+def get_position(
+    limit: Optional[int] = Query(default=None, ge=1, description="返回的记录数量（默认返回所有）"),
+    offset: int = Query(default=0, ge=0, description="跳过的记录数"),
+    start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
+    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
+):
     """
     获取所有仓位 (OPEN 和 CLOSE)
+
+    Args:
+        limit: 返回的记录数量（None 表示返回所有）
+        offset: 跳过的记录数（用于分页）
+        start_time: 起始时间过滤 (ISO 格式, UTC)
+        end_time: 结束时间过滤 (ISO 格式, UTC)
+
+    Returns:
+        仓位数据列表
     """
     # 检查并确保 CSV 文件包含所有必需的列
     CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0)
 
     pos_df = pd.read_csv('./data/positions.csv')
+
+    if pos_df.empty:
+        return []
+
+    # 按时间范围过滤
+    pos_df = filter_positions_by_time(pos_df, start_time, end_time)
+
+    # 分页
+    if limit is None:
+        pos_df = pos_df.iloc[offset:]
+    else:
+        pos_df = pos_df.iloc[offset:offset + limit]
+
     rows = pos_df.to_dict(orient="records")
 
     # 转换为嵌套结构
@@ -96,17 +191,44 @@ def get_position():
     return [PositionResponse.model_validate(r) for r in transformed_rows]
 
 @position_router.get("/api/close", response_model=list[PositionResponse])
-def get_closed_positions():
+def get_closed_positions(
+    limit: Optional[int] = Query(default=None, ge=1, description="返回的记录数量（默认返回所有）"),
+    offset: int = Query(default=0, ge=0, description="跳过的记录数"),
+    start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
+    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
+):
     """
     获取所有已关闭的仓位 (status == "CLOSE")
+
+    Args:
+        limit: 返回的记录数量（None 表示返回所有）
+        offset: 跳过的记录数（用于分页）
+        start_time: 起始时间过滤 (ISO 格式, UTC)
+        end_time: 结束时间过滤 (ISO 格式, UTC)
+
+    Returns:
+        已关闭仓位数据列表
     """
     # 检查并确保 CSV 文件包含所有必需的列
     CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0)
 
     pos_df = pd.read_csv('./data/positions.csv')
 
+    if pos_df.empty:
+        return []
+
     # 筛选状态为 CLOSE 的行
     closed_df = pos_df[pos_df['status'].str.upper() == 'CLOSE']
+
+    # 按时间范围过滤
+    closed_df = filter_positions_by_time(closed_df, start_time, end_time)
+
+    # 分页
+    if limit is None:
+        closed_df = closed_df.iloc[offset:]
+    else:
+        closed_df = closed_df.iloc[offset:offset + limit]
+
     rows = closed_df.to_dict(orient="records")
 
     # 转换为嵌套结构

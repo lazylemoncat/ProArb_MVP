@@ -363,7 +363,9 @@ def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
 async def get_market_snapshots(
     limit: Optional[int] = Query(default=None, ge=1, description="返回的快照数量（默认返回所有）"),
     offset: int = Query(default=0, ge=0, description="跳过的记录数"),
-    market_title: Optional[str] = Query(default=None, description="按市场标题过滤")
+    market_title: Optional[str] = Query(default=None, description="按市场ID过滤"),
+    start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
+    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
 ) -> List[MarketResponse]:
     """
     获取市场快照数据（从 raw.csv 读取）
@@ -371,7 +373,9 @@ async def get_market_snapshots(
     Args:
         limit: 返回的记录数量（None 表示返回所有，默认返回所有）
         offset: 跳过的记录数（用于分页）
-        market_title: 可选的市场标题过滤器
+        market_title: 可选的市场ID过滤器
+        start_time: 起始时间过滤 (ISO 格式, UTC)
+        end_time: 结束时间过滤 (ISO 格式, UTC)
 
     Returns:
         市场快照列表
@@ -397,8 +401,23 @@ async def get_market_snapshots(
         if market_title:
             df = df[df['market_id'] == market_title]
 
-        # 按时间倒序排序（最新的在前）- RawData 使用 utc 字段
+        # 按时间范围过滤 - RawData 使用 utc 字段 (Unix timestamp)
         if 'utc' in df.columns:
+            if start_time:
+                try:
+                    start_ts = pd.to_datetime(start_time).timestamp()
+                    df = df[df['utc'] >= start_ts]
+                except Exception as e:
+                    logger.warning(f"Invalid start_time format: {start_time}, error: {e}")
+
+            if end_time:
+                try:
+                    end_ts = pd.to_datetime(end_time).timestamp()
+                    df = df[df['utc'] <= end_ts]
+                except Exception as e:
+                    logger.warning(f"Invalid end_time format: {end_time}, error: {e}")
+
+            # 按时间倒序排序（最新的在前）
             df = df.sort_values('utc', ascending=False)
 
         # 分页
