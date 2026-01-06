@@ -3,6 +3,7 @@
 """
 import hashlib
 import logging
+import math
 from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -84,19 +85,26 @@ def generate_signal_id(time_str: str, asset: str, strike: float, market_id: str)
 
 def safe_float(value, default: float = 0.0) -> float:
     """
-    安全地将值转换为 float
+    安全地将值转换为 float，处理 NaN 值
 
     Args:
         value: 要转换的值
         default: 转换失败时的默认值
 
     Returns:
-        float 值
+        float 值（保证不是 NaN）
     """
     if value is None or pd.isna(value):
         return default
+    # 检查字符串形式的 NaN
+    if isinstance(value, str) and value.lower() in ('nan', 'inf', '-inf', ''):
+        return default
     try:
-        return float(value)
+        result = float(value)
+        # 检查转换后的值是否为 NaN 或 Inf
+        if math.isnan(result) or math.isinf(result):
+            return default
+        return result
     except (ValueError, TypeError):
         return default
 
