@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class CsvHandler:
     @staticmethod
-    def check_csv(csv_path: str, expected_columns: list[str], fill_value: Any = ""):
+    def check_csv(csv_path: str, expected_columns: list[str], fill_value: Any = "", dtype: dict[str, type] | None = None):
         """
         检查并确保 CSV 文件包含所有期望的列。
 
@@ -18,6 +18,7 @@ class CsvHandler:
             csv_path: CSV 文件路径
             expected_columns: 期望的列名列表
             fill_value: 新增列的默认填充值（默认为空字符串）
+            dtype: 指定列的数据类型字典（例如 {"yes_token_id": str, "no_token_id": str}）
 
         Returns:
             bool: 操作是否成功
@@ -43,8 +44,8 @@ class CsvHandler:
 
         # 文件存在，检查列是否完整
         try:
-            # 读取现有 CSV
-            df = pd.read_csv(path)
+            # 读取现有 CSV，使用指定的数据类型（防止大整数被转换为科学计数法）
+            df = pd.read_csv(path, dtype=dtype, low_memory=False)
             existing_columns = df.columns.tolist()
 
             # 找出缺失的列
@@ -71,8 +72,8 @@ class CsvHandler:
 
                 df = df[all_columns]
 
-                # 保存更新后的 CSV
-                df.to_csv(path, index=False)
+                # 保存更新后的 CSV（quoting=csv.QUOTE_NONNUMERIC 确保字符串被正确引用）
+                df.to_csv(path, index=False, quoting=csv.QUOTE_NONNUMERIC)
                 logger.info(f"已为 {csv_path} 添加缺失列: {missing_columns}")
 
             return True
@@ -96,19 +97,22 @@ class CsvHandler:
 
         if missing_required:
             raise ValueError(f"缺失必填字段: {missing_required}")
-        
+
         CsvHandler.check_csv(csv_path, field_names)
-        
+
         # 组装写入行：按表头顺序输出
         output_row = []
         for f in dataclass_fields:
             val = row_dict[f.name]
+            # 确保字符串类型的字段（如 token_id）保持为字符串
+            if f.type == str and not isinstance(val, str):
+                val = str(val)
             output_row.append(val)
 
-        # 追加写入
+        # 追加写入，使用 QUOTE_NONNUMERIC 确保字符串被正确引用（防止大数字被当作科学计数法）
         path = Path(csv_path)
         with open(path, mode="a", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
+            writer = csv.writer(file, quoting=csv.QUOTE_NONNUMERIC)
             writer.writerow(output_row)
 
     @staticmethod

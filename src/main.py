@@ -510,12 +510,21 @@ async def early_exit_monitor():
     positions_csv = "./data/positions.csv"
     positions_columns = [f.name for f in fields(SavePosition)]
 
-    # 检查并确保 positions.csv 包含所有必需的列
-    CsvHandler.check_csv(positions_csv, positions_columns, fill_value=0.0)
+    # 定义 token_id 列的数据类型为字符串（防止大整数被转换为科学计数法）
+    dtype_spec = {
+        "yes_token_id": str,
+        "no_token_id": str,
+        "event_id": str,
+        "market_id": str,
+        "trade_id": str
+    }
 
-    csv_df = pd.read_csv(positions_csv)
+    # 检查并确保 positions.csv 包含所有必需的列
+    CsvHandler.check_csv(positions_csv, positions_columns, fill_value=0.0, dtype=dtype_spec)
+
+    csv_df = pd.read_csv(positions_csv, dtype=dtype_spec, low_memory=False)
     csv_df = csv_df.apply(earlt_exit_process_row, axis=1)
-    csv_df.to_csv(positions_csv, index=False)
+    csv_df.to_csv(positions_csv, index=False, quoting=csv.QUOTE_NONNUMERIC)
 
 async def main():
     # 读取配置, 已含检查 env, config, trading_config 是否存在
