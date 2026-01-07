@@ -45,9 +45,7 @@ class TG_bot:
             success, msg_id = await self.notifier.send_document(
                 file_path=file_path, caption=caption
             )
-            if success:
-                logger.info(f"Document sent successfully: {file_path}")
-            else:
+            if not success:
                 logger.warning(f"Failed to send document: {file_path}")
             return success, msg_id
         except Exception as e:

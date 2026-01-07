@@ -72,11 +72,11 @@ def init_markets(
             )
 
         if k1_exp != k2_exp:
-            logger.warning(
-                f"跳过市场 '{title}': K1 和 K2 到期时间不一致 "
-                f"(K1: {datetime.fromtimestamp(k1_exp/1000, tz=timezone.utc)}, "
-                f"K2: {datetime.fromtimestamp(k2_exp/1000, tz=timezone.utc)})"
-            )
+            # logger.warning(
+            #     f"跳过市场 '{title}': K1 和 K2 到期时间不一致 "
+            #     f"(K1: {datetime.fromtimestamp(k1_exp/1000, tz=timezone.utc)}, "
+            #     f"K2: {datetime.fromtimestamp(k2_exp/1000, tz=timezone.utc)})"
+            # )
             skipped_titles.append(title)
             continue
 
