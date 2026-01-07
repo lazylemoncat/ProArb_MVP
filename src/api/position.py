@@ -80,6 +80,15 @@ def filter_positions_by_time(
 # 获取 positions.csv 的期望列
 POSITIONS_EXPECTED_COLUMNS = [f.name for f in fields(SavePosition)]
 
+# 定义 token_id 等字段的数据类型（防止大整数被转换为科学计数法）
+POSITIONS_DTYPE_SPEC = {
+    "yes_token_id": str,
+    "no_token_id": str,
+    "event_id": str,
+    "market_id": str,
+    "trade_id": str
+}
+
 def transform_position_row(row: dict) -> dict:
     """将 CSV 平铺数据转换为嵌套的 PositionResponse 格式"""
     # 解析 tuple 字符串
@@ -167,9 +176,9 @@ def get_position(
         仓位数据列表
     """
     # 检查并确保 CSV 文件包含所有必需的列
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0)
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0, dtype=POSITIONS_DTYPE_SPEC)
 
-    pos_df = pd.read_csv('./data/positions.csv')
+    pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
 
     if pos_df.empty:
         return []
@@ -210,9 +219,9 @@ def get_closed_positions(
         已关闭仓位数据列表
     """
     # 检查并确保 CSV 文件包含所有必需的列
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0)
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0, dtype=POSITIONS_DTYPE_SPEC)
 
-    pos_df = pd.read_csv('./data/positions.csv')
+    pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
 
     if pos_df.empty:
         return []
