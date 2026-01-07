@@ -504,11 +504,12 @@ def earlt_exit_process_row(row):
     return row
 
 async def early_exit_monitor():
-    from .utils.save_position import SavePosition
-    from dataclasses import fields
+    try:
+        from .utils.save_position import SavePosition
+        from dataclasses import fields
 
-    positions_csv = "./data/positions.csv"
-    positions_columns = [f.name for f in fields(SavePosition)]
+        positions_csv = "./data/positions.csv"
+        positions_columns = [f.name for f in fields(SavePosition)]
 
     # 定义 token_id 列的数据类型为字符串（防止大整数被转换为科学计数法）
     dtype_spec = {

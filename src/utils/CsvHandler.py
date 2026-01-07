@@ -39,7 +39,7 @@ class CsvHandler:
             with open(path, mode='w', newline='', encoding='utf-8') as file:
                 writer = csv.writer(file)
                 writer.writerow(expected_columns)
-            logger.info(f"创建新 CSV 文件: {csv_path}，列: {expected_columns}")
+            # logger.info(f"创建新 CSV 文件: {csv_path}，列: {expected_columns}")
             return True
 
         # 文件存在，检查列是否完整
