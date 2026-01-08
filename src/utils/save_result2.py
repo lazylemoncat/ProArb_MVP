@@ -1,8 +1,12 @@
+import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from .CsvHandler import CsvHandler
+from .SqliteHandler import SqliteHandler
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..fetch_data.deribit.deribit_client import DeribitMarketContext
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SaveResult:
@@ -194,5 +198,11 @@ def save_result(pm_ctx: PolymarketContext, db_ctx: DeribitMarketContext, csv_pat
     )
 
     CsvHandler.save_to_csv(csv_path, row_dict=asdict(row_obj), class_obj=SaveResult)
+
+    # Save to SQLite
+    try:
+        SqliteHandler.save_to_db(row_dict=asdict(row_obj), class_obj=SaveResult)
+    except Exception as e:
+        logger.warning(f"Failed to save result to SQLite: {e}")
 
     return row_obj
