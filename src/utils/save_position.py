@@ -2,6 +2,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 import logging
 from .CsvHandler import CsvHandler
+from .SqliteHandler import SqliteHandler
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..fetch_data.deribit.deribit_client import DeribitMarketContext
 from ..fetch_data.deribit.deribit_api import DeribitAPI
@@ -290,5 +291,11 @@ def save_position(
     )
 
     CsvHandler.save_to_csv(csv_path, row_dict=asdict(row_obj), class_obj=SavePosition)
+
+    # Save to SQLite
+    try:
+        SqliteHandler.save_to_db(row_dict=asdict(row_obj), class_obj=SavePosition)
+    except Exception as e:
+        logger.warning(f"Failed to save position to SQLite: {e}")
 
     return row_obj

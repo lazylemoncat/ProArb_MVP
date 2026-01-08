@@ -155,13 +155,59 @@ def get_raw_csv_path(target_date: Optional[date] = None) -> Path:
     date_str = target_date.strftime("%Y%m%d")
     csv_path = Path(f"data/{date_str}_raw.csv")
 
-    # 如果今天的文件不存在，尝试昨天的
-    if not csv_path.exists():
-        yesterday = target_date - timedelta(days=1)
-        date_str = yesterday.strftime("%Y%m%d")
-        csv_path = Path(f"data/{date_str}_raw.csv")
-
     return csv_path
+
+
+def get_raw_csv_paths_for_days(day_filter: Optional[str] = None) -> List[Path]:
+    """
+    获取指定日期范围的 raw.csv 文件路径列表
+
+    Args:
+        day_filter: 日期过滤器
+            - None 或 "all": 返回今天、昨天、前天三天的文件
+            - "today": 仅返回今天的文件
+            - "yesterday": 仅返回昨天的文件
+            - "before_yesterday": 仅返回前天的文件
+            - "YYYYMMDD" 格式: 返回指定日期的文件
+
+    Returns:
+        存在的 CSV 文件路径列表
+    """
+    today = datetime.now(timezone.utc).date()
+    yesterday = today - timedelta(days=1)
+    before_yesterday = today - timedelta(days=2)
+
+    paths: List[Path] = []
+
+    if day_filter is None or day_filter.lower() == "all":
+        # 返回三天的数据
+        for d in [today, yesterday, before_yesterday]:
+            path = get_raw_csv_path(d)
+            if path.exists():
+                paths.append(path)
+    elif day_filter.lower() == "today":
+        path = get_raw_csv_path(today)
+        if path.exists():
+            paths.append(path)
+    elif day_filter.lower() == "yesterday":
+        path = get_raw_csv_path(yesterday)
+        if path.exists():
+            paths.append(path)
+    elif day_filter.lower() == "before_yesterday":
+        path = get_raw_csv_path(before_yesterday)
+        if path.exists():
+            paths.append(path)
+    else:
+        # 尝试解析 YYYYMMDD 格式
+        try:
+            target_date = datetime.strptime(day_filter, "%Y%m%d").date()
+            path = get_raw_csv_path(target_date)
+            if path.exists():
+                paths.append(path)
+        except ValueError:
+            logger.warning(f"Invalid day_filter format: {day_filter}")
+
+    return paths
 
 
 def extract_asset_and_strike_from_market_id(market_id: str) -> tuple[str, float]:
@@ -373,10 +419,16 @@ async def get_market_snapshots(
     offset: int = Query(default=0, ge=0, description="跳过的记录数"),
     market_title: Optional[str] = Query(default=None, description="按市场ID过滤"),
     start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
-    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
+    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)"),
+    day: Optional[str] = Query(
+        default=None,
+        description="日期过滤: 'all'(默认,三天数据), 'today', 'yesterday', 'before_yesterday', 或 'YYYYMMDD' 格式"
+    )
 ) -> List[MarketResponse]:
     """
     获取市场快照数据（从 raw.csv 读取）
+
+    支持获取今天、昨天、前天三天的数据。
 
     Args:
         limit: 返回的记录数量（None 表示返回所有，默认返回所有）
@@ -384,23 +436,43 @@ async def get_market_snapshots(
         market_title: 可选的市场ID过滤器
         start_time: 起始时间过滤 (ISO 格式, UTC)
         end_time: 结束时间过滤 (ISO 格式, UTC)
+        day: 日期过滤器
+            - None 或 "all": 返回今天、昨天、前天三天的数据（默认）
+            - "today": 仅返回今天的数据
+            - "yesterday": 仅返回昨天的数据
+            - "before_yesterday": 仅返回前天的数据
+            - "YYYYMMDD" 格式: 返回指定日期的数据
 
     Returns:
         市场快照列表
     """
     try:
-        # 获取 CSV 文件路径
-        csv_path = get_raw_csv_path()
+        # 获取 CSV 文件路径列表
+        csv_paths = get_raw_csv_paths_for_days(day)
 
-        if not csv_path.exists():
+        if not csv_paths:
             raise HTTPException(
                 status_code=404,
-                detail=f"Raw data file not found: {csv_path}"
+                detail=f"No raw data files found for day filter: {day or 'all'}"
             )
 
-        # 读取 CSV
-        logger.info(f"Reading raw data from: {csv_path}")
-        df = pd.read_csv(csv_path)
+        # 读取所有 CSV 文件并合并
+        dfs = []
+        for csv_path in csv_paths:
+            logger.info(f"Reading raw data from: {csv_path}")
+            try:
+                df = pd.read_csv(csv_path)
+                if not df.empty:
+                    dfs.append(df)
+            except Exception as e:
+                logger.warning(f"Failed to read {csv_path}: {e}")
+                continue
+
+        if not dfs:
+            return []
+
+        # 合并所有数据
+        df = pd.concat(dfs, ignore_index=True)
 
         if df.empty:
             return []
@@ -446,7 +518,7 @@ async def get_market_snapshots(
                 logger.error(f"Failed to transform row: {e}", exc_info=True)
                 continue
 
-        logger.info(f"Returning {len(results)} market snapshots")
+        logger.info(f"Returning {len(results)} market snapshots from {len(csv_paths)} file(s)")
         return results
 
     except HTTPException:

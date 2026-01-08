@@ -1,9 +1,13 @@
+import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Optional
 from .CsvHandler import CsvHandler
+from .SqliteHandler import SqliteHandler
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..fetch_data.deribit.deribit_client import DeribitMarketContext
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class RawData:
@@ -244,5 +248,11 @@ def save_raw_data(
 
     # Save to CSV using CsvHandler
     CsvHandler.save_to_csv(csv_path, row_dict=asdict(row_obj), class_obj=RawData)
+
+    # Save to SQLite
+    try:
+        SqliteHandler.save_to_db(row_dict=asdict(row_obj), class_obj=RawData)
+    except Exception as e:
+        logger.warning(f"Failed to save raw data to SQLite: {e}")
 
     return row_obj
