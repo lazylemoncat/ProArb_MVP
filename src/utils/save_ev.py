@@ -1,6 +1,7 @@
 """
-Save EV (Expected Value) data directly to ev.csv
+Save EV (Expected Value) data directly to ev.csv and SQLite
 """
+import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Optional
@@ -11,6 +12,9 @@ from ..api.models import EVResponse
 from ..fetch_data.deribit.deribit_client import DeribitMarketContext
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from .CsvHandler import CsvHandler
+from .SqliteHandler import SqliteHandler
+
+logger = logging.getLogger(__name__)
 
 
 def pydantic_field_names(model_cls) -> list[str]:
@@ -125,5 +129,11 @@ def save_ev(
 
     df.loc[len(df)] = new_row
     df.to_csv(ev_csv_path, index=False)
+
+    # Save to SQLite
+    try:
+        SqliteHandler.save_to_db(row_dict=row_data, class_obj=EVResponse)
+    except Exception as e:
+        logger.warning(f"Failed to save EV data to SQLite: {e}")
 
     return ev_data
