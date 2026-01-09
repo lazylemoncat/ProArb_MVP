@@ -356,6 +356,8 @@ class DeribitClient:
                 k2_bid_2_usd=k2_bids[1] if len(k2_bids) >= 2 else [],
                 k2_bid_3_usd=k2_bids[2] if len(k2_bids) >= 3 else [],
             )
+        except EmptyDeribitOptionException:
+            pass
         except Exception as e:
             logger.warning(e, exc_info=True)
             raise e
