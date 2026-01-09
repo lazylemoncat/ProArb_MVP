@@ -143,19 +143,91 @@ class PositionResponse(BaseModel):
     # D. DR 数据
     dr_data: DRData
 
-class PnlResponse(BaseModel):
+# ==================== PnL Models ====================
+
+class ShadowLeg(BaseModel):
+    """影子账本单腿"""
+    instrument: str          # 合约名称 (e.g., "BTC-91000-C")
+    qty: float               # 数量 (正=多头, 负=空头)
+    entry_price: float       # 入场价格 (USD)
+    current_price: float     # 当前标记价格 (USD)
+    pnl: float               # 该腿盈亏 (USD)
+
+
+class ShadowView(BaseModel):
+    """影子账本 - 策略逻辑视角，保留所有腿"""
+    pnl_usd: float                    # 影子账本总 PnL
+    legs: List[ShadowLeg]             # 所有策略腿
+
+
+class RealPosition(BaseModel):
+    """真实账本单个净头寸"""
+    instrument: str          # 合约名称
+    qty: float               # 净持仓数量
+    current_mark_price: float  # 当前标记价格 (USD)
+
+
+class RealView(BaseModel):
+    """真实账本 - 物理现实视角，聚合净头寸"""
+    pnl_usd: float                    # 真实账本总 PnL
+    net_positions: List[RealPosition] # 净持仓列表 (qty=0 的不显示)
+
+
+class PnlPositionDetail(BaseModel):
+    """单个 position 的 PnL 详情"""
     # 基础信息
     signal_id: str
     timestamp: str
     market_title: str
+
     # 核心财务指标
-    funding_usd: float # 未来永续合约的资金费用
-    cost_basic_usd: float # 实际投入的总成本(PM 成本 + DB 进场时的 USD 价值)
+    funding_usd: float              # 资金费用 (暂时为 0)
+    cost_basis_usd: float           # 实际投入总成本 (PM + DR)
     total_unrealized_pnl_usd: float # 当前总浮盈
-    # 影子账本
-    shadow_view: dict
-    # 真实账本
-    real_view: dict
+
+    # 账本视图
+    shadow_view: ShadowView
+    real_view: RealView
+
+    # 盈亏归因
+    pm_pnl_usd: float               # PM 部分盈亏
+    fee_pm_usd: float               # PM 手续费
+    dr_pnl_usd: float               # Deribit 部分盈亏
+    fee_dr_usd: float               # Deribit 手续费
+    currency_pnl_usd: float         # 币价波动盈亏
+    unrealized_pnl_usd: float       # 未实现盈亏 (冗余校验)
+
+    # 偏差与校验
+    diff_usd: float                 # Real - Shadow (通常=手续费+滑点)
+    residual_error_usd: float       # 计算残差 (应为 0)
+
+    # 模型验证
+    ev_usd: float                   # 开仓时模型预测 EV
+    total_pnl_usd: float            # 最终汇总 PnL
+
+
+class PnlSummaryResponse(BaseModel):
+    """PnL 汇总响应"""
+    timestamp: str                           # 计算时间
+    total_positions: int                     # OPEN 仓位数量
+
+    # 汇总财务指标
+    total_cost_basis_usd: float              # 总投入成本
+    total_unrealized_pnl_usd: float          # 总未实现盈亏
+    total_pm_pnl_usd: float                  # PM 部分总盈亏
+    total_dr_pnl_usd: float                  # Deribit 部分总盈亏
+    total_currency_pnl_usd: float            # 币价波动总盈亏
+    total_ev_usd: float                      # 模型预测总 EV
+
+    # 汇总账本
+    shadow_view: ShadowView                  # 影子账本汇总
+    real_view: RealView                      # 真实账本汇总
+
+    # 偏差
+    diff_usd: float                          # Real - Shadow 总差异
+
+    # 明细
+    positions: List[PnlPositionDetail]       # 各 position 明细
 
 
 # ==================== Market Snapshot Models ====================
