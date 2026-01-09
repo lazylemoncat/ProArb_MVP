@@ -10,6 +10,7 @@ from .api.health import health_router
 from .api.ev import ev_router
 from .api.position import position_router
 from .api.market import market_router
+from .api.pnl import pnl_router
 from .api.lifespan import lifespan
 from .api.models import (
     DBRespone,
@@ -17,7 +18,6 @@ from .api.models import (
     ExecuteRequest,
     ExecuteResponse,
     PMResponse,
-    PnlResponse,
     PositionResponse,
     SimTradeRequest,
     SimTradeResponse,
@@ -68,6 +68,7 @@ app.include_router(health_router)
 app.include_router(ev_router)
 app.include_router(position_router)
 app.include_router(market_router)
+app.include_router(pnl_router)
 
 @app.get("/api/pm", response_model=PMResponse)
 def get_pm():
@@ -146,19 +147,6 @@ def execute_trade(payload: ExecuteRequest):
         status="DRY_RUN",
         tx_id="",
         message=""
-    )
-
-@app.get("/api/pnl", response_model=PnlResponse)
-def get_pnls():
-    return PnlResponse(
-        signal_id="",
-        timestamp="",
-        market_title="",
-        funding_usd=0,
-        cost_basic_usd=0,
-        total_unrealized_pnl_usd=0,
-        shadow_view={},
-        real_view={}
     )
 
 BASE_DIR = Path(__file__).resolve().parent.parent

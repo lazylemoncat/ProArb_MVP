@@ -1,0 +1,434 @@
+"""
+PnL (Profit and Loss) API 端点
+
+计算未实现盈亏，包含 Shadow View (策略逻辑) 和 Real View (物理现实) 的对比。
+"""
+
+import logging
+from collections import defaultdict
+from dataclasses import fields
+from datetime import datetime, timezone
+from typing import Optional
+
+import pandas as pd
+from fastapi import APIRouter, Query
+
+from .models import (
+    PnlPositionDetail,
+    PnlSummaryResponse,
+    RealPosition,
+    RealView,
+    ShadowLeg,
+    ShadowView,
+)
+from .position import (
+    POSITIONS_DTYPE_SPEC,
+    POSITIONS_EXPECTED_COLUMNS,
+    filter_positions_by_time,
+)
+from ..fetch_data.deribit.deribit_api import DeribitAPI
+from ..fetch_data.polymarket.polymarket_api import PolymarketAPI
+from ..utils.CsvHandler import CsvHandler
+
+logger = logging.getLogger(__name__)
+
+pnl_router = APIRouter(tags=["pnl"])
+
+
+def _get_deribit_current_price(instrument_name: str) -> float:
+    """
+    获取 Deribit 合约的当前标记价格 (USD)
+
+    Args:
+        instrument_name: 合约名称 (e.g., "BTC-16JAN26-91000-C")
+
+    Returns:
+        当前标记价格 (USD)
+    """
+    try:
+        ticker = DeribitAPI.get_ticker(instrument_name)
+        mark_price_btc = ticker.get("mark_price", 0.0)
+        # mark_price 是 BTC 计价，需要转换为 USD
+        spot = DeribitAPI.get_spot_price("btc_usd")
+        return mark_price_btc * spot
+    except Exception as e:
+        logger.warning(f"Failed to get ticker for {instrument_name}: {e}")
+        return 0.0
+
+
+def _get_pm_current_prices(market_id: str) -> tuple[float, float]:
+    """
+    获取 Polymarket 当前价格
+
+    Args:
+        market_id: PM 市场 ID
+
+    Returns:
+        (yes_price, no_price)
+    """
+    try:
+        return PolymarketAPI.get_prices(market_id)
+    except Exception as e:
+        logger.warning(f"Failed to get PM prices for {market_id}: {e}")
+        return 0.0, 0.0
+
+
+def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -> PnlPositionDetail:
+    """
+    计算单个 position 的 PnL
+
+    Args:
+        row: positions.csv 的一行数据
+        current_spot: 当前 BTC 现货价格
+        price_cache: 价格缓存 {instrument: price}
+
+    Returns:
+        PnlPositionDetail
+    """
+    signal_id = str(row.get("trade_id", ""))
+    timestamp = str(row.get("entry_timestamp", ""))
+    market_title = str(row.get("market_title", ""))
+    market_id = str(row.get("market_id", ""))
+
+    # 入场数据
+    pm_entry_cost = float(row.get("pm_entry_cost", 0))
+    dr_entry_cost = float(row.get("dr_entry_cost", 0))
+    entry_price_pm = float(row.get("entry_price_pm", 0))
+    entry_spot = float(row.get("spot", 0))
+    contracts = float(row.get("contracts", 0))
+    strategy = int(row.get("strategy", 2))
+    direction = str(row.get("direction", "")).lower()
+
+    # Deribit 合约信息
+    inst_k1 = str(row.get("inst_k1", ""))
+    inst_k2 = str(row.get("inst_k2", ""))
+    dr_k1_price = float(row.get("dr_k1_price", 0))
+    dr_k2_price = float(row.get("dr_k2_price", 0))
+
+    # 开仓时 EV
+    ev_usd = float(row.get("ev_model_usd", 0))
+
+    # ========== 获取当前价格 ==========
+    # Deribit 价格
+    if inst_k1 not in price_cache:
+        price_cache[inst_k1] = _get_deribit_current_price(inst_k1)
+    if inst_k2 not in price_cache:
+        price_cache[inst_k2] = _get_deribit_current_price(inst_k2)
+
+    current_k1_price = price_cache.get(inst_k1, 0.0)
+    current_k2_price = price_cache.get(inst_k2, 0.0)
+
+    # PM 价格
+    pm_cache_key = f"pm_{market_id}"
+    if pm_cache_key not in price_cache:
+        price_cache[pm_cache_key] = _get_pm_current_prices(market_id)
+    current_yes_price, current_no_price = price_cache.get(pm_cache_key, (0.0, 0.0))
+
+    # ========== Shadow View 计算 ==========
+    # strategy=2: Long K1, Short K2
+    # strategy=1: Short K1, Long K2
+    shadow_legs = []
+
+    if strategy == 2:
+        # K1: Long (qty > 0)
+        k1_qty = contracts
+        k1_pnl = (current_k1_price - dr_k1_price) * k1_qty
+        # K2: Short (qty < 0)
+        k2_qty = -contracts
+        k2_pnl = (dr_k2_price - current_k2_price) * contracts  # 空头盈亏 = (卖价 - 现价) * 数量
+    else:  # strategy == 1
+        # K1: Short (qty < 0)
+        k1_qty = -contracts
+        k1_pnl = (dr_k1_price - current_k1_price) * contracts
+        # K2: Long (qty > 0)
+        k2_qty = contracts
+        k2_pnl = (current_k2_price - dr_k2_price) * k2_qty
+
+    shadow_legs.append(ShadowLeg(
+        instrument=inst_k1,
+        qty=k1_qty,
+        entry_price=dr_k1_price,
+        current_price=current_k1_price,
+        pnl=k1_pnl
+    ))
+    shadow_legs.append(ShadowLeg(
+        instrument=inst_k2,
+        qty=k2_qty,
+        entry_price=dr_k2_price,
+        current_price=current_k2_price,
+        pnl=k2_pnl
+    ))
+
+    shadow_dr_pnl = k1_pnl + k2_pnl
+
+    # ========== PM PnL 计算 ==========
+    # 根据 direction 确定持有的是 YES 还是 NO
+    pm_shares = float(row.get("pm_shares", 0))
+    if pm_shares == 0 and entry_price_pm > 0:
+        pm_shares = pm_entry_cost / entry_price_pm
+
+    if direction == "no":
+        # 持有 NO token
+        entry_no_price = entry_price_pm
+        current_pm_price = current_no_price
+    else:
+        # 持有 YES token
+        entry_no_price = entry_price_pm
+        current_pm_price = current_yes_price
+
+    # PM PnL = (当前价格 - 入场价格) * 份数
+    pm_pnl_usd = (current_pm_price - entry_price_pm) * pm_shares
+
+    shadow_pnl_usd = shadow_dr_pnl + pm_pnl_usd
+
+    shadow_view = ShadowView(
+        pnl_usd=shadow_pnl_usd,
+        legs=shadow_legs
+    )
+
+    # ========== Real View 计算 ==========
+    # Real View 与 Shadow View 相同（对于单个 position）
+    # 差异在汇总时体现 - 当多个 position 的同一合约会被 netting
+    real_positions = []
+
+    if k1_qty != 0:
+        real_positions.append(RealPosition(
+            instrument=inst_k1,
+            qty=k1_qty,
+            current_mark_price=current_k1_price
+        ))
+    if k2_qty != 0:
+        real_positions.append(RealPosition(
+            instrument=inst_k2,
+            qty=k2_qty,
+            current_mark_price=current_k2_price
+        ))
+
+    # Real PnL (包含手续费)
+    fee_dr_usd = float(row.get("k1_fee_approx", 0)) + float(row.get("k2_fee_approx", 0))
+    fee_pm_usd = float(row.get("pm_slippage_usd", 0))  # PM 滑点作为费用
+
+    real_dr_pnl = shadow_dr_pnl - fee_dr_usd
+    real_pnl_usd = real_dr_pnl + pm_pnl_usd - fee_pm_usd
+
+    real_view = RealView(
+        pnl_usd=real_pnl_usd,
+        net_positions=real_positions
+    )
+
+    # ========== 币价波动 PnL ==========
+    # currency_pnl = (current_spot - entry_spot) * btc_denominated_position
+    # btc_denominated_position = contracts (Deribit 期权以 BTC 为单位)
+    currency_pnl_usd = (current_spot - entry_spot) * contracts if entry_spot > 0 else 0.0
+
+    # ========== 成本基础 ==========
+    cost_basis_usd = pm_entry_cost + dr_entry_cost
+
+    # ========== 汇总 ==========
+    total_unrealized_pnl_usd = real_pnl_usd
+    diff_usd = real_pnl_usd - shadow_pnl_usd
+
+    # 残差校验: 理论上 diff 应该等于负的手续费
+    expected_diff = -(fee_dr_usd + fee_pm_usd)
+    residual_error_usd = diff_usd - expected_diff
+
+    return PnlPositionDetail(
+        signal_id=signal_id,
+        timestamp=timestamp,
+        market_title=market_title,
+        funding_usd=0.0,  # 暂时为 0
+        cost_basis_usd=cost_basis_usd,
+        total_unrealized_pnl_usd=total_unrealized_pnl_usd,
+        shadow_view=shadow_view,
+        real_view=real_view,
+        pm_pnl_usd=pm_pnl_usd,
+        fee_pm_usd=fee_pm_usd,
+        dr_pnl_usd=shadow_dr_pnl,
+        fee_dr_usd=fee_dr_usd,
+        currency_pnl_usd=currency_pnl_usd,
+        unrealized_pnl_usd=total_unrealized_pnl_usd,
+        diff_usd=diff_usd,
+        residual_error_usd=residual_error_usd,
+        ev_usd=ev_usd,
+        total_pnl_usd=total_unrealized_pnl_usd
+    )
+
+
+def _aggregate_real_view(position_details: list[PnlPositionDetail]) -> RealView:
+    """
+    聚合所有 position 的真实账本，计算净头寸
+
+    同一 instrument 的头寸会被 netting:
+    - position1: Long 93k-C (+1)
+    - position2: Short 93k-C (-1)
+    - 净头寸: 93k-C (0) -> 不显示
+    """
+    # 聚合净头寸
+    net_positions: dict[str, dict] = defaultdict(lambda: {"qty": 0.0, "price": 0.0, "count": 0})
+
+    for detail in position_details:
+        for pos in detail.real_view.net_positions:
+            net_positions[pos.instrument]["qty"] += pos.qty
+            net_positions[pos.instrument]["price"] += pos.current_mark_price
+            net_positions[pos.instrument]["count"] += 1
+
+    # 构建 Real View
+    real_positions = []
+    total_real_pnl = 0.0
+
+    for instrument, data in net_positions.items():
+        net_qty = data["qty"]
+        if abs(net_qty) < 1e-8:
+            # 净头寸为 0，跳过
+            continue
+
+        avg_price = data["price"] / data["count"] if data["count"] > 0 else 0.0
+        real_positions.append(RealPosition(
+            instrument=instrument,
+            qty=net_qty,
+            current_mark_price=avg_price
+        ))
+
+    # Real PnL = 各 position 的 real_pnl 之和
+    total_real_pnl = sum(d.real_view.pnl_usd for d in position_details)
+
+    return RealView(
+        pnl_usd=total_real_pnl,
+        net_positions=real_positions
+    )
+
+
+def _aggregate_shadow_view(position_details: list[PnlPositionDetail]) -> ShadowView:
+    """
+    聚合所有 position 的影子账本 (保留所有腿，不做 netting)
+    """
+    all_legs = []
+    total_shadow_pnl = 0.0
+
+    for detail in position_details:
+        all_legs.extend(detail.shadow_view.legs)
+        total_shadow_pnl += detail.shadow_view.pnl_usd
+
+    return ShadowView(
+        pnl_usd=total_shadow_pnl,
+        legs=all_legs
+    )
+
+
+@pnl_router.get("/api/pnl", response_model=PnlSummaryResponse)
+def get_pnl_summary(
+    start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
+    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
+):
+    """
+    获取所有 OPEN 仓位的 PnL 汇总
+
+    包含:
+    - Shadow View: 策略逻辑视角，保留所有腿
+    - Real View: 物理现实视角，聚合净头寸
+    - 各项盈亏归因明细
+
+    Args:
+        start_time: 起始时间过滤 (ISO 格式, UTC)
+        end_time: 结束时间过滤 (ISO 格式, UTC)
+
+    Returns:
+        PnL 汇总数据
+    """
+    # 确保 CSV 文件包含所有必需列
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0, dtype=POSITIONS_DTYPE_SPEC)
+
+    pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
+
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    if pos_df.empty:
+        return PnlSummaryResponse(
+            timestamp=now_str,
+            total_positions=0,
+            total_cost_basis_usd=0.0,
+            total_unrealized_pnl_usd=0.0,
+            total_pm_pnl_usd=0.0,
+            total_dr_pnl_usd=0.0,
+            total_currency_pnl_usd=0.0,
+            total_ev_usd=0.0,
+            shadow_view=ShadowView(pnl_usd=0.0, legs=[]),
+            real_view=RealView(pnl_usd=0.0, net_positions=[]),
+            diff_usd=0.0,
+            positions=[]
+        )
+
+    # 筛选 OPEN 状态的仓位
+    open_df = pos_df[pos_df['status'].str.upper() == 'OPEN']
+
+    # 按时间范围过滤
+    open_df = filter_positions_by_time(open_df, start_time, end_time)
+
+    if open_df.empty:
+        return PnlSummaryResponse(
+            timestamp=now_str,
+            total_positions=0,
+            total_cost_basis_usd=0.0,
+            total_unrealized_pnl_usd=0.0,
+            total_pm_pnl_usd=0.0,
+            total_dr_pnl_usd=0.0,
+            total_currency_pnl_usd=0.0,
+            total_ev_usd=0.0,
+            shadow_view=ShadowView(pnl_usd=0.0, legs=[]),
+            real_view=RealView(pnl_usd=0.0, net_positions=[]),
+            diff_usd=0.0,
+            positions=[]
+        )
+
+    rows = open_df.to_dict(orient="records")
+
+    # 获取当前 BTC 现货价格
+    try:
+        current_spot = DeribitAPI.get_spot_price("btc_usd")
+    except Exception as e:
+        logger.warning(f"Failed to get spot price: {e}")
+        current_spot = 0.0
+
+    # 价格缓存
+    price_cache: dict = {}
+
+    # 计算每个 position 的 PnL
+    position_details: list[PnlPositionDetail] = []
+    for row in rows:
+        try:
+            detail = _calculate_position_pnl(row, current_spot, price_cache)
+            position_details.append(detail)
+        except Exception as e:
+            logger.error(f"Failed to calculate PnL for {row.get('trade_id')}: {e}", exc_info=True)
+            continue
+
+    # 汇总数据
+    total_positions = len(position_details)
+    total_cost_basis_usd = sum(d.cost_basis_usd for d in position_details)
+    total_unrealized_pnl_usd = sum(d.total_unrealized_pnl_usd for d in position_details)
+    total_pm_pnl_usd = sum(d.pm_pnl_usd for d in position_details)
+    total_dr_pnl_usd = sum(d.dr_pnl_usd for d in position_details)
+    total_currency_pnl_usd = sum(d.currency_pnl_usd for d in position_details)
+    total_ev_usd = sum(d.ev_usd for d in position_details)
+
+    # 聚合账本
+    shadow_view = _aggregate_shadow_view(position_details)
+    real_view = _aggregate_real_view(position_details)
+
+    # 计算总差异
+    diff_usd = real_view.pnl_usd - shadow_view.pnl_usd
+
+    return PnlSummaryResponse(
+        timestamp=now_str,
+        total_positions=total_positions,
+        total_cost_basis_usd=total_cost_basis_usd,
+        total_unrealized_pnl_usd=total_unrealized_pnl_usd,
+        total_pm_pnl_usd=total_pm_pnl_usd,
+        total_dr_pnl_usd=total_dr_pnl_usd,
+        total_currency_pnl_usd=total_currency_pnl_usd,
+        total_ev_usd=total_ev_usd,
+        shadow_view=shadow_view,
+        real_view=real_view,
+        diff_usd=diff_usd,
+        positions=position_details
+    )
