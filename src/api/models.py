@@ -209,7 +209,7 @@ class PnlPositionDetail(BaseModel):
 class PnlSummaryResponse(BaseModel):
     """PnL 汇总响应"""
     timestamp: str                           # 计算时间
-    total_positions: int                     # OPEN 仓位数量
+    total_positions: int                     # 仓位数量
 
     # 汇总财务指标
     total_cost_basis_usd: float              # 总投入成本
@@ -217,6 +217,7 @@ class PnlSummaryResponse(BaseModel):
     total_pm_pnl_usd: float                  # PM 部分总盈亏
     total_dr_pnl_usd: float                  # Deribit 部分总盈亏
     total_currency_pnl_usd: float            # 币价波动总盈亏
+    total_funding_usd: float                 # Net funding payments on Deribit (for hedging vs spot BTC)
     total_ev_usd: float                      # 模型预测总 EV
 
     # 汇总账本

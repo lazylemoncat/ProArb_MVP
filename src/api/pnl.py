@@ -232,11 +232,14 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     expected_diff = -(fee_dr_usd + fee_pm_usd)
     residual_error_usd = diff_usd - expected_diff
 
+    # 从 row 读取 funding_usd (如果有)
+    funding_usd = float(row.get("funding_usd", 0.0))
+
     return PnlPositionDetail(
         signal_id=signal_id,
         timestamp=timestamp,
         market_title=market_title,
-        funding_usd=0.0,  # 暂时为 0
+        funding_usd=funding_usd,
         cost_basis_usd=cost_basis_usd,
         total_unrealized_pnl_usd=total_unrealized_pnl_usd,
         shadow_view=shadow_view,
@@ -318,10 +321,11 @@ def _aggregate_shadow_view(position_details: list[PnlPositionDetail]) -> ShadowV
 @pnl_router.get("/api/pnl", response_model=PnlSummaryResponse)
 def get_pnl_summary(
     start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
-    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
+    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)"),
+    status: Optional[str] = Query(default=None, description="仓位状态筛选: 'open' (未到期), 'close' (已到期), 或不传返回全部")
 ):
     """
-    获取所有 OPEN 仓位的 PnL 汇总
+    获取仓位的 PnL 汇总
 
     包含:
     - Shadow View: 策略逻辑视角，保留所有腿
@@ -331,6 +335,7 @@ def get_pnl_summary(
     Args:
         start_time: 起始时间过滤 (ISO 格式, UTC)
         end_time: 结束时间过滤 (ISO 格式, UTC)
+        status: 仓位状态筛选 ('open' 或 'close'，不传返回全部)
 
     Returns:
         PnL 汇总数据
@@ -351,6 +356,7 @@ def get_pnl_summary(
             total_pm_pnl_usd=0.0,
             total_dr_pnl_usd=0.0,
             total_currency_pnl_usd=0.0,
+            total_funding_usd=0.0,
             total_ev_usd=0.0,
             shadow_view=ShadowView(pnl_usd=0.0, legs=[]),
             real_view=RealView(pnl_usd=0.0, net_positions=[]),
@@ -358,13 +364,17 @@ def get_pnl_summary(
             positions=[]
         )
 
-    # 筛选 OPEN 状态的仓位
-    open_df = pos_df[pos_df['status'].str.upper() == 'OPEN']
+    # 根据 status 参数筛选仓位 (默认返回全部)
+    filtered_df = pos_df
+    if status:
+        status_upper = status.strip().upper()
+        if status_upper in ('OPEN', 'CLOSE'):
+            filtered_df = pos_df[pos_df['status'].str.upper() == status_upper]
 
     # 按时间范围过滤
-    open_df = filter_positions_by_time(open_df, start_time, end_time)
+    filtered_df = filter_positions_by_time(filtered_df, start_time, end_time)
 
-    if open_df.empty:
+    if filtered_df.empty:
         return PnlSummaryResponse(
             timestamp=now_str,
             total_positions=0,
@@ -373,6 +383,7 @@ def get_pnl_summary(
             total_pm_pnl_usd=0.0,
             total_dr_pnl_usd=0.0,
             total_currency_pnl_usd=0.0,
+            total_funding_usd=0.0,
             total_ev_usd=0.0,
             shadow_view=ShadowView(pnl_usd=0.0, legs=[]),
             real_view=RealView(pnl_usd=0.0, net_positions=[]),
@@ -380,7 +391,7 @@ def get_pnl_summary(
             positions=[]
         )
 
-    rows = open_df.to_dict(orient="records")
+    rows = filtered_df.to_dict(orient="records")
 
     # 获取当前 BTC 现货价格
     try:
@@ -409,6 +420,7 @@ def get_pnl_summary(
     total_pm_pnl_usd = sum(d.pm_pnl_usd for d in position_details)
     total_dr_pnl_usd = sum(d.dr_pnl_usd for d in position_details)
     total_currency_pnl_usd = sum(d.currency_pnl_usd for d in position_details)
+    total_funding_usd = sum(d.funding_usd for d in position_details)
     total_ev_usd = sum(d.ev_usd for d in position_details)
 
     # 聚合账本
@@ -426,6 +438,7 @@ def get_pnl_summary(
         total_pm_pnl_usd=total_pm_pnl_usd,
         total_dr_pnl_usd=total_dr_pnl_usd,
         total_currency_pnl_usd=total_currency_pnl_usd,
+        total_funding_usd=total_funding_usd,
         total_ev_usd=total_ev_usd,
         shadow_view=shadow_view,
         real_view=real_view,

@@ -135,6 +135,7 @@ class SavePosition:
     ev_theta_adj_usd: float       # 时间修正后的毛利润
     ev_model_usd: float           # 净利润 (扣除手续费和滑点)
     roi_model_pct: float          # ROI 百分比
+    funding_usd: float            # Net funding payments on Deribit (for hedging vs spot BTC holdings)
 
 def save_position(
         dry_run: bool,
@@ -154,7 +155,8 @@ def save_position(
         slippage_pct: float,
         gross_ev: float,
         net_ev: float,
-        roi_pct: float
+        roi_pct: float,
+        funding_usd: float = 0.0  # Net funding payments on Deribit
     ):
     # 获取 K1 和 K2 的 ticker 数据
     k1_delta, k1_theta, k2_delta, k2_theta, settlement_price = 0.0, 0.0, 0.0, 0.0, 0.0
@@ -288,6 +290,7 @@ def save_position(
         ev_theta_adj_usd=gross_ev,  # theta adjustment 已包含在 gross_ev 中
         ev_model_usd=net_ev,
         roi_model_pct=roi_pct,
+        funding_usd=funding_usd,
     )
 
     CsvHandler.save_to_csv(csv_path, row_dict=asdict(row_obj), class_obj=SavePosition)
