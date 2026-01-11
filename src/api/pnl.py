@@ -5,6 +5,7 @@ PnL (Profit and Loss) API 端点
 """
 
 import logging
+import math
 from collections import defaultdict
 from dataclasses import fields
 from datetime import datetime, timezone
@@ -35,6 +36,26 @@ logger = logging.getLogger(__name__)
 pnl_router = APIRouter(tags=["pnl"])
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    """
+    安全地将值转换为 float，处理 NaN/inf/None/空字符串等异常情况
+
+    Args:
+        value: 要转换的值
+        default: 转换失败时的默认值
+
+    Returns:
+        有效的 float 值
+    """
+    try:
+        result = float(value)
+        if math.isnan(result) or math.isinf(result):
+            return default
+        return result
+    except (ValueError, TypeError):
+        return default
+
+
 def _get_deribit_current_price(instrument_name: str) -> float:
     """
     获取 Deribit 合约的当前标记价格 (USD)
@@ -47,10 +68,10 @@ def _get_deribit_current_price(instrument_name: str) -> float:
     """
     try:
         ticker = DeribitAPI.get_ticker(instrument_name)
-        mark_price_btc = ticker.get("mark_price", 0.0)
+        mark_price_btc = _safe_float(ticker.get("mark_price", 0.0))
         # mark_price 是 BTC 计价，需要转换为 USD
-        spot = DeribitAPI.get_spot_price("btc_usd")
-        return mark_price_btc * spot
+        spot = _safe_float(DeribitAPI.get_spot_price("btc_usd"))
+        return _safe_float(mark_price_btc * spot)
     except Exception as e:
         logger.warning(f"Failed to get ticker for {instrument_name}: {e}")
         return 0.0
@@ -90,23 +111,23 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     market_title = str(row.get("market_title", ""))
     market_id = str(row.get("market_id", ""))
 
-    # 入场数据
-    pm_entry_cost = float(row.get("pm_entry_cost", 0))
-    dr_entry_cost = float(row.get("dr_entry_cost", 0))
-    entry_price_pm = float(row.get("entry_price_pm", 0))
-    entry_spot = float(row.get("spot", 0))
-    contracts = float(row.get("contracts", 0))
-    strategy = int(row.get("strategy", 2))
+    # 入场数据 (使用 _safe_float 处理 NaN/inf)
+    pm_entry_cost = _safe_float(row.get("pm_entry_cost", 0))
+    dr_entry_cost = _safe_float(row.get("dr_entry_cost", 0))
+    entry_price_pm = _safe_float(row.get("entry_price_pm", 0))
+    entry_spot = _safe_float(row.get("spot", 0))
+    contracts = _safe_float(row.get("contracts", 0))
+    strategy = int(_safe_float(row.get("strategy", 2), 2))
     direction = str(row.get("direction", "")).lower()
 
     # Deribit 合约信息
     inst_k1 = str(row.get("inst_k1", ""))
     inst_k2 = str(row.get("inst_k2", ""))
-    dr_k1_price = float(row.get("dr_k1_price", 0))
-    dr_k2_price = float(row.get("dr_k2_price", 0))
+    dr_k1_price = _safe_float(row.get("dr_k1_price", 0))
+    dr_k2_price = _safe_float(row.get("dr_k2_price", 0))
 
     # 开仓时 EV
-    ev_usd = float(row.get("ev_model_usd", 0))
+    ev_usd = _safe_float(row.get("ev_model_usd", 0))
 
     # ========== 获取当前价格 ==========
     # Deribit 价格
@@ -163,7 +184,7 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
 
     # ========== PM PnL 计算 ==========
     # 根据 direction 确定持有的是 YES 还是 NO
-    pm_shares = float(row.get("pm_shares", 0))
+    pm_shares = _safe_float(row.get("pm_shares", 0))
     if pm_shares == 0 and entry_price_pm > 0:
         pm_shares = pm_entry_cost / entry_price_pm
 
@@ -205,8 +226,8 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
         ))
 
     # Real PnL (包含手续费)
-    fee_dr_usd = float(row.get("k1_fee_approx", 0)) + float(row.get("k2_fee_approx", 0))
-    fee_pm_usd = float(row.get("pm_slippage_usd", 0))  # PM 滑点作为费用
+    fee_dr_usd = _safe_float(row.get("k1_fee_approx", 0)) + _safe_float(row.get("k2_fee_approx", 0))
+    fee_pm_usd = _safe_float(row.get("pm_slippage_usd", 0))  # PM 滑点作为费用
 
     real_dr_pnl = shadow_dr_pnl - fee_dr_usd
     real_pnl_usd = real_dr_pnl + pm_pnl_usd - fee_pm_usd
@@ -233,7 +254,7 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     residual_error_usd = diff_usd - expected_diff
 
     # 从 row 读取 funding_usd (如果有)
-    funding_usd = float(row.get("funding_usd", 0.0))
+    funding_usd = _safe_float(row.get("funding_usd", 0.0))
 
     return PnlPositionDetail(
         signal_id=signal_id,
