@@ -10,12 +10,20 @@ import websockets
 from websockets.exceptions import WebSocketException
 
 from .deribit_api import DeribitAPI, DeribitUserCfg
+from src.utils.dataloader.env_loader import load_env_config
 
 logger = logging.getLogger(__name__)
 
 WS_URL = "wss://www.deribit.com/ws/api/v2"
-MAX_WS_RETRIES = 4  # Maximum retry attempts for WebSocket connections
-WS_RETRY_DELAYS = [2, 4, 8, 16]  # Exponential backoff delays in seconds
+
+# Load retry configuration from environment variables
+env_config = load_env_config()
+MAX_WS_RETRIES = env_config.MAX_RETRIES
+WS_RETRY_DELAY_SECONDS = env_config.RETRY_DELAY_SECONDS
+WS_RETRY_BACKOFF = env_config.RETRY_BACKOFF
+
+# Generate exponential backoff delays based on env config
+WS_RETRY_DELAYS = [WS_RETRY_DELAY_SECONDS * (WS_RETRY_BACKOFF ** i) for i in range(MAX_WS_RETRIES)]
 
 def _norm_cdf(x: float) -> float:
     """标准正态分布Φ(x);用erf实现,避免scipy依赖。"""
