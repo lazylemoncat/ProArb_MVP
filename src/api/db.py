@@ -252,10 +252,10 @@ def transform_row_to_db_response(row: pd.Series) -> DBRespone:
 @db_router.get("/api/db", response_model=List[DBRespone])
 async def get_db_market_data() -> List[DBRespone]:
     """
-    获取当天的 Deribit 市场数据（从 raw.csv 读取）
+    获取当前时刻的 Deribit 市场数据（从今天的 raw.csv 读取最新快照）
 
     Returns:
-        Deribit 市场数据列表
+        当前所有 Deribit 市场的最新数据列表
     """
     try:
         # 获取今天的 CSV 文件路径
@@ -274,9 +274,15 @@ async def get_db_market_data() -> List[DBRespone]:
         if df.empty:
             return []
 
-        # 按时间倒序排序（最新的在前）
+        # 找到最新的时间戳
         if 'utc' in df.columns:
-            df = df.sort_values('utc', ascending=False)
+            # 获取最新的时间戳
+            max_utc = df['utc'].max()
+            # 只保留最新时间戳的数据
+            df = df[df['utc'] == max_utc]
+        else:
+            # 如果没有 utc 字段，只返回最后一行
+            df = df.tail(1)
 
         # 转换为响应对象
         results = []
@@ -288,7 +294,7 @@ async def get_db_market_data() -> List[DBRespone]:
                 logger.error(f"Failed to transform row: {e}", exc_info=True)
                 continue
 
-        logger.info(f"Returning {len(results)} DB market snapshots")
+        logger.info(f"Returning {len(results)} DB market snapshots at current time")
         return results
 
     except HTTPException:
