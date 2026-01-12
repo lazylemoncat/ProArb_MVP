@@ -11,13 +11,13 @@ from .api.ev import ev_router
 from .api.position import position_router
 from .api.market import market_router
 from .api.pnl import pnl_router
+from .api.pm import pm_router
+from .api.db import db_router
 from .api.lifespan import lifespan
 from .api.models import (
-    DBRespone,
     EVResponse,
     ExecuteRequest,
     ExecuteResponse,
-    PMResponse,
     PositionResponse,
     SimTradeRequest,
     SimTradeResponse,
@@ -69,55 +69,8 @@ app.include_router(ev_router)
 app.include_router(position_router)
 app.include_router(market_router)
 app.include_router(pnl_router)
-
-@app.get("/api/pm", response_model=PMResponse)
-def get_pm():
-    # TODO 创建 PM csv
-    return PMResponse(
-        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        market_id="",
-        event_title="",
-        asset="BTC",
-        strike=0,
-        yes_price=0,
-        no_price=0,
-        basic_orderbook={
-            "yes_mid": 0,
-            "no_mid": 0,
-            "last_updated": 0
-        }
-    )
-
-@app.get("/api/db", response_model=DBRespone)
-def get_db():
-    # TODO 创建 db csv
-    return DBRespone(
-        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        market_id="",
-        asset="BTC",
-        expiry_date="",
-        days_to_expiry=0,
-        strikes={
-            "K1": 0,
-            "K2": 0,
-            "K_poly": 0,
-        },
-        spot_price={
-            "btc_usd": 0,
-            "last_updated": 0
-        },
-        options_pricing={
-            "K1_call_mid_btc": 0,
-            "K2_call_mid_btc": 0,
-            "K1_call_mid_usd": 0,
-            "K2_call_mid_usd": 0
-        },
-        vertical_spread={
-            "spread_mid_btc": 0,
-            "spread_mid_usd": 0,
-            "implied_probability": 0
-        }
-    )
+app.include_router(pm_router)
+app.include_router(db_router)
 
 @app.post("/trade/sim", response_model=SimTradeResponse)
 def simute_trade(payload: SimTradeRequest):
