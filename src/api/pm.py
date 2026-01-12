@@ -86,58 +86,6 @@ def get_raw_csv_path(target_date: Optional[date] = None) -> Path:
     return csv_path
 
 
-def get_raw_csv_paths_for_days(day_filter: Optional[str] = None) -> List[Path]:
-    """
-    获取指定日期范围的 raw.csv 文件路径列表
-
-    Args:
-        day_filter: 日期过滤器
-            - None 或 "all": 返回今天、昨天、前天三天的文件
-            - "today": 仅返回今天的文件
-            - "yesterday": 仅返回昨天的文件
-            - "before_yesterday": 仅返回前天的文件
-            - "YYYYMMDD" 格式: 返回指定日期的文件
-
-    Returns:
-        存在的 CSV 文件路径列表
-    """
-    today = datetime.now(timezone.utc).date()
-    yesterday = today - timedelta(days=1)
-    before_yesterday = today - timedelta(days=2)
-
-    paths: List[Path] = []
-
-    if day_filter is None or day_filter.lower() == "all":
-        # 返回三天的数据
-        for d in [today, yesterday, before_yesterday]:
-            path = get_raw_csv_path(d)
-            if path.exists():
-                paths.append(path)
-    elif day_filter.lower() == "today":
-        path = get_raw_csv_path(today)
-        if path.exists():
-            paths.append(path)
-    elif day_filter.lower() == "yesterday":
-        path = get_raw_csv_path(yesterday)
-        if path.exists():
-            paths.append(path)
-    elif day_filter.lower() == "before_yesterday":
-        path = get_raw_csv_path(before_yesterday)
-        if path.exists():
-            paths.append(path)
-    else:
-        # 尝试解析 YYYYMMDD 格式
-        try:
-            target_date = datetime.strptime(day_filter, "%Y%m%d").date()
-            path = get_raw_csv_path(target_date)
-            if path.exists():
-                paths.append(path)
-        except ValueError:
-            logger.warning(f"Invalid day_filter format: {day_filter}")
-
-    return paths
-
-
 def transform_row_to_pm_response(row: pd.Series) -> PMResponse:
     """
     将 CSV 行数据转换为 PMResponse
@@ -205,103 +153,43 @@ def transform_row_to_pm_response(row: pd.Series) -> PMResponse:
 # ==================== API Endpoints ====================
 
 @pm_router.get("/api/pm", response_model=List[PMResponse])
-async def get_pm_market_data(
-    limit: Optional[int] = Query(default=None, ge=1, description="返回的快照数量（默认返回所有）"),
-    offset: int = Query(default=0, ge=0, description="跳过的记录数"),
-    market_id: Optional[str] = Query(default=None, description="按市场ID过滤"),
-    start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
-    end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)"),
-    day: Optional[str] = Query(
-        default=None,
-        description="日期过滤: 'all'(默认,三天数据), 'today', 'yesterday', 'before_yesterday', 或 'YYYYMMDD' 格式"
-    )
-) -> List[PMResponse]:
+async def get_pm_market_data() -> List[PMResponse]:
     """
-    获取 Polymarket 市场数据（从 raw.csv 读取）
-
-    支持获取今天、昨天、前天三天的数据。
-
-    Args:
-        limit: 返回的记录数量（None 表示返回所有，默认返回所有）
-        offset: 跳过的记录数（用于分页）
-        market_id: 可选的市场ID过滤器
-        start_time: 起始时间过滤 (ISO 格式, UTC)
-        end_time: 结束时间过滤 (ISO 格式, UTC)
-        day: 日期过滤器
-            - None 或 "all": 返回今天、昨天、前天三天的数据（默认）
-            - "today": 仅返回今天的数据
-            - "yesterday": 仅返回昨天的数据
-            - "before_yesterday": 仅返回前天的数据
-            - "YYYYMMDD" 格式: 返回指定日期的数据
+    获取当前时刻的 Polymarket 市场数据（从今天的 raw.csv 读取最新快照）
 
     Returns:
-        Polymarket 市场数据列表
+        当前所有 Polymarket 市场的最新数据列表
     """
     try:
-        # 获取 CSV 文件路径列表
-        csv_paths = get_raw_csv_paths_for_days(day)
+        # 获取今天的 CSV 文件路径
+        csv_path = get_raw_csv_path(target_date=None)  # None = today
 
-        if not csv_paths:
+        if not csv_path.exists():
             raise HTTPException(
                 status_code=404,
-                detail=f"No raw data files found for day filter: {day or 'all'}"
+                detail=f"No raw data file found for today: {csv_path.name}"
             )
 
-        # 读取所有 CSV 文件并合并
-        dfs = []
-        for csv_path in csv_paths:
-            logger.info(f"Reading raw data from: {csv_path}")
-            try:
-                df = pd.read_csv(csv_path)
-                if not df.empty:
-                    dfs.append(df)
-            except Exception as e:
-                logger.warning(f"Failed to read {csv_path}: {e}")
-                continue
-
-        if not dfs:
-            return []
-
-        # 合并所有数据
-        df = pd.concat(dfs, ignore_index=True)
+        # 读取 CSV 文件
+        logger.info(f"Reading raw data from: {csv_path}")
+        df = pd.read_csv(csv_path)
 
         if df.empty:
             return []
 
-        # 按市场 ID 过滤
-        if market_id:
-            df = df[df['market_id'] == market_id]
-
-        # 按时间范围过滤 - 使用 utc 字段 (Unix timestamp)
+        # 找到最新的时间戳
         if 'utc' in df.columns:
-            if start_time:
-                try:
-                    start_ts = pd.to_datetime(start_time).timestamp()
-                    df = df[df['utc'] >= start_ts]
-                except Exception as e:
-                    logger.warning(f"Invalid start_time format: {start_time}, error: {e}")
-
-            if end_time:
-                try:
-                    end_ts = pd.to_datetime(end_time).timestamp()
-                    df = df[df['utc'] <= end_ts]
-                except Exception as e:
-                    logger.warning(f"Invalid end_time format: {end_time}, error: {e}")
-
-            # 按时间倒序排序（最新的在前）
-            df = df.sort_values('utc', ascending=False)
-
-        # 分页
-        if limit is None:
-            # 返回从 offset 开始的所有数据
-            df_page = df.iloc[offset:]
+            # 获取最新的时间戳
+            max_utc = df['utc'].max()
+            # 只保留最新时间戳的数据
+            df = df[df['utc'] == max_utc]
         else:
-            # 返回指定数量
-            df_page = df.iloc[offset:offset + limit]
+            # 如果没有 utc 字段，只返回最后一行
+            df = df.tail(1)
 
         # 转换为响应对象
         results = []
-        for _, row in df_page.iterrows():
+        for _, row in df.iterrows():
             try:
                 pm_response = transform_row_to_pm_response(row)
                 results.append(pm_response)
@@ -309,7 +197,7 @@ async def get_pm_market_data(
                 logger.error(f"Failed to transform row: {e}", exc_info=True)
                 continue
 
-        logger.info(f"Returning {len(results)} PM market snapshots from {len(csv_paths)} file(s)")
+        logger.info(f"Returning {len(results)} PM market snapshots at current time")
         return results
 
     except HTTPException:
