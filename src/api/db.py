@@ -274,14 +274,13 @@ async def get_db_market_data() -> List[DBRespone]:
         if df.empty:
             return []
 
-        # 找到最新的时间戳
-        if 'utc' in df.columns:
-            # 获取最新的时间戳
-            max_utc = df['utc'].max()
-            # 只保留最新时间戳的数据
-            df = df[df['utc'] == max_utc]
+        # 对每个市场，获取最新的数据
+        if 'utc' in df.columns and 'market_id' in df.columns:
+            # 按 market_id 分组，获取每个市场的最新时间戳
+            df = df.sort_values('utc', ascending=False)
+            df = df.groupby('market_id', as_index=False).first()
         else:
-            # 如果没有 utc 字段，只返回最后一行
+            # 如果没有必要字段，只返回最后一行
             df = df.tail(1)
 
         # 转换为响应对象
