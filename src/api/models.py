@@ -12,7 +12,7 @@ class PMResponse(BaseModel):
     timestamp: str # ISO 格式
     market_id: str
     event_title: str
-    asset: Literal["BTC"]
+    asset: Literal["BTC", "ETH"]
     strike: int
     yes_price: float
     no_price: float

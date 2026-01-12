@@ -11,13 +11,13 @@ from .api.ev import ev_router
 from .api.position import position_router
 from .api.market import market_router
 from .api.pnl import pnl_router
+from .api.pm import pm_router
 from .api.lifespan import lifespan
 from .api.models import (
     DBRespone,
     EVResponse,
     ExecuteRequest,
     ExecuteResponse,
-    PMResponse,
     PositionResponse,
     SimTradeRequest,
     SimTradeResponse,
@@ -69,24 +69,7 @@ app.include_router(ev_router)
 app.include_router(position_router)
 app.include_router(market_router)
 app.include_router(pnl_router)
-
-@app.get("/api/pm", response_model=PMResponse)
-def get_pm():
-    # TODO 创建 PM csv
-    return PMResponse(
-        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        market_id="",
-        event_title="",
-        asset="BTC",
-        strike=0,
-        yes_price=0,
-        no_price=0,
-        basic_orderbook={
-            "yes_mid": 0,
-            "no_mid": 0,
-            "last_updated": 0
-        }
-    )
+app.include_router(pm_router)
 
 @app.get("/api/db", response_model=DBRespone)
 def get_db():
