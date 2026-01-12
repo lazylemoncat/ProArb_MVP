@@ -21,7 +21,7 @@ class PMResponse(BaseModel):
 class DBRespone(BaseModel):
     timestamp: str # ISO 格式
     market_id: str
-    asset: Literal["BTC"]
+    asset: Literal["BTC", "ETH"]
     expiry_date: str
     days_to_expiry: float
     strikes: dict
