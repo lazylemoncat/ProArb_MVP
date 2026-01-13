@@ -487,6 +487,11 @@ async def main_monitor(
                 day_offset=config.thresholds.day_off
             )
 
+            # 如果无法找到精确匹配的合约，跳过该市场
+            if db_context is None:
+                logger.info(f"跳过市场 {pm_context.market_title}: 无精确匹配的k1/k2合约")
+                continue
+
             # 对投入资金列表进行判断
             inv_bases = config.thresholds.INVESTMENTS
             await investment_runner(

@@ -86,6 +86,7 @@ class DeribitAPI:
         call: bool = True,
         day_offset: int = 0,
         exp_timestamp: float | None = None,
+        exact_match: bool = False,
     ):
         """
         根据行权价找到最近的可交易期权。
@@ -97,9 +98,13 @@ class DeribitAPI:
             day_offset: 当未提供 exp_timestamp 时，表示在该行权价下按到期时间排序后的第几个合约
             exp_timestamp: 若提供（单位：毫秒），将优先选择 expiration_timestamp
                            最接近该值的合约，忽略 day_offset
+            exact_match: 若为 True，则要求行权价必须精确匹配，否则抛出异常
 
         返回：
             instrument_name, expiration_timestamp
+
+        异常：
+            ValueError: 当 exact_match=True 且无精确匹配的行权价时
         """
         url = f"{BASE_URL}/public/get_instruments"
         params = {"currency": currency, "kind": "option", "expired": "false"}
@@ -117,7 +122,17 @@ class DeribitAPI:
         strikes = {float(inst["strike"]) for inst in same_type}
 
         # 找与目标 strike 最接近的真实行权价
-        best_strike = min(strikes, key=lambda s: abs(s - strike))
+        if exact_match:
+            # 精确匹配模式：行权价必须完全一致
+            if strike not in strikes:
+                raise ValueError(
+                    f"无法找到精确匹配的行权价 {strike} (货币: {currency}, 类型: {option_type}). "
+                    f"可用行权价: {sorted(strikes)}"
+                )
+            best_strike = strike
+        else:
+            # 模糊匹配模式：找最接近的行权价
+            best_strike = min(strikes, key=lambda s: abs(s - strike))
 
         # 过滤出这一档行权价下的所有到期日合约
         candidates = [
