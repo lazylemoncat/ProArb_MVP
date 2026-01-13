@@ -243,7 +243,19 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     currency_pnl_usd = (current_spot - entry_spot) * contracts if entry_spot > 0 else 0.0
 
     # ========== 成本基础 ==========
-    cost_basis_usd = pm_entry_cost + dr_entry_cost
+    # 计算 Deribit 期权权利金（premium）
+    # Strategy 2: Long K1 (pay dr_k1_price), Short K2 (receive dr_k2_price) -> net cost = dr_k1_price - dr_k2_price
+    # Strategy 1: Short K1 (receive dr_k1_price), Long K2 (pay dr_k2_price) -> net cost = dr_k2_price - dr_k1_price
+    if strategy == 2:
+        option_premium_per_contract = dr_k1_price - dr_k2_price
+    else:  # strategy == 1
+        option_premium_per_contract = dr_k2_price - dr_k1_price
+
+    option_premium_usd = option_premium_per_contract * contracts
+
+    # cost_basis_usd = PM成本 + Deribit手续费 + Deribit权利金
+    # 注意: dr_entry_cost 目前只包含手续费，所以需要加上权利金
+    cost_basis_usd = pm_entry_cost + dr_entry_cost + option_premium_usd
 
     # ========== 汇总 ==========
     total_unrealized_pnl_usd = real_pnl_usd

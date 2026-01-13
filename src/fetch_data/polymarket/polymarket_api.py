@@ -8,6 +8,8 @@ import certifi
 import requests
 from requests.exceptions import RequestException, HTTPError
 
+from src.utils.dataloader.env_loader import load_env_config
+
 BASE_URL = "https://gamma-api.polymarket.com"
 LIST_MARKET_URL = f"{BASE_URL}/markets"
 LIST_EVENT_URL = f"{BASE_URL}/events"
@@ -17,8 +19,15 @@ GET_EVENT_BY_ID_URL = f"{BASE_URL}/events/{{event_id}}"
 
 CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 HTTP_TIMEOUT = 10  # 秒
-MAX_RETRIES = 4  # Maximum retry attempts
-RETRY_DELAYS = [2, 4, 8, 16]  # Exponential backoff delays in seconds
+
+# Load retry configuration from environment variables
+env_config = load_env_config()
+MAX_RETRIES = env_config.MAX_RETRIES
+RETRY_DELAY_SECONDS = env_config.RETRY_DELAY_SECONDS
+RETRY_BACKOFF = env_config.RETRY_BACKOFF
+
+# Generate exponential backoff delays based on env config
+RETRY_DELAYS = [RETRY_DELAY_SECONDS * (RETRY_BACKOFF ** i) for i in range(MAX_RETRIES)]
 
 # SSL 配置 - 使用 certifi 提供的 CA 证书
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
