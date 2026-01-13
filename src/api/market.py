@@ -19,6 +19,7 @@ from .models import (
     MarketResponse,
     MarketTokenOrderbook,
 )
+from ..utils.signal_id_generator import generate_signal_id as gen_signal_id
 
 logger = logging.getLogger(__name__)
 
@@ -41,46 +42,6 @@ def format_strike(strike: float) -> str:
         return f"{int(k_value)}k"
     else:
         return f"{k_value:.1f}k"
-
-
-def generate_signal_id(time_str: str, asset: str, strike: float, market_id: str) -> str:
-    """
-    生成唯一的 signal_id
-
-    格式: SNAP_{YYYYMMDD}_{HHMMSS}_{asset}_{strike}_{hash}
-
-    Args:
-        time_str: 时间字符串（CSV 中的 time 字段）
-        asset: BTC 或 ETH
-        strike: 行权价
-        market_id: 市场 ID（用于生成哈希）
-
-    Returns:
-        signal_id, 例如: SNAP_20251221_120010_BTC_100k_a3f9
-    """
-    # 解析时间
-    try:
-        dt = pd.to_datetime(time_str)
-        # 检查是否为 NaT (Not a Time)
-        if pd.isna(dt):
-            dt = datetime.now(timezone.utc)
-        elif dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-    except Exception:
-        dt = datetime.now(timezone.utc)
-
-    # 格式化日期和时间
-    date_part = dt.strftime("%Y%m%d")
-    time_part = dt.strftime("%H%M%S")
-
-    # 格式化行权价
-    strike_part = format_strike(strike)
-
-    # 生成4位哈希（基于完整时间戳 + market_id）
-    hash_input = f"{time_str}_{market_id}".encode('utf-8')
-    hash_hex = hashlib.md5(hash_input).hexdigest()[:4]
-
-    return f"SNAP_{date_part}_{time_part}_{asset}_{strike_part}_{hash_hex}"
 
 
 def safe_float(value, default: float = 0.0) -> float:
@@ -247,24 +208,30 @@ def transform_row_to_market_response(row: pd.Series) -> MarketResponse:
     # 从 market_id 提取 asset 和 strike
     asset, strike = extract_asset_and_strike_from_market_id(market_id)
 
-    # RawData 使用 snapshot_id (YYYYMMDD_HHMMSS) 或 utc (unix timestamp)
-    time_str = str(row.get('snapshot_id', ''))
-    if not time_str:
-        # 尝试从 utc 字段生成时间字符串
-        utc_val = row.get('utc')
-        if utc_val and not pd.isna(utc_val):
-            try:
-                dt = datetime.fromtimestamp(float(utc_val), tz=timezone.utc)
-                time_str = dt.strftime("%Y%m%d_%H%M%S")
-            except (ValueError, OSError):
-                time_str = ''
+    # 解析时间戳用于 signal_id 生成
+    timestamp = None
+    utc_val = row.get('utc')
+    if utc_val and not pd.isna(utc_val):
+        try:
+            timestamp = datetime.fromtimestamp(float(utc_val), tz=timezone.utc)
+        except (ValueError, OSError):
+            pass
 
-    # 生成 signal_id
-    signal_id = generate_signal_id(
-        time_str=time_str,
-        asset=asset,
-        strike=strike,
-        market_id=market_id
+    if timestamp is None:
+        # 尝试从 snapshot_id 解析
+        snapshot_id = str(row.get('snapshot_id', ''))
+        if snapshot_id:
+            try:
+                timestamp = datetime.strptime(snapshot_id, "%Y%m%d_%H%M%S")
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+
+    # 生成 signal_id (带 SNAP 前缀用于市场快照)
+    signal_id = gen_signal_id(
+        market_id=market_id,
+        timestamp=timestamp,
+        prefix="SNAP"
     )
 
     # 解析时间 - 使用 utc 字段（Unix 时间戳）

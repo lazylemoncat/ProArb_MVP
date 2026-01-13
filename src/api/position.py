@@ -86,7 +86,8 @@ POSITIONS_DTYPE_SPEC = {
     "no_token_id": str,
     "event_id": str,
     "market_id": str,
-    "trade_id": str
+    "trade_id": str,
+    "signal_id": str
 }
 
 def transform_position_row(row: dict) -> dict:
@@ -105,7 +106,7 @@ def transform_position_row(row: dict) -> dict:
 
     return {
         # A. 基础索引
-        "signal_id": row.get("trade_id", ""),
+        "signal_id": row.get("signal_id", ""),
         "order_id": row.get("trade_id", ""),  # 使用 trade_id 作为 order_id
         "timestamp": str(row.get("entry_timestamp", "")),
         "market_id": str(row.get("market_id", "")),

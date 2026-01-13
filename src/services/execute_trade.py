@@ -31,7 +31,8 @@ async def execute_trade(
     positions_csv: str,
     # 新增参数
     gross_ev: float,
-    roi_pct: float
+    roi_pct: float,
+    signal_id: str
 ):
     # 参数验证
     if not trade_signal:
@@ -154,6 +155,7 @@ async def execute_trade(
         pm_ctx=poly_ctx,
         db_ctx=deribit_ctx,
         trade_id=str(pm_order_id),
+        signal_id=signal_id,
         direction="no",
         status="open",
         strategy=strategy_choosed,
