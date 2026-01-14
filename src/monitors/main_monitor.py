@@ -40,6 +40,7 @@ from ..utils.dataloader import Config, Env_config, Trading_config
 from ..utils.save_result2 import save_result
 from ..utils.save_raw_data import save_raw_data
 from ..utils.save_ev import save_ev
+from ..utils.signal_id_generator import generate_signal_id
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +352,7 @@ async def investment_runner(
                 save_result(pm_ctx, deribit_ctx, output_path)
 
                 # 保存 EV 数据到 ev.csv
-                signal_id = f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{pm_ctx.market_id}"
+                signal_id = generate_signal_id(market_id=pm_ctx.market_id)
                 pm_shares = inv_base_usd / pm_price if pm_price > 0 else 0
                 dr_k1_price = deribit_ctx.k1_ask_usd if strategy == 2 else deribit_ctx.k1_bid_usd
                 dr_k2_price = deribit_ctx.k2_bid_usd if strategy == 2 else deribit_ctx.k2_ask_usd
@@ -391,7 +392,8 @@ async def investment_runner(
                     net_ev=net_ev,
                     positions_csv=positions_csv,
                     gross_ev=gross_ev,
-                    roi_pct=result.roi_pct
+                    roi_pct=result.roi_pct,
+                    signal_id=signal_id
                 )
 
         except Exception as e:
@@ -484,6 +486,11 @@ async def main_monitor(
                 expiry_timestamp=instruments_map[pm_context.market_title].get("k1_expiration_timestamp"),
                 day_offset=config.thresholds.day_off
             )
+
+            # 如果无法找到精确匹配的合约，跳过该市场
+            if db_context is None:
+                logger.info(f"跳过市场 {pm_context.market_title}: 无精确匹配的k1/k2合约")
+                continue
 
             # 对投入资金列表进行判断
             inv_bases = config.thresholds.INVESTMENTS

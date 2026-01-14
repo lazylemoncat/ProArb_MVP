@@ -15,6 +15,7 @@ class SavePosition:
     dry_run: bool
 
     trade_id: str
+    signal_id: str
     direction: str
     status: str
     strategy: int
@@ -142,6 +143,7 @@ def save_position(
         pm_ctx: PolymarketContext,
         db_ctx: DeribitMarketContext,
         trade_id: str,
+        signal_id: str,
         direction: str,
         status: str,
         strategy: int,
@@ -176,6 +178,7 @@ def save_position(
         entry_timestamp=pm_ctx.time,
         dry_run=dry_run,
         trade_id=trade_id,
+        signal_id=signal_id,
         direction=direction,
         status=status,
         strategy=strategy,

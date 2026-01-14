@@ -224,12 +224,14 @@ class DeribitClient:
                 call=True,
                 currency=asset,
                 day_offset=day_offset,
+                exact_match=True,
             )
             inst_k2, k2_exp = DeribitClient.find_option_instrument(
                 k2_strike,
                 call=True,
                 currency=asset,
                 day_offset=day_offset,
+                exact_match=True,
             )
             k1_info = next((d for d in deribit_list if d.instrument_name == inst_k1), None)
             k2_info = next((d for d in deribit_list if d.instrument_name == inst_k2), None)
@@ -287,14 +289,16 @@ class DeribitClient:
             inst_k1, k1_exp = DeribitClient.find_option_instrument(
                 k1_strike,
                 call=True,
-                currency="BTC",
-                exp_timestamp=expiry_timestamp
+                currency=asset,
+                exp_timestamp=expiry_timestamp,
+                exact_match=True,
             )
             inst_k2, k2_exp = DeribitClient.find_option_instrument(
                 k2_strike,
                 call=True,
-                currency="BTC",
-                exp_timestamp=expiry_timestamp
+                currency=asset,
+                exp_timestamp=expiry_timestamp,
+                exact_match=True,
             )
 
             # 天化到期时间 T
@@ -364,11 +368,16 @@ class DeribitClient:
                 k2_bid_2_usd=k2_bids[1] if len(k2_bids) >= 2 else [],
                 k2_bid_3_usd=k2_bids[2] if len(k2_bids) >= 3 else [],
             )
-        except EmptyDeribitOptionException:
-            pass
+        except EmptyDeribitOptionException as e:
+            logger.info(f"跳过市场 {title}: {e.message}")
+            return None
+        except ValueError as e:
+            # 精确匹配失败（k1/k2行权价不存在）
+            logger.info(f"跳过市场 {title}: 无精确匹配的合约 - {e}")
+            return None
         except Exception as e:
-            logger.warning(e, exc_info=True)
-            raise e
+            logger.warning(f"获取Deribit数据时出错 {title}: {e}", exc_info=True)
+            return None
 
     @staticmethod
     def get_deribit_option_data(
@@ -419,13 +428,15 @@ class DeribitClient:
         call: bool = True,
         day_offset: int = 0,
         exp_timestamp: float | None = None,
+        exact_match: bool = False,
     ):
         return DeribitAPI.find_option_instrument(
-            strike=strike, 
-            currency=currency, 
-            call=call, 
-            day_offset=day_offset, 
-            exp_timestamp=exp_timestamp
+            strike=strike,
+            currency=currency,
+            call=call,
+            day_offset=day_offset,
+            exp_timestamp=exp_timestamp,
+            exact_match=exact_match
         )
     
     @staticmethod

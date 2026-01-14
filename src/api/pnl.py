@@ -106,7 +106,8 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     Returns:
         PnlPositionDetail
     """
-    signal_id = str(row.get("trade_id", ""))
+    signal_id = str(row.get("signal_id", ""))
+    trade_id = str(row.get("trade_id", ""))
     timestamp = str(row.get("entry_timestamp", ""))
     market_title = str(row.get("market_title", ""))
     market_id = str(row.get("market_id", ""))
