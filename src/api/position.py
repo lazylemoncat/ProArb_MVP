@@ -90,6 +90,23 @@ POSITIONS_DTYPE_SPEC = {
     "signal_id": str
 }
 
+# 定义字符串字段的默认填充值（用于新增列）
+POSITIONS_FILL_VALUES = {
+    'signal_id': '',
+    'trade_id': '',
+    'event_id': '',
+    'market_id': '',
+    'yes_token_id': '',
+    'no_token_id': '',
+    'asset': '',
+    'inst_k1': '',
+    'inst_k2': '',
+    'event_title': '',
+    'market_title': '',
+    'direction': '',
+    'status': '',
+}
+
 def transform_position_row(row: dict) -> dict:
     """将 CSV 平铺数据转换为嵌套的 PositionResponse 格式"""
     # 解析 tuple 字符串
@@ -177,16 +194,7 @@ def get_position(
         仓位数据列表
     """
     # 检查并确保 CSV 文件包含所有必需的列
-    # 为不同类型的字段提供合适的默认值
-    fill_values = {
-        'signal_id': '',  # 字符串字段用空字符串
-        'trade_id': '',
-        'event_id': '',
-        'market_id': '',
-        'yes_token_id': '',
-        'no_token_id': '',
-    }
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=fill_values, dtype=POSITIONS_DTYPE_SPEC)
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=POSITIONS_FILL_VALUES, dtype=POSITIONS_DTYPE_SPEC)
 
     pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
 
@@ -233,16 +241,7 @@ def get_closed_positions(
         已关闭仓位数据列表
     """
     # 检查并确保 CSV 文件包含所有必需的列
-    # 为不同类型的字段提供合适的默认值
-    fill_values = {
-        'signal_id': '',  # 字符串字段用空字符串
-        'trade_id': '',
-        'event_id': '',
-        'market_id': '',
-        'yes_token_id': '',
-        'no_token_id': '',
-    }
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=fill_values, dtype=POSITIONS_DTYPE_SPEC)
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=POSITIONS_FILL_VALUES, dtype=POSITIONS_DTYPE_SPEC)
 
     pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
 
