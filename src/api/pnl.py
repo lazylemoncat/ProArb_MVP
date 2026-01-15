@@ -25,6 +25,7 @@ from .models import (
 from .position import (
     POSITIONS_DTYPE_SPEC,
     POSITIONS_EXPECTED_COLUMNS,
+    POSITIONS_FILL_VALUES,
     filter_positions_by_time,
 )
 from ..fetch_data.deribit.deribit_api import DeribitAPI
@@ -375,9 +376,13 @@ def get_pnl_summary(
         PnL 汇总数据
     """
     # 确保 CSV 文件包含所有必需列
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=0.0, dtype=POSITIONS_DTYPE_SPEC)
+    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=POSITIONS_FILL_VALUES, dtype=POSITIONS_DTYPE_SPEC)
 
     pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
+
+    # 确保 signal_id 列是字符串类型，将 NaN 替换为空字符串
+    if 'signal_id' in pos_df.columns:
+        pos_df['signal_id'] = pos_df['signal_id'].fillna('').astype(str)
 
     now_str = datetime.now(timezone.utc).isoformat()
 
