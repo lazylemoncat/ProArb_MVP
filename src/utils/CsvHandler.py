@@ -56,7 +56,11 @@ class CsvHandler:
 
                 # 为缺失的列添加默认值
                 for col in missing_columns:
-                    df[col] = fill_value
+                    # 如果 fill_value 是字典，则使用对应的值；否则使用统一的值
+                    if isinstance(fill_value, dict):
+                        df[col] = fill_value.get(col, "")
+                    else:
+                        df[col] = fill_value
 
                 # 重新排列列顺序：保留所有现有列 + 新增列
                 # 优先按 expected_columns 顺序，然后是额外的现有列
