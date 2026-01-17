@@ -1,6 +1,6 @@
 from typing import Literal
 
-from .loadAllConfig.load_all_configs import Env_config
+from .config_loader.load_all_configs import Env_config
 from ..telegram.TG_bot import TG_bot
 
 def get_bot(name: Literal["alert", "trading"], env_config: Env_config):

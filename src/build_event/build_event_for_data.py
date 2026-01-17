@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from ..fetch_data.polymarket.polymarket_client import PolymarketClient
 
-from ..utils.loadAllConfig import Config
+from ..utils.config_loader import Config
 
 @dataclass
 class BuildedPmEvent:
