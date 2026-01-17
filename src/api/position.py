@@ -16,17 +16,20 @@ logger = logging.getLogger(__name__)
 position_router = APIRouter(tags=["position"])
 
 
-def safe_float(value, default=0.0):
+def safe_float(value, default=None):
     """
     安全地将值转换为浮点数，处理 NaN 和 None
 
     Args:
         value: 要转换的值
-        default: 当值为 NaN/None/空时返回的默认值
+        default: 当值为 NaN/None/空时返回的默认值（默认为 None）
 
     Returns:
-        浮点数或默认值
+        浮点数或默认值（None 表示缺失值）
     """
+    # 处理空字符串和 None
+    if value in [None, "", "nan", "NaN"]:
+        return default
     try:
         result = float(value)
         # 检查是否为 NaN
@@ -165,41 +168,41 @@ def transform_position_row(row: dict) -> dict:
         # B. 交易核心
         "status": str(row.get("status", "OPEN")).upper(),
         "action": "sell" if str(row.get("direction")).lower() == "no" else "buy",
-        "amount_usd": safe_float(row.get("pm_entry_cost", 0)),
-        "days_to_expiry": safe_float(row.get("days_to_expairy", 0)),
+        "amount_usd": safe_float(row.get("pm_entry_cost")),
+        "days_to_expiry": safe_float(row.get("days_to_expairy")),
 
         # C. PM 数据
         "pm_data": {
-            "shares": safe_float(row.get("pm_shares", 0)),
-            "yes_avg_price_t0": safe_float(row.get("yes_price", 0)),
-            "no_avg_price_t0": safe_float(row.get("no_price", 0)),
-            "slippage_usd": safe_float(row.get("pm_slippage_usd", 0)),
-            "yes_price": safe_float(row.get("yes_price", 0)),  # 当前快照，暂时用相同值
-            "no_price": safe_float(row.get("no_price", 0)),
+            "shares": safe_float(row.get("pm_shares")),
+            "yes_avg_price_t0": safe_float(row.get("yes_price")),
+            "no_avg_price_t0": safe_float(row.get("no_price")),
+            "slippage_usd": safe_float(row.get("pm_slippage_usd")),
+            "yes_price": safe_float(row.get("yes_price")),  # 当前快照，暂时用相同值
+            "no_price": safe_float(row.get("no_price")),
         },
 
         # D. DR 数据
         "dr_data": {
-            "index_price_t0": safe_float(row.get("spot", 0)),
-            "contracts": safe_float(row.get("contracts", 0)),
-            "fee_usd": safe_float(row.get("dr_entry_cost", 0)),
+            "index_price_t0": safe_float(row.get("spot")),
+            "contracts": safe_float(row.get("contracts")),
+            "fee_usd": safe_float(row.get("dr_entry_cost")),
             "k1": {
                 "instrument": str(row.get("inst_k1", "")),
-                "price_t0": safe_float(row.get("dr_k1_price", 0)),
-                "iv": safe_float(row.get("k1_iv", 0)),
+                "price_t0": safe_float(row.get("dr_k1_price")),
+                "iv": safe_float(row.get("k1_iv")),
                 "settlement_price": safe_settlement_price(row.get("k1_settlement_price")),
             },
             "k2": {
                 "instrument": str(row.get("inst_k2", "")),
-                "price_t0": safe_float(row.get("dr_k2_price", 0)),
-                "iv": safe_float(row.get("k2_iv", 0)),
+                "price_t0": safe_float(row.get("dr_k2_price")),
+                "iv": safe_float(row.get("k2_iv")),
                 "settlement_price": safe_settlement_price(row.get("k2_settlement_price")),
             },
             "risk": {
-                "iv_t0": safe_float(row.get("mark_iv", 0)),
-                "prob_t0": safe_float(row.get("deribit_prob", 0)),
-                "iv_floor": safe_float(spot_iv_lower[1]) if len(spot_iv_lower) > 1 else 0,
-                "iv_ceiling": safe_float(spot_iv_upper[1]) if len(spot_iv_upper) > 1 else 0,
+                "iv_t0": safe_float(row.get("mark_iv")),
+                "prob_t0": safe_float(row.get("deribit_prob")),
+                "iv_floor": safe_float(spot_iv_lower[1]) if len(spot_iv_lower) > 1 else None,
+                "iv_ceiling": safe_float(spot_iv_upper[1]) if len(spot_iv_upper) > 1 else None,
             }
         }
     }

@@ -14,7 +14,7 @@ ev_router = APIRouter(tags=["ev"])
 
 def clean_nan_values(data: dict) -> dict:
     """
-    清理字典中的 NaN 值，将其替换为 None 或 0
+    清理字典中的 NaN 值，将其替换为 None
 
     Args:
         data: 包含可能 NaN 值的字典
@@ -25,8 +25,8 @@ def clean_nan_values(data: dict) -> dict:
     cleaned = {}
     for key, value in data.items():
         if isinstance(value, float) and math.isnan(value):
-            # 对于数值字段，NaN 替换为 0
-            cleaned[key] = 0.0
+            # 对于数值字段，NaN 替换为 None（JSON 中的 null）
+            cleaned[key] = None
         else:
             cleaned[key] = value
     return cleaned
