@@ -152,12 +152,23 @@ ProArb_MVP/
 
 **Key Function**: `cal_strategy_result()` at line 346
 
+**StrategyOutput Fields**:
+- `gross_ev`: Unadjusted gross EV (before theta adjustment)
+- `adjusted_gross_ev`: Theta-adjusted gross EV (after settlement time correction)
+- `contract_amount`: Number of BTC contracts for Deribit vertical spread
+- `roi_pct`: Return on investment percentage
+- `im_value_usd`: Initial margin required on Deribit (calculated via PME)
+
 **Formula Overview**:
 ```
-Gross EV = PM_Expected_EV + Deribit_Expected_EV + Settlement_Adjustment
-Net EV = Gross EV - Fees - Slippage
+Unadjusted Gross EV = PM_Expected_EV + Deribit_Expected_EV
+Settlement Adjustment = Theta correction for 8-9 hour time difference
+Adjusted Gross EV = Unadjusted Gross EV + Settlement_Adjustment
+Net EV = Adjusted Gross EV - Fees - Slippage
 ROI% = Net_EV / (PM_Investment + Deribit_Margin) * 100
 ```
+
+**Important**: The strategy now returns both `gross_ev` (unadjusted) and `adjusted_gross_ev` (theta-adjusted). Use `adjusted_gross_ev` for net EV calculations and decision-making, while `gross_ev` shows the raw expected value before settlement time corrections.
 
 ### 3. Signal Filtering System (`src/filters/`)
 
@@ -238,7 +249,7 @@ Validates whether to **execute trades**. Checks:
 
 **Key Endpoints**:
 - `GET /api/health` - Health check (used by Docker healthcheck)
-- `GET /api/ev` - Get current EV calculations for all monitored markets
+- `GET /api/no/ev` - Get current EV calculations for all monitored markets (includes k1/k2 bid/ask prices, accurate slippage, and separated gross/theta-adjusted EV)
 - `GET /api/pm` - Polymarket market data (orderbook snapshots)
 - `GET /api/db` - Deribit market data (option prices, IV)
 - `POST /trade/sim` - Simulate trade (dry-run, no execution)
@@ -252,7 +263,22 @@ Validates whether to **execute trades**. Checks:
 
 **Managed by**: supervisord (runs alongside main monitor in same container)
 
+**EV Endpoint Response (`/api/no/ev`)**:
+Returns detailed EV calculation data with the following key fields:
+- `k1_ask`, `k1_bid`: K1 strike bid/ask prices in BTC
+- `k2_ask`, `k2_bid`: K2 strike bid/ask prices in BTC
+- `pm_slippage_usd`: Actual slippage cost (calculated as `actual_cost - target_cost`)
+- `pm_shares`: Actual shares received from PM trade (accounting for slippage)
+- `target_usd`: Target investment amount (what you intended to spend)
+- `ev_gross_usd`: Unadjusted gross expected value (before theta adjustment)
+- `ev_theta_adj_usd`: Theta-adjusted expected value (accounts for 8-9 hour settlement time difference)
+- `ev_model_usd`: Final net EV after fees and slippage
+
 **Recent Changes**:
+- EV endpoint renamed from `/api/ev` to `/api/no/ev` (commit 4226f46)
+- Added k1/k2 bid/ask prices in BTC to EV response (commit 4226f46)
+- Fixed slippage calculation to use actual cost difference (commit 4226f46)
+- Separated ev_gross_usd and ev_theta_adj_usd to show settlement adjustment (commit 4226f46)
 - Position API restructured to nested format (PR #50)
 - Added `/api/close` endpoint for filtered closed positions (commit 8fb151b)
 
@@ -920,13 +946,26 @@ When making changes:
 
 ---
 
-**Last Updated**: 2026-01-02
+**Last Updated**: 2026-01-17
 **Maintainer**: lazylemoncat
 **Repository**: lazylemoncat/ProArb_MVP
 
 ---
 
 ## Recent Changes & Changelog
+
+### 2026-01-17
+- **Fix**: Enhanced EV endpoint with accurate slippage calculation and separated theta adjustment (commit 4226f46)
+  - **Breaking Change**: Renamed endpoint from `/api/ev` to `/api/no/ev`
+  - Fixed `pm_slippage_usd` calculation: Now uses actual cost difference (`actual_cost - target`) instead of incorrect percentage multiplication
+  - Added k1/k2 bid/ask price fields (in BTC): `k1_ask`, `k1_bid`, `k2_ask`, `k2_bid`
+  - Separated `ev_gross_usd` (unadjusted) and `ev_theta_adj_usd` (theta-adjusted) to clearly show settlement time correction
+  - Fixed `target_usd` (renamed from `amount_usd`) to record actual transaction cost instead of target amount
+  - Fixed `pm_shares` to use actual shares from slippage calculation instead of simple division
+  - Removed `delta` and `theta` fields from position response models (`DRK1Data`, `DRK2Data`)
+  - Split settlement prices: `k1_settlement_price` and `k2_settlement_price` now tracked separately
+  - Updated `StrategyOutput` dataclass to return both `gross_ev` and `adjusted_gross_ev`
+  - All slippage, fee, and EV calculations now use theta-adjusted values for decision-making
 
 ### 2026-01-02
 - **Documentation**: Updated CLAUDE.md with accurate repository structure
