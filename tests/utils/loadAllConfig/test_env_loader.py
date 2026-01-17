@@ -15,7 +15,6 @@ def test_parse_env_config():
         "TELEGRAM_BOT_TOKEN_ALERT": "a",
         "TELEGRAM_BOT_TOKEN_TRADING": "b",
         "TELEGRAM_CHAT_ID": "1",
-        "TELEGRAM_TOKEN": "t",
         "MAX_RETRIES": "3",
         "RETRY_DELAY_SECONDS": "5",
         "RETRY_BACKOFF": "2",
