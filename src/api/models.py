@@ -35,33 +35,33 @@ class EVResponse(BaseModel):
     market_title: str
     strategy: Literal[1, 2]
     direction: Literal["YES", "NO"]
-    target_usd: float # 下单金额
-    k_poly: float # pm 目标价格
-    dr_k1_strike: int # K1
-    dr_k2_strike: int # K2
-    dr_index_price: float # 现货价
-    days_to_expiry: float # 入场剩余到期天数
-    pm_yes_avg_price: float # PM yes 平均价格
-    pm_no_avg_price: float # PM no 平均价格
-    pm_shares: float # PM 份数
-    pm_slippage_usd: float # 滑点金额
-    dr_contracts: float # 实际合约数量
-    dr_k1_price: float # 根据方向决定是 ask 还是 bid
-    dr_k2_price: float # 根据方向决定是 ask 还是 bid
-    k1_ask: float # K1 ask 价格 (BTC)
-    k1_bid: float # K1 bid 价格 (BTC)
-    k2_ask: float # K2 ask 价格 (BTC)
-    k2_bid: float # K2 bid 价格 (BTC)
-    dr_iv: float # 模型使用的波动率
-    dr_k1_iv: float
-    dr_k2_iv: float
-    dr_iv_floor: float # 与现货最接近的合约的 floor 的 iv
-    dr_iv_celling: float
-    dr_prob: float # Deribit 隐含概率(T0)
-    ev_gross_usd: float # 毛 EV
-    ev_theta_adj_usd: float # 修正后的毛利
-    ev_model_usd: float # 最终净利润
-    roi_model_pct: float # 模型 ROI(%)
+    target_usd: float | None = None # 下单金额
+    k_poly: float | None = None # pm 目标价格
+    dr_k1_strike: int | None = None # K1
+    dr_k2_strike: int | None = None # K2
+    dr_index_price: float | None = None # 现货价
+    days_to_expiry: float | None = None # 入场剩余到期天数
+    pm_yes_avg_price: float | None = None # PM yes 平均价格
+    pm_no_avg_price: float | None = None # PM no 平均价格
+    pm_shares: float | None = None # PM 份数
+    pm_slippage_usd: float | None = None # 滑点金额
+    dr_contracts: float | None = None # 实际合约数量
+    dr_k1_price: float | None = None # 根据方向决定是 ask 还是 bid
+    dr_k2_price: float | None = None # 根据方向决定是 ask 还是 bid
+    k1_ask: float | None = None # K1 ask 价格 (BTC)
+    k1_bid: float | None = None # K1 bid 价格 (BTC)
+    k2_ask: float | None = None # K2 ask 价格 (BTC)
+    k2_bid: float | None = None # K2 bid 价格 (BTC)
+    dr_iv: float | None = None # 模型使用的波动率
+    dr_k1_iv: float | None = None
+    dr_k2_iv: float | None = None
+    dr_iv_floor: float | None = None # 与现货最接近的合约的 floor 的 iv
+    dr_iv_celling: float | None = None
+    dr_prob: float | None = None # Deribit 隐含概率(T0)
+    ev_gross_usd: float | None = None # 毛 EV
+    ev_theta_adj_usd: float | None = None # 修正后的毛利
+    ev_model_usd: float | None = None # 最终净利润
+    roi_model_pct: float | None = None # 模型 ROI(%)
 
 class SimTradeRequest(BaseModel):
     market_title: str
@@ -89,40 +89,40 @@ class ExecuteResponse(BaseModel):
 
 class PMData(BaseModel):
     """Polymarket 数据"""
-    shares: float                   # pm_shares
-    yes_avg_price_t0: float         # pm_yes_avg_price_t0 (成交均价)
-    no_avg_price_t0: float          # pm_no_avg_price_t0
-    slippage_usd: float             # pm_slippage_usd
+    shares: float | None = None                   # pm_shares
+    yes_avg_price_t0: float | None = None         # pm_yes_avg_price_t0 (成交均价)
+    no_avg_price_t0: float | None = None          # pm_no_avg_price_t0
+    slippage_usd: float | None = None             # pm_slippage_usd
     # 市场当前快照
-    yes_price: float                # pm_yes_price (当前盘口)
-    no_price: float                 # pm_no_price
+    yes_price: float | None = None                # pm_yes_price (当前盘口)
+    no_price: float | None = None                 # pm_no_price
 
 class DRK1Data(BaseModel):
     """Deribit K1 数据"""
     instrument: str                 # dr_k1_instruments
-    price_t0: float                 # dr_k1_price_t0 (成交价)
-    iv: float                       # dr_k1_iv
+    price_t0: float | None = None                 # dr_k1_price_t0 (成交价)
+    iv: float | None = None                       # dr_k1_iv
     settlement_price: float | None = None  # dr_k1_settlement_price
 
 class DRK2Data(BaseModel):
     """Deribit K2 数据"""
     instrument: str                 # dr_k2_instruments
-    price_t0: float                 # dr_k2_price_t0
-    iv: float                       # dr_k2_iv
+    price_t0: float | None = None                 # dr_k2_price_t0
+    iv: float | None = None                       # dr_k2_iv
     settlement_price: float | None = None  # dr_k2_settlement_price
 
 class DRRiskData(BaseModel):
     """Deribit 风险指标"""
-    iv_t0: float                    # dr_iv_t0 (组合IV)
-    prob_t0: float                  # dr_prob_t0 (胜率)
-    iv_floor: float                 # dr_iv_floor
-    iv_ceiling: float               # dr_iv_ceiling
+    iv_t0: float | None = None                    # dr_iv_t0 (组合IV)
+    prob_t0: float | None = None                  # dr_prob_t0 (胜率)
+    iv_floor: float | None = None                 # dr_iv_floor
+    iv_ceiling: float | None = None               # dr_iv_ceiling
 
 class DRData(BaseModel):
     """Deribit 数据"""
-    index_price_t0: float           # dr_index_price_t0
-    contracts: float                # dr_contracts (总张数)
-    fee_usd: float                  # dr_fee_usd
+    index_price_t0: float | None = None           # dr_index_price_t0
+    contracts: float | None = None                # dr_contracts (总张数)
+    fee_usd: float | None = None                  # dr_fee_usd
     k1: DRK1Data                    # K1 详情
     k2: DRK2Data                    # K2 详情
     risk: DRRiskData                # 风险指标
@@ -136,8 +136,8 @@ class PositionResponse(BaseModel):
     # B. 交易核心 (Action)
     status: Literal["OPEN", "CLOSE"] # 状态
     action: Literal["buy", "sell"]
-    amount_usd: float               # 投入金额
-    days_to_expiry: float           # 离到期还有几天
+    amount_usd: float | None = None               # 投入金额
+    days_to_expiry: float | None = None           # 离到期还有几天
     # C. PM 数据
     pm_data: PMData
     # D. DR 数据
