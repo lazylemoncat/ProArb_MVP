@@ -26,7 +26,6 @@ class Env_config:
     TELEGRAM_BOT_TOKEN_ALERT: str
     TELEGRAM_BOT_TOKEN_TRADING: str
     TELEGRAM_CHAT_ID: str
-    TELEGRAM_TOKEN: str
 
     MAX_RETRIES: int
     RETRY_DELAY_SECONDS: int
@@ -52,7 +51,6 @@ def parse_env_config(env: Mapping[str, str]) -> Env_config:
         TELEGRAM_BOT_TOKEN_ALERT=str(get_value_from_dict(env, "TELEGRAM_BOT_TOKEN_ALERT")),
         TELEGRAM_BOT_TOKEN_TRADING=str(get_value_from_dict(env, "TELEGRAM_BOT_TOKEN_TRADING")),
         TELEGRAM_CHAT_ID=str(get_value_from_dict(env, "TELEGRAM_CHAT_ID")),
-        TELEGRAM_TOKEN=str(get_value_from_dict(env, "TELEGRAM_TOKEN")),
 
         MAX_RETRIES=int(get_value_from_dict(env, "MAX_RETRIES")),
         RETRY_DELAY_SECONDS=int(get_value_from_dict(env, "RETRY_DELAY_SECONDS")),
