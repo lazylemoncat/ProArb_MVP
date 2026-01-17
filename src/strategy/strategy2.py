@@ -25,7 +25,8 @@ class Strategy_input:
 
 @dataclass
 class StrategyOutput:
-    gross_ev: float
+    gross_ev: float  # Unadjusted gross EV (before theta adjustment)
+    adjusted_gross_ev: float  # Theta-adjusted gross EV (after settlement adjustment)
     contract_amount: float
     roi_pct: float
     im_value_usd: float
@@ -419,8 +420,9 @@ def cal_strategy_result(strategy_input: Strategy_input) -> StrategyOutput:
         im_value_usd = float(pme_margin_result["c_dr_usd"])
         roi_pct = adjusted_gross_ev / (strategy_input.inv_usd + im_value_usd) * 100
         strategyOutput = StrategyOutput(
-            gross_ev=adjusted_gross_ev, 
-            contract_amount=contract_amount, 
+            gross_ev=gross_ev,  # Unadjusted gross EV
+            adjusted_gross_ev=adjusted_gross_ev,  # Theta-adjusted gross EV
+            contract_amount=contract_amount,
             roi_pct=round(roi_pct, 2),
             k1_ask_usd=k1_ask_usd,
             k1_bid_usd=k1_bid_usd,
