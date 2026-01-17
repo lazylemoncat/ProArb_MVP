@@ -36,7 +36,7 @@ from ..filters.filters import (
 from ..services.execute_trade import execute_trade
 from ..strategy.strategy2 import Strategy_input, cal_strategy_result
 from ..telegram.TG_bot import TG_bot
-from ..utils.dataloader import Config, Env_config, Trading_config
+from ..utils.loadAllConfig import Config, Env_config, Trading_config
 from ..utils.save_result2 import save_result
 from ..utils.save_raw_data import save_raw_data
 from ..utils.save_ev import save_ev

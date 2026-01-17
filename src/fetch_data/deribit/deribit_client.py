@@ -10,7 +10,7 @@ import websockets
 from websockets.exceptions import WebSocketException
 
 from .deribit_api import DeribitAPI, DeribitUserCfg
-from src.utils.dataloader.env_loader import load_env_config
+from src.utils.loadAllConfig.env_loader import load_env_config
 
 logger = logging.getLogger(__name__)
 

@@ -30,7 +30,7 @@ from .monitors import (
     data_monitor,
 )
 from .telegram.TG_bot import TG_bot
-from .utils.dataloader import load_all_configs
+from .utils.loadAllConfig import load_all_configs
 
 # ==================== Logging Setup ====================
 

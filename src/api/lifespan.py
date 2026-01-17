@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport
 
 from ..telegram.TG_bot import TG_bot
-from ..utils.dataloader import load_all_configs
+from ..utils.loadAllConfig import load_all_configs
 
 async def hourly_health_job(app: FastAPI) -> None:
     """

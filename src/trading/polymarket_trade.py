@@ -4,7 +4,7 @@ from typing import Any, Dict, Literal, Optional
 from py_clob_client.client import ClobClient, PolyException
 from py_clob_client.clob_types import OrderArgs, OrderType, TradeParams
 
-from ..utils.dataloader import Env_config, load_all_configs
+from ..utils.loadAllConfig import Env_config, load_all_configs
 
 _ENV_CONFIG: Env_config | None = None
 
