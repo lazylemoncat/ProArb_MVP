@@ -125,9 +125,9 @@ async def execute_trade(
     pm_order_id = ""
     if not dry_run:
         deribit_cfg = DeribitUserCfg(
-            user_id=env_config.deribit_user_id,
-            client_id=env_config.deribit_client_id,
-            client_secret=str(env_config.deribit_client_secret),
+            user_id=env_config.DERIBIT_USER_ID,
+            client_id=env_config.DERIBIT_CLIENT_ID,
+            client_secret=str(env_config.DERIBIT_CLIENT_SECRET),
         )
         try:
             logger.info(f"limit_price: {limit_price}")

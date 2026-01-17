@@ -30,7 +30,7 @@ class Polymarket_trade:
         env_config = _get_env_config()
 
         cfg = PolymarketClientCfg(
-            private_key=str(env_config.polymarket_secret),
+            private_key=str(env_config.POLYMARKET_SECRET),
             proxy_address=str(env_config.POLYMARKET_PROXY_ADDRESS),
         )
 

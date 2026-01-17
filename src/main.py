@@ -98,9 +98,9 @@ async def main():
 
     # Deribit 用户配置
     deribitUserCfg = DeribitUserCfg(
-        user_id=env.deribit_user_id,
-        client_id=env.deribit_client_id,
-        client_secret=env.deribit_client_secret
+        user_id=env.DERIBIT_USER_ID,
+        client_id=env.DERIBIT_CLIENT_ID,
+        client_secret=env.DERIBIT_CLIENT_SECRET
     )
 
     # 记录信号过滤器

@@ -16,9 +16,9 @@ client = ClobClient(host, key=key, chain_id=chain_id, signature_type=2, funder=P
 
 client.set_api_creds(client.create_or_derive_api_creds()) 
 
-trades = client.get_trades(TradeParams(asset_id="88131829552274957112139728426016493105408110485466156054905686742341012893447"))
-# trades = client.get_trades()
-print(trades)
+# trades = client.get_trades(TradePaget_tradesrams(asset_id="88131829552274957112139728426016493105408110485466156054905686742341012893447"))
+trades = client.get_trades()
+print(trades[0])
 # trade_size = trades[0]["size"]
 # token_id = trades[0]["asset_id"]
 # sell_order = client.create_and_post_order(

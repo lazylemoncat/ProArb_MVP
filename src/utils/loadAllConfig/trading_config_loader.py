@@ -15,13 +15,13 @@ class MissingConfigKeyException(Exception):
         self.message = f"Configuration key '{key}' is missing."
         super().__init__(self.message)
 
-@dataclass
+@dataclass(frozen=True)
 class ModeConfig:
     dry_run: bool
     allow_execute: bool
     log_trades: bool
 
-@dataclass
+@dataclass(frozen=True)
 class Record_signal_filter:
     time_window_seconds: int            # 距离上次记录时间间隔
     roi_relative_pct_change: float      # ROI 相对变化百分比
@@ -29,7 +29,7 @@ class Record_signal_filter:
     pm_price_pct_change: float          # PM 价格变化百分比
     deribit_price_pct_change: float     # Deribit 期权价格变化百分比
 
-@dataclass
+@dataclass(frozen=True)
 class Trade_filter:
     inv_usd_limit: float                # 交易资金上限
     daily_trade_limit: int              # 每日交易次数上限
@@ -43,72 +43,72 @@ class Trade_filter:
     min_roi_pct: float                  # 最小允许 roi
     min_prob_edge_pct: float            # 最小允许概率差
 
-@dataclass
+@dataclass(frozen=True)
 class EvFilterConfig:
     min_ev_usd_1000: float
     min_ev_pct: float
     min_divergence: float
 
-@dataclass
+@dataclass(frozen=True)
 class LiquidityFilterConfig:
     min_pm_liquidity_usd: float
     min_dr_liquidity_contracts: int
 
-@dataclass
+@dataclass(frozen=True)
 class StalenessFilterConfig:
     max_pm_age_sec: int
     max_db_age_sec: int
     max_ev_age_sec: int
 
-@dataclass
+@dataclass(frozen=True)
 class FiltersConfig:
     ev: EvFilterConfig
     liquidity: LiquidityFilterConfig
     staleness: StalenessFilterConfig
 
-@dataclass
+@dataclass(frozen=True)
 class SizingRiskConfig:
     default_investment_usd: float
     max_investment_usd: float
     max_daily_total_usd: float
 
-@dataclass
+@dataclass(frozen=True)
 class PortfolioRiskConfig:
     max_open_positions: int
 
-@dataclass
+@dataclass(frozen=True)
 class SlippageRiskConfig:
     max_slippage_pct: float
 
-@dataclass
+@dataclass(frozen=True)
 class ExpiryRiskConfig:
     min_minutes_to_dr_expiry: int
     min_minutes_to_pm_resolution: int
 
-@dataclass
+@dataclass(frozen=True)
 class RiskLimitsConfig:
     sizing: SizingRiskConfig
     portfolio: PortfolioRiskConfig
     slippage: SlippageRiskConfig
     expiry: ExpiryRiskConfig
 
-@dataclass
+@dataclass(frozen=True)
 class PolymarketExecutionConfig:
     enabled: bool
     max_spend_usdc: float
 
-@dataclass
+@dataclass(frozen=True)
 class DeribitExecutionConfig:
     enabled: bool
     post_only: bool
     reduce_only: bool
 
-@dataclass
+@dataclass(frozen=True)
 class ExecutionConfig:
     polymarket: PolymarketExecutionConfig
     deribit: DeribitExecutionConfig
 
-@dataclass
+@dataclass(frozen=True)
 class TelegramAlertsConfig:
     enabled: bool
     alert_bot_token_env: str
@@ -122,22 +122,22 @@ class TelegramAlertsConfig:
     retry_delay_seconds: int
     retry_backoff: int
 
-@dataclass
+@dataclass(frozen=True)
 class AlertsConfig:
     telegram: TelegramAlertsConfig
 
-@dataclass
+@dataclass(frozen=True)
 class AuthConfig:
     api_key_env: str
     allowed_ips: List[str]
 
-@dataclass
+@dataclass(frozen=True)
 class LoggingConfig:
     trade_log_csv: str
     enable_debug: bool
 
 
-@dataclass
+@dataclass(frozen=True)
 class EarlyExitConfig:
     """提前平仓配置"""
     enabled: bool
@@ -150,7 +150,7 @@ class EarlyExitConfig:
     send_notifications: bool
 
 
-@dataclass
+@dataclass(frozen=True)
 class Trading_config:
     mode: ModeConfig
     record_signal_filter: Record_signal_filter

@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 class Miss_env_exception(Exception):
     def __init__(self, key: str, *args: object) -> None:
@@ -26,7 +26,20 @@ def get_value_from_env(key: str) -> str | bool:
     else:
         return value
     
-def get_value_from_dict(config: Dict[str, Any], key: str) -> Any:
+def get_value_from_dict(config: Mapping[str, Any], key: str) -> Any:
     if key not in config:
         raise Miss_key_exception(key)
     return config[key]
+
+def parse_bool(value: str) -> bool:
+    if isinstance(value, bool):
+        return value
+
+    value = value.strip().lower()
+
+    if value in ("true", "1", "yes", "y", "on"):
+        return True
+    if value in ("false", "0", "no", "n", "off"):
+        return False
+
+    raise ValueError(f"Invalid boolean value: {value}")

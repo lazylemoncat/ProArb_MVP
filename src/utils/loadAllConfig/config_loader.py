@@ -7,23 +7,23 @@ import yaml
 from ._get_value import get_value_from_dict
 
 
-@dataclass
+@dataclass(frozen=True)
 class PolymarketConfig:
     event_title: str
 
-@dataclass
+@dataclass(frozen=True)
 class DeribitConfig:
     k1_offset: int
     k2_offset: int
 
-@dataclass
+@dataclass(frozen=True)
 class EventConfig:
     name: str
     asset: str
     polymarket: PolymarketConfig
     deribit: DeribitConfig
 
-@dataclass
+@dataclass(frozen=True)
 class ThresholdsConfig:
     OUTPUT_CSV: str
     RAW_OUTPUT_CSV: str
@@ -42,7 +42,7 @@ class ThresholdsConfig:
     day_off: int
     daily_trades: int
 
-@dataclass
+@dataclass(frozen=True)
 class Config:
     thresholds: ThresholdsConfig
     events: List[EventConfig]
