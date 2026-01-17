@@ -99,12 +99,9 @@ class SavePosition:
     k1_fee_approx: float
     k2_fee_approx: float
     mark_iv: float
-    # Greeks (来自 ticker API)
-    k1_delta: float
-    k1_theta: float
-    k2_delta: float
-    k2_theta: float
-    settlement_price: float
+    # Settlement prices (来自 ticker API)
+    k1_settlement_price: float
+    k2_settlement_price: float
     # 时间与概率
     k1_expiration_timestamp: float
     T: float
@@ -160,17 +157,14 @@ def save_position(
         roi_pct: float,
         funding_usd: float = 0.0  # Net funding payments on Deribit
     ):
-    # 获取 K1 和 K2 的 ticker 数据
-    k1_delta, k1_theta, k2_delta, k2_theta, settlement_price = 0.0, 0.0, 0.0, 0.0, 0.0
+    # 获取 K1 和 K2 的 ticker 数据 - settlement prices
+    k1_settlement_price, k2_settlement_price = 0.0, 0.0
     try:
         k1_ticker = DeribitAPI.get_ticker(db_ctx.inst_k1)
-        k1_delta = k1_ticker["delta"]
-        k1_theta = k1_ticker["theta"]
-        settlement_price = k1_ticker["settlement_price"]
+        k1_settlement_price = k1_ticker["settlement_price"]
 
         k2_ticker = DeribitAPI.get_ticker(db_ctx.inst_k2)
-        k2_delta = k2_ticker["delta"]
-        k2_theta = k2_ticker["theta"]
+        k2_settlement_price = k2_ticker["settlement_price"]
     except Exception as e:
         logger.warning(f"Failed to fetch ticker data for {db_ctx.inst_k1}/{db_ctx.inst_k2}: {e}")
 
@@ -254,12 +248,9 @@ def save_position(
         k1_fee_approx=db_ctx.k1_fee_approx,
         k2_fee_approx=db_ctx.k2_fee_approx,
         mark_iv=db_ctx.mark_iv,
-        # Greeks
-        k1_delta=k1_delta,
-        k1_theta=k1_theta,
-        k2_delta=k2_delta,
-        k2_theta=k2_theta,
-        settlement_price=settlement_price,
+        # Settlement prices
+        k1_settlement_price=k1_settlement_price,
+        k2_settlement_price=k2_settlement_price,
 
         k1_expiration_timestamp=db_ctx.k1_expiration_timestamp,
         T=db_ctx.T,

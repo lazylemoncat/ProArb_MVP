@@ -27,7 +27,7 @@ def parse_iso_timestamp(time_str: str) -> Optional[pd.Timestamp]:
         return None
 
 
-@ev_router.get("/api/ev", response_model=list[EVResponse])
+@ev_router.get("/api/no/ev", response_model=list[EVResponse])
 def get_ev(
     limit: Optional[int] = Query(default=None, ge=1, description="返回的记录数量（默认返回所有）"),
     offset: int = Query(default=0, ge=0, description="跳过的记录数"),

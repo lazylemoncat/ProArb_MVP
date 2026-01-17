@@ -48,6 +48,10 @@ class EVResponse(BaseModel):
     dr_contracts: float # 实际合约数量
     dr_k1_price: float # 根据方向决定是 ask 还是 bid
     dr_k2_price: float # 根据方向决定是 ask 还是 bid
+    k1_ask: float # K1 ask 价格 (BTC)
+    k1_bid: float # K1 bid 价格 (BTC)
+    k2_ask: float # K2 ask 价格 (BTC)
+    k2_bid: float # K2 bid 价格 (BTC)
     dr_iv: float # 模型使用的波动率
     dr_k1_iv: float
     dr_k2_iv: float
@@ -98,8 +102,6 @@ class DRK1Data(BaseModel):
     instrument: str                 # dr_k1_instruments
     price_t0: float                 # dr_k1_price_t0 (成交价)
     iv: float                       # dr_k1_iv
-    delta: float | None = None      # dr_k1_delta
-    theta: float | None = None      # dr_k1_theta
     settlement_price: float | None = None  # dr_k1_settlement_price
 
 class DRK2Data(BaseModel):
@@ -107,8 +109,6 @@ class DRK2Data(BaseModel):
     instrument: str                 # dr_k2_instruments
     price_t0: float                 # dr_k2_price_t0
     iv: float                       # dr_k2_iv
-    delta: float | None = None      # dr_k2_delta
-    theta: float | None = None      # dr_k2_theta
     settlement_price: float | None = None  # dr_k2_settlement_price
 
 class DRRiskData(BaseModel):

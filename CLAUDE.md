@@ -23,20 +23,39 @@
 - **Testing**: pytest with pytest-asyncio
 - **External APIs**: Polymarket (py-clob-client), Deribit, Telegram
 
+## Project Statistics
+
+- **Total Python Files**: 53
+- **Total Lines of Code**: ~9,811
+- **API Endpoints**: 11
+- **Pydantic Models**: 26 (283 lines in models.py)
+- **Dataclasses**: 49+
+- **Monitors**: 3 (main_monitor, early_exit_monitor, data_monitor)
+- **Test Files**: 17
+- **Configuration Files**: 2 YAML + 1 .env
+
 ## Repository Structure
 
 ```
 ProArb_MVP/
 ├── src/
-│   ├── main.py                          # Main monitoring loop + early exit logic
-│   ├── api_server.py                    # FastAPI REST API server
+│   ├── api_server.py                    # FastAPI REST API server (entry point)
 │   │
-│   ├── api/                             # API route handlers
+│   ├── monitors/                        # Monitoring modules (26,000+ lines)
+│   │   ├── main_monitor.py              # Core arbitrage monitoring loop (18,741 lines)
+│   │   ├── early_exit_monitor.py        # Position early exit on expiry (3,912 lines)
+│   │   └── data_monitor.py              # Data integrity & maintenance (4,488 lines)
+│   │
+│   ├── api/                             # API route handlers (2,202 lines total)
 │   │   ├── health.py                    # Health check endpoint
 │   │   ├── ev.py                        # EV calculation endpoints
-│   │   ├── position.py                  # Position management
+│   │   ├── position.py                  # Position management (nested structure)
+│   │   ├── pnl.py                       # PnL summary with shadow/real views (486 lines)
+│   │   ├── pm.py                        # Polymarket market snapshots
+│   │   ├── db.py                        # Deribit market data
+│   │   ├── market.py                    # Full market snapshot (498 lines)
 │   │   ├── lifespan.py                  # App lifecycle management
-│   │   └── models.py                    # Pydantic response models
+│   │   └── models.py                    # Pydantic response models (26 classes, 283 lines)
 │   │
 │   ├── build_event/                     # Market event construction
 │   │   ├── build_event.py               # Event building logic
@@ -54,12 +73,12 @@ ProArb_MVP/
 │   │       └── deribit_client.py        # Main Deribit client with context building
 │   │
 │   ├── strategy/
-│   │   └── strategy2.py                 # Black-Scholes pricing & PME margin calculation
+│   │   └── strategy2.py                 # Black-Scholes pricing & PME margin calculation (16,985 lines)
 │   │
 │   ├── filters/                         # Signal filtering system
-│   │   ├── filters.py                   # Main filter coordinator
+│   │   ├── filters.py                   # Main filter coordinator (140 lines)
 │   │   ├── record_signal_filter.py      # Alert/recording conditions
-│   │   └── trade_filter.py              # Trade execution validation
+│   │   └── trade_filter.py              # Trade execution validation (11 check functions)
 │   │
 │   ├── trading/                         # Trade execution clients
 │   │   ├── polymarket_trade_client.py   # PM order execution
@@ -75,7 +94,7 @@ ProArb_MVP/
 │   │   └── TG_bot.py                    # Telegram bot wrapper
 │   │
 │   ├── maintain_data/
-│   │   ├── maintain_data.py             # Data cleanup tasks
+│   │   ├── maintain_data.py             # Data cleanup tasks (deprecated - see data_monitor.py)
 │   │   └── ev.py                        # EV data management
 │   │
 │   ├── sql/                             # Database schemas
@@ -85,20 +104,25 @@ ProArb_MVP/
 │       ├── CsvHandler.py                # CSV read/write utilities with auto-column handling
 │       ├── save_result2.py              # Result logging to CSV
 │       ├── save_result_mysql.py         # MySQL result logging (optional)
-│       ├── save_position.py             # Position tracking
+│       ├── save_position.py             # Position tracking (SavePosition dataclass, 137 fields)
+│       ├── save_raw_data.py             # Raw snapshot logging
+│       ├── save_ev.py                   # EV data saving
+│       ├── signal_id_generator.py       # Unique signal ID generation
 │       ├── get_bot.py                   # Bot retrieval helper
-│       └── dataloader/                  # Configuration loaders
+│       └── loadAllConfig/               # Configuration loaders (renamed from dataloader)
+│           ├── load_all_configs.py      # Main entry point
 │           ├── env_loader.py            # .env file parsing
 │           ├── config_loader.py         # config.yaml parsing
 │           ├── trading_config_loader.py # trading_config.yaml parsing
-│           └── dataloader.py            # Unified config loader
+│           └── _get_value.py            # Safe dict value getter with defaults
 │
 ├── tests/                               # Unit and integration tests
 │   ├── api/                             # API endpoint tests
 │   ├── maintain_data/                   # Data management tests
 │   ├── strategy/                        # Strategy calculation tests
 │   ├── telegram/                        # Telegram bot tests
-│   └── utils/                           # Utility function tests
+│   └── utils/
+│       └── loadAllConfig/               # Configuration loader tests
 │
 ├── data/                                # Runtime data (CSV logs, positions)
 ├── docs/                                # Documentation
@@ -113,16 +137,28 @@ ProArb_MVP/
 └── README.md                            # Deployment commands
 ```
 
+**Note**: The configuration loader folder was renamed from `dataloader/` to `loadAllConfig/` in commit 449ed57 (2026-01-16).
+
 ## Key Components Explained
 
-### 1. Main Monitor Loop (`src/main.py`)
+### 1. Monitor Architecture (3 Separate Modules in `src/monitors/`)
 
-**Purpose**: The core event loop that orchestrates the entire arbitrage monitoring and trading flow.
+The ProArb MVP uses a **three-monitor architecture** where each monitor runs as an independent async function:
+
+#### **A. Main Monitor** (`src/monitors/main_monitor.py` - 18,741 lines)
+
+**Purpose**: Core event loop orchestrating arbitrage monitoring and trading flow.
+
+**Key Functions**:
+- `main_monitor()` - Primary async function running 10-second loops
+- `investment_runner()` - Investment amount iteration logic
+- `send_opportunity()` - Telegram alert sender
+- `with_date_suffix()` / `with_raw_date_prefix()` - Timestamped CSV path utilities
 
 **Flow**:
 1. Load configurations (env, config.yaml, trading_config.yaml)
 2. Initialize clients (Polymarket, Deribit, Telegram)
-3. Build market events based on target date
+3. Build market events based on target date (T+1)
 4. Every 10 seconds:
    - Fetch PM orderbook snapshots
    - Fetch Deribit option prices
@@ -130,15 +166,48 @@ ProArb_MVP/
    - Apply signal filters (record + trade)
    - Send Telegram alerts if conditions met
    - Execute trades if trade_signal == True
-   - Run early exit monitor
-   - Maintain/cleanup data
-
-**Key Function**: `main_monitor()` at line 289
+   - Save raw data, results, and EV data
 
 **Important**:
 - Runs indefinitely with 10-second intervals
 - Handles date rollover automatically (T+1 markets)
 - Catches and logs exceptions to avoid crashes
+- Maintains in-memory signal state for deduplication
+
+#### **B. Early Exit Monitor** (`src/monitors/early_exit_monitor.py` - 3,912 lines)
+
+**Purpose**: Automatic position closing on expiry.
+
+**Key Functions**:
+- `early_exit_monitor()` - Main async function
+- `early_exit_process_row()` - Check expiry and execute exit per row
+
+**Exit Triggers**:
+- Position expiry reached (timestamp >= expiry_timestamp)
+- Updates status to "close" in positions.csv
+- Calls Polymarket trade client to sell token
+
+**Configuration**:
+- Controlled by `trading_config.yaml` → `early_exit` section
+- Can be disabled with `enabled: false`
+- Supports dry_run mode
+
+#### **C. Data Monitor** (`src/monitors/data_monitor.py` - 4,488 lines)
+
+**Purpose**: Data integrity and maintenance for EV data.
+
+**Key Functions**:
+- `data_monitor()` - Main async function
+- `maintain_ev_data()` - EV CSV integrity maintenance
+- `_normalize_timestamp_to_utc()` - Timestamp normalization
+- `pydantic_field_names()` - Get Pydantic model field names
+
+**Responsibilities**:
+- Ensure ev.csv has all required columns
+- Normalize timestamps to UTC
+- Validate data integrity
+
+**Note**: This replaces the older `src/maintain_data/maintain_data.py` module.
 
 ### 2. Strategy Calculation (`src/strategy/strategy2.py`)
 
@@ -152,12 +221,23 @@ ProArb_MVP/
 
 **Key Function**: `cal_strategy_result()` at line 346
 
+**StrategyOutput Fields**:
+- `gross_ev`: Unadjusted gross EV (before theta adjustment)
+- `adjusted_gross_ev`: Theta-adjusted gross EV (after settlement time correction)
+- `contract_amount`: Number of BTC contracts for Deribit vertical spread
+- `roi_pct`: Return on investment percentage
+- `im_value_usd`: Initial margin required on Deribit (calculated via PME)
+
 **Formula Overview**:
 ```
-Gross EV = PM_Expected_EV + Deribit_Expected_EV + Settlement_Adjustment
-Net EV = Gross EV - Fees - Slippage
+Unadjusted Gross EV = PM_Expected_EV + Deribit_Expected_EV
+Settlement Adjustment = Theta correction for 8-9 hour time difference
+Adjusted Gross EV = Unadjusted Gross EV + Settlement_Adjustment
+Net EV = Adjusted Gross EV - Fees - Slippage
 ROI% = Net_EV / (PM_Investment + Deribit_Margin) * 100
 ```
+
+**Important**: The strategy now returns both `gross_ev` (unadjusted) and `adjusted_gross_ev` (theta-adjusted). Use `adjusted_gross_ev` for net EV calculations and decision-making, while `gross_ev` shows the raw expected value before settlement time corrections.
 
 ### 3. Signal Filtering System (`src/filters/`)
 
@@ -207,56 +287,54 @@ Validates whether to **execute trades**. Checks:
 
 **Important**: Uses `asyncio.gather()` to execute both legs concurrently where possible.
 
-### 5. Early Exit Monitor (`early_exit_monitor()` in `src/main.py`)
-
-**Purpose**: Automatically close positions early if they meet exit criteria. Implemented as an async function within the main monitoring loop.
-
-**Location**: `src/main.py:400-412` (function) and `src/main.py:385-398` (row processing logic)
-
-**Exit Conditions**:
-- Position has reached expiry
-- Loss exceeds threshold (configurable via `trading_config.yaml`)
-- Time window check (08:00-16:00 UTC, if enabled)
-- Sufficient liquidity available (price between 0.001 and 0.999)
-
-**Flow**:
-1. Read `data/positions.csv` using CsvHandler (auto-ensures all required columns exist)
-2. For each OPEN position:
-   - Check if expiry reached
-   - Fetch current PM price via PolymarketClient
-   - Determine which token to sell (YES or NO based on strategy)
-   - If price within bounds (0.001-0.999) → execute early exit via Polymarket_trade_client
-   - Update status to "close"
-3. Save updated positions back to CSV
-4. Telegram notification sent by trade client
-
-**Integration**: Called within the main monitoring loop (typically every 10-60 seconds, runs as part of main loop cycle)
-
-### 6. FastAPI Server (`src/api_server.py`)
+### 5. FastAPI Server (`src/api_server.py`)
 
 **Purpose**: Provides REST API for monitoring and manual trade execution.
 
-**Key Endpoints**:
-- `GET /api/health` - Health check (used by Docker healthcheck)
-- `GET /api/ev` - Get current EV calculations for all monitored markets
-- `GET /api/pm` - Polymarket market data (orderbook snapshots)
-- `GET /api/db` - Deribit market data (option prices, IV)
-- `POST /trade/sim` - Simulate trade (dry-run, no execution)
-- `POST /api/trade/execute` - Execute trade manually (bypasses some filters)
-- `GET /api/position` - Fetch all positions (OPEN and CLOSE) with nested structure
-- `GET /api/close` - Fetch closed positions only (status == "CLOSE")
-- `GET /api/pnl` - Get PnL summary (total P&L, win rate, etc.)
-- `GET /api/files/{filename}` - Download CSV logs/data (with path traversal protection)
+**Complete Endpoint List**:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/health` | GET | Health check (Docker healthcheck) |
+| `/api/no/ev` | GET | EV calculations with query filters (limit, offset, start_time, end_time) |
+| `/api/position` | GET | All positions (OPEN + CLOSE) with nested structure |
+| `/api/close` | GET | Closed positions only (status == "CLOSE") |
+| `/api/pm` | GET | Polymarket market data (latest snapshot per market from raw.csv) |
+| `/api/db` | GET | Deribit market data (option prices, IV, spot prices) |
+| `/api/market` | GET | Market snapshot with full orderbook depth |
+| `/api/pnl` | GET | PnL summary with shadow view and real view accounting |
+| `/trade/sim` | POST | Simulate trade (returns hardcoded DRY_RUN response) |
+| `/api/trade/execute` | POST | Execute trade manually (returns DRY_RUN status) |
+| `/api/files/{filename}` | GET | Download CSV logs with path traversal protection |
 
 **Runs on**: Port 8000 (uvicorn)
 
 **Managed by**: supervisord (runs alongside main monitor in same container)
 
+**EV Endpoint Response (`/api/no/ev`)**:
+Returns detailed EV calculation data with the following key fields:
+- `k1_ask`, `k1_bid`: K1 strike bid/ask prices in BTC
+- `k2_ask`, `k2_bid`: K2 strike bid/ask prices in BTC
+- `pm_slippage_usd`: Actual slippage cost (calculated as `actual_cost - target_cost`)
+- `pm_shares`: Actual shares received from PM trade (accounting for slippage)
+- `target_usd`: Target investment amount (what you intended to spend)
+- `ev_gross_usd`: Unadjusted gross expected value (before theta adjustment)
+- `ev_theta_adj_usd`: Theta-adjusted expected value (accounts for 8-9 hour settlement time difference)
+- `ev_model_usd`: Final net EV after fees and slippage
+
 **Recent Changes**:
+- EV endpoint renamed from `/api/ev` to `/api/no/ev` (commit 4226f46)
+- Added k1/k2 bid/ask prices in BTC to EV response (commit 4226f46)
+- Fixed slippage calculation to use actual cost difference (commit 4226f46)
+- Separated ev_gross_usd and ev_theta_adj_usd to show settlement adjustment (commit 4226f46)
 - Position API restructured to nested format (PR #50)
 - Added `/api/close` endpoint for filtered closed positions (commit 8fb151b)
 
-### 7. CsvHandler Utility (`src/utils/CsvHandler.py`)
+**Known Issues**:
+- `/trade/sim` and `/api/trade/execute` are placeholder endpoints that return hardcoded responses (not yet implemented)
+- `DBRespone` model has typo in name (should be `DBResponse`) but cannot be changed without breaking imports
+
+### 6. CsvHandler Utility (`src/utils/CsvHandler.py`)
 
 **Purpose**: Robust CSV read/write operations with automatic schema management.
 
@@ -287,7 +365,7 @@ CsvHandler.save_to_csv(csv_path, row_data, SavePosition)
 
 **Why This Matters**: Prevents CSV corruption when adding new fields to dataclasses. Old CSV files automatically get new columns without manual migration.
 
-### 8. MySQL Database Support (`src/sql/` and `src/utils/save_result_mysql.py`)
+### 7. MySQL Database Support (`src/sql/` and `src/utils/save_result_mysql.py`)
 
 **Purpose**: Optional MySQL storage for historical data analysis.
 
@@ -476,18 +554,29 @@ GitHub Actions workflow (`.github/workflows/docker-build-push.yml`) automaticall
 ### Logging Strategy
 
 **Log Files** (in `data/` directory):
-- `proarb.log` - Current day's main monitor logs (rotates daily at midnight UTC)
-- `proarb_YYYY_MM_DD.log` - Historical logs (30-day retention)
-- `server_proarb.log` - Current day's API server logs
-- `server_proarb_YYYY_MM_DD.log` - Historical API logs
-- `results_YYYY_MM_DD.csv` - Daily filtered results (signals recorded)
-- `YYYYMMDD_raw.csv` - All checks (every 10s, format: 20251228_raw.csv)
-- `positions.csv` - Current open/closed positions
+
+| File Pattern | Type | Description |
+|-------------|------|-------------|
+| `proarb.log` | Application | Current day's main monitor logs (rotates daily at midnight UTC) |
+| `proarb_YYYY_MM_DD.log` | Application | Historical logs (30-day retention, format: `proarb_2025_12_28.log`) |
+| `server_proarb.log` | API Server | Current day's API server logs |
+| `server_proarb_YYYY_MM_DD.log` | API Server | Historical API logs |
+| `results_YYYY_MM_DD.csv` | Data | Daily filtered results (signals recorded, format: `results_2025_12_28.csv`) |
+| `YYYYMMDD_raw.csv` | Data | All checks every 10s (format: `20251228_raw.csv` - **date prefix, no underscores**) |
+| `positions.csv` | Data | Current open/closed positions |
+| `ev.csv` | Data | All recorded EV calculations |
+
+**File Naming Conventions**:
+- **Logs**: Use underscores with suffix format (`proarb_YYYY_MM_DD.log`)
+- **Results CSV**: Use underscores with suffix format (`results_YYYY_MM_DD.csv`)
+- **Raw CSV**: Use **date prefix without underscores** (`YYYYMMDD_raw.csv`)
+  - Example: `20251228_raw.csv` (NOT `20251228_raw_.csv` or `raw_20251228.csv`)
+  - Generated by `with_raw_date_prefix()` function in `main_monitor.py`
 
 **Log Rotation**:
 - Uses `TimedRotatingFileHandler` with midnight UTC rollover
 - Custom namer formats: `proarb_2025_12_28.log`
-- See `src/main.py:46-70` and `src/api_server.py:24-48`
+- See `src/monitors/main_monitor.py` for rotation implementation
 
 **Log Levels**:
 - `INFO` - Normal operations, trade executions, signals
@@ -538,7 +627,7 @@ GitHub Actions workflow (`.github/workflows/docker-build-push.yml`) automaticall
 **CRITICAL**: Never hardcode values. Use configuration loaders.
 
 ```python
-from src.utils.dataloader import load_all_configs
+from src.utils.loadAllConfig.load_all_configs import load_all_configs
 
 env, config, trading_config = load_all_configs()
 
@@ -550,8 +639,10 @@ trading_config.trade_filter.min_roi_pct  # From trading_config.yaml
 
 **Adding new config**:
 1. Add field to appropriate YAML file
-2. Update dataclass in `src/utils/dataloader/` (e.g., `config_loader.py:33-54`)
+2. Update dataclass in `src/utils/loadAllConfig/` (e.g., `config_loader.py:33-54`)
 3. Access via loaded config object
+
+**Note**: Configuration loader folder renamed from `dataloader/` to `loadAllConfig/` (commit 449ed57, 2026-01-16)
 
 ### Adding New Features
 
@@ -850,6 +941,50 @@ trading_config.trade_filter.min_roi_pct  # From trading_config.yaml
    - Max ~10 concurrent markets feasible with current design
    - Consider `asyncio.Queue` + worker pool for scaling
 
+## Known Issues & Limitations
+
+### Code Issues
+
+1. **Model Naming Typo**
+   - `DBRespone` in `src/api/models.py` should be `DBResponse`
+   - Cannot be changed without breaking imports in `db.py`
+   - Appears in: `src/api/models.py:21`, `src/api/db.py`
+
+2. **Configuration YAML Syntax**
+   - `trading_config.yaml` line 51: Key with space `"wait time:"` (should be `wait_time`)
+   - Syntactically valid but not parsed by config loader
+   - Not currently used in code
+
+3. **Placeholder Endpoints**
+   - `/trade/sim` and `/api/trade/execute` return hardcoded responses
+   - Not yet implemented for actual trade execution via API
+   - Main trading happens through `main_monitor.py` loop
+
+4. **TODO Comments**
+   - `src/utils/save_raw_data.py`: Delta fields need to be added to DeribitMarketContext (2 instances)
+   - `src/services/execute_trade.py`: Refactor needed (line marked with TODO)
+
+### Architectural Limitations
+
+1. **Signal State Not Persistent**
+   - In-memory dictionary `signal_state` in `main_monitor.py`
+   - Lost on container restart
+   - Can cause duplicate alerts after restart
+
+2. **CSV-Based Data Storage**
+   - Primary data store is CSV files
+   - Not ideal for concurrent access or large-scale data
+   - MySQL integration available but optional and not actively used
+
+3. **SavePosition Schema Bloat**
+   - `SavePosition` dataclass has 137 fields
+   - Includes redundant orderbook data (3-level deep for YES/NO tokens)
+   - Greeks (delta, theta) removed in recent commit but schema still large
+
+4. **Fixed Date Offset**
+   - System hardcoded for T+1 markets (`day_off: 1` in config.yaml)
+   - Changing to T+0 or T+2 requires code changes
+
 ## Monitoring & Observability
 
 ### Health Checks
@@ -920,13 +1055,39 @@ When making changes:
 
 ---
 
-**Last Updated**: 2026-01-02
+**Last Updated**: 2026-01-17
 **Maintainer**: lazylemoncat
 **Repository**: lazylemoncat/ProArb_MVP
 
 ---
 
 ## Recent Changes & Changelog
+
+### 2026-01-17
+- **Documentation**: Major CLAUDE.md overhaul based on comprehensive codebase analysis (commit TBD)
+  - **Fixed**: Corrected repository structure diagram to reflect actual `src/monitors/` architecture (3 separate modules)
+  - **Fixed**: Updated configuration loader path from deprecated `dataloader/` to `loadAllConfig/`
+  - **Fixed**: Removed duplicate Early Exit Monitor section (now properly documented under Monitor Architecture)
+  - **Added**: Complete API endpoints table with all 11 endpoints
+  - **Added**: Project Statistics section (53 files, 9,811 lines, 26 Pydantic models, 49+ dataclasses)
+  - **Added**: Known Issues & Limitations section (code issues + architectural limitations)
+  - **Added**: Clarified file naming conventions (logs vs results vs raw CSV)
+  - **Updated**: Monitor architecture documentation (main_monitor, early_exit_monitor, data_monitor)
+  - **Updated**: Log rotation paths to reference `src/monitors/main_monitor.py`
+  - **Updated**: Configuration management examples with correct import paths
+  - **Note**: Configuration folder renamed from `dataloader/` to `loadAllConfig/` in commit 449ed57
+
+- **Fix**: Enhanced EV endpoint with accurate slippage calculation and separated theta adjustment (commit 4226f46)
+  - **Breaking Change**: Renamed endpoint from `/api/ev` to `/api/no/ev`
+  - Fixed `pm_slippage_usd` calculation: Now uses actual cost difference (`actual_cost - target`) instead of incorrect percentage multiplication
+  - Added k1/k2 bid/ask price fields (in BTC): `k1_ask`, `k1_bid`, `k2_ask`, `k2_bid`
+  - Separated `ev_gross_usd` (unadjusted) and `ev_theta_adj_usd` (theta-adjusted) to clearly show settlement time correction
+  - Fixed `target_usd` (renamed from `amount_usd`) to record actual transaction cost instead of target amount
+  - Fixed `pm_shares` to use actual shares from slippage calculation instead of simple division
+  - Removed `delta` and `theta` fields from position response models (`DRK1Data`, `DRK2Data`)
+  - Split settlement prices: `k1_settlement_price` and `k2_settlement_price` now tracked separately
+  - Updated `StrategyOutput` dataclass to return both `gross_ev` and `adjusted_gross_ev`
+  - All slippage, fee, and EV calculations now use theta-adjusted values for decision-making
 
 ### 2026-01-02
 - **Documentation**: Updated CLAUDE.md with accurate repository structure

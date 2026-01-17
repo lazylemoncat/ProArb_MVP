@@ -252,21 +252,23 @@ async def investment_runner(
             slippage_pct_1 = pm_open.slippage_pct
 
             no_token_id = pm_ctx.no_token_id
-            pm_open = await PolymarketClient.get_polymarket_slippage(
+            pm_open_no = await PolymarketClient.get_polymarket_slippage(
                 no_token_id,
                 inv_base_usd,
                 side="ask",
                 amount_type="usd",
             )
-            no_avg_price = pm_open.avg_price
-            slippage_pct_2 = pm_open.slippage_pct
+            no_avg_price = pm_open_no.avg_price
+            slippage_pct_2 = pm_open_no.slippage_pct
 
             # 价格
             pm_price = float(no_avg_price)
             deribit_price = float(1.0 - deribit_ctx.deribit_prob)
             prob_diff = (deribit_price - pm_price) * 100.0
             prob_edge_pct = abs(prob_diff) / 100.0
-            slippage_pct = slippage_pct_1 if strategy == 1 else slippage_pct_2
+
+            # Select correct PM data based on strategy
+            pm_open_selected = pm_open if strategy == 1 else pm_open_no
 
             strategy_input = Strategy_input(
                 inv_usd=inv_base_usd,
@@ -292,11 +294,13 @@ async def investment_runner(
             k1_fee = 0.125 * deribit_ctx.k1_ask_usd * result.contract_amount
             k2_fee = 0.125 * deribit_ctx.k2_bid_usd * result.contract_amount
             fee_total = max(min(db_fee, k1_fee), min(db_fee, k2_fee))
-            # 获取滑点
-            slippage = inv_base_usd * slippage_pct
+            # 获取滑点 - 使用实际成本与目标金额的差额
+            slippage = pm_open_selected.total_cost_usd - inv_base_usd
 
-            gross_ev = result.gross_ev
-            net_ev = gross_ev - fee_total - slippage
+            # Use theta-adjusted gross EV for net EV calculation
+            gross_ev = result.gross_ev  # Unadjusted
+            adjusted_gross_ev = result.adjusted_gross_ev  # Theta-adjusted
+            net_ev = adjusted_gross_ev - fee_total - slippage
 
             # 交易信号筛选
             trade_filter_input = Trade_filter_input(
@@ -314,7 +318,7 @@ async def investment_runner(
             signal_key = f"{deribit_ctx.asset}:{int(round(deribit_ctx.K_poly))}:{inv_base_usd:.0f}"
             now_snapshot = SignalSnapshot(
                 recorded_at=datetime.now(timezone.utc),
-                net_ev=result.gross_ev,
+                net_ev=adjusted_gross_ev,  # Use theta-adjusted EV for signal tracking
                 roi_pct=result.roi_pct,
                 pm_price=pm_price,
                 deribit_price=deribit_price,
@@ -338,7 +342,7 @@ async def investment_runner(
                 await send_opportunity(
                     alert_bot,
                     pm_ctx.market_title,
-                    result.gross_ev,
+                    adjusted_gross_ev,  # Use theta-adjusted EV for alerts
                     strategy,
                     prob_diff,
                     pm_price,
@@ -353,7 +357,10 @@ async def investment_runner(
 
                 # 保存 EV 数据到 ev.csv
                 signal_id = generate_signal_id(market_id=pm_ctx.market_id)
-                pm_shares = inv_base_usd / pm_price if pm_price > 0 else 0
+                # Use actual shares from slippage calculation
+                pm_shares = pm_open_selected.shares
+                # Use actual cost instead of target
+                pm_actual_cost = pm_open_selected.total_cost_usd
                 dr_k1_price = deribit_ctx.k1_ask_usd if strategy == 2 else deribit_ctx.k1_bid_usd
                 dr_k2_price = deribit_ctx.k2_bid_usd if strategy == 2 else deribit_ctx.k2_ask_usd
                 save_ev(
@@ -361,14 +368,14 @@ async def investment_runner(
                     pm_ctx=pm_ctx,
                     db_ctx=deribit_ctx,
                     strategy=strategy,
-                    pm_entry_cost=inv_base_usd,
+                    pm_entry_cost=pm_actual_cost,  # Use actual cost
                     pm_shares=pm_shares,
                     pm_slippage_usd=slippage,
                     contracts=result.contract_amount,
                     dr_k1_price=dr_k1_price,
                     dr_k2_price=dr_k2_price,
-                    gross_ev=gross_ev,
-                    theta_adj_ev=gross_ev,  # theta adjustment included in gross_ev
+                    gross_ev=gross_ev,  # Unadjusted gross EV
+                    theta_adj_ev=adjusted_gross_ev,  # Theta-adjusted gross EV
                     net_ev=net_ev,
                     roi_pct=result.roi_pct,
                     ev_csv_path="./data/ev.csv"
