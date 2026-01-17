@@ -1,5 +1,6 @@
 import logging
 from typing import Optional
+import math
 
 import pandas as pd
 from fastapi import APIRouter, Query
@@ -9,6 +10,26 @@ from .models import EVResponse
 logger = logging.getLogger(__name__)
 
 ev_router = APIRouter(tags=["ev"])
+
+
+def clean_nan_values(data: dict) -> dict:
+    """
+    清理字典中的 NaN 值，将其替换为 None 或 0
+
+    Args:
+        data: 包含可能 NaN 值的字典
+
+    Returns:
+        清理后的字典
+    """
+    cleaned = {}
+    for key, value in data.items():
+        if isinstance(value, float) and math.isnan(value):
+            # 对于数值字段，NaN 替换为 0
+            cleaned[key] = 0.0
+        else:
+            cleaned[key] = value
+    return cleaned
 
 
 def parse_iso_timestamp(time_str: str) -> Optional[pd.Timestamp]:
@@ -87,4 +108,7 @@ def get_ev(
 
     rows = ev_df.to_dict(orient="records")
 
-    return [EVResponse.model_validate(r) for r in rows]
+    # 清理 NaN 值以避免 JSON 序列化错误
+    cleaned_rows = [clean_nan_values(r) for r in rows]
+
+    return [EVResponse.model_validate(r) for r in cleaned_rows]
