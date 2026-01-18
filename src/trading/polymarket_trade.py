@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional
 
 from py_clob_client.client import ClobClient, PolyException
-from py_clob_client.clob_types import OrderArgs, OrderType, TradeParams
+from py_clob_client.clob_types import MarketOrderArgs, OrderArgs, OrderType, TradeParams
+from py_clob_client.order_builder.constants import SELL
 
 from ..utils.config_loader import Env_config, load_all_configs
 
@@ -86,16 +87,15 @@ class Polymarket_trade:
     ) -> Dict[str, Any]:
         """
         创建市价卖出订单。
-        使用最低价格 0.01 配合 FOK (Fill Or Kill) 订单类型，
-        确保订单以当前市场最佳买价立即成交。
+        使用 create_market_order API，自动计算市场价格并以 FOK 方式执行。
         """
-        order_args = OrderArgs(
-            price=0.01,  # 最低价格，确保以市场价成交
-            size=size,
-            side="SELL",
+        order_args = MarketOrderArgs(
             token_id=token_id,
+            amount=size,  # 卖出的 token 数量
+            side=SELL,
+            order_type=OrderType.FOK,
         )
-        signed_order = client.create_order(order_args)
+        signed_order = client.create_market_order(order_args)
         try:
             resp: dict = client.post_order(signed_order, orderType=OrderType.FOK)
         except PolyException as e:
