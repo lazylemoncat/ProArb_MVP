@@ -46,9 +46,6 @@ def early_exit_process_row(row: pd.Series) -> pd.Series:
 
     logger.info(f"{row['market_id']} early_exit triggered - position expired")
 
-    # 更新状态
-    row["status"] = "close"
-
     # 根据策略决定卖出哪个 token
     strategy = row["strategy"]
     token_id = row["yes_token_id"] if strategy == 1 else row["no_token_id"]
@@ -63,11 +60,15 @@ def early_exit_process_row(row: pd.Series) -> pd.Series:
         if price >= 0.001 and price <= 0.999:
             logger.info(f"Executing early exit for {market_id} at price {price}")
             Polymarket_trade_client.early_exit(token_id, price)
+            # 只有交易成功后才更新状态为 close
+            row["status"] = "close"
+            logger.info(f"Successfully closed position for {market_id}")
         else:
-            logger.warning(f"Price {price} out of valid range for early exit on {market_id}")
+            logger.warning(f"Price {price} out of valid range for early exit on {market_id}, keeping position open")
 
     except Exception as e:
-        logger.error(f"Failed to execute early exit for {market_id}: {e}", exc_info=True)
+        # 交易失败时保持仓位状态不变，下次循环继续尝试
+        logger.error(f"Failed to execute early exit for {market_id}: {e}, will retry next cycle", exc_info=True)
 
     return row
 
