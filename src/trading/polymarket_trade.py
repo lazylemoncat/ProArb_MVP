@@ -87,17 +87,15 @@ class Polymarket_trade:
     ) -> Dict[str, Any]:
         """
         创建市价卖出订单。
-        使用 create_market_order API，自动计算市场价格并以 FOK 方式执行。
+        使用 create_and_post_market_order API 一步完成创建和提交。
         """
         order_args = MarketOrderArgs(
             token_id=token_id,
-            amount=size,  # 卖出的 token 数量
+            amount=size,  # SELL orders: Shares to sell
             side=SELL,
-            order_type=OrderType.FOK,
         )
-        signed_order = client.create_market_order(order_args)
         try:
-            resp: dict = client.post_order(signed_order, orderType=OrderType.FOK)
+            resp: dict = client.create_and_post_market_order(order_args)
         except PolyException as e:
             raise Exception(f"{e}")
         return resp
