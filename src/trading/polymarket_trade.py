@@ -79,6 +79,30 @@ class Polymarket_trade:
         return resp
 
     @staticmethod
+    def create_market_sell_order(
+        client: ClobClient,
+        size: float,
+        token_id: str,
+    ) -> Dict[str, Any]:
+        """
+        创建市价卖出订单。
+        使用最低价格 0.01 配合 FOK (Fill Or Kill) 订单类型，
+        确保订单以当前市场最佳买价立即成交。
+        """
+        order_args = OrderArgs(
+            price=0.01,  # 最低价格，确保以市场价成交
+            size=size,
+            side="SELL",
+            token_id=token_id,
+        )
+        signed_order = client.create_order(order_args)
+        try:
+            resp: dict = client.post_order(signed_order, orderType=OrderType.FOK)
+        except PolyException as e:
+            raise Exception(f"{e}")
+        return resp
+
+    @staticmethod
     def extract_order_id(obj: Any) -> Optional[str]:
         """
         py_clob_client 返回结构可能会变化，这里做一个宽松提取。

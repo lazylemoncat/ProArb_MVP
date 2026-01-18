@@ -2,9 +2,6 @@ import logging
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Dict, Optional
 
-from py_clob_client.clob_types import OrderArgs
-from py_clob_client.order_builder.constants import SELL
-
 from .polymarket_trade import Polymarket_trade
 
 logger = logging.getLogger(__name__)
@@ -15,20 +12,27 @@ def _q_down(x: Decimal, decimals: int) -> Decimal:
 
 class Polymarket_trade_client:
     @staticmethod
-    def early_exit(token_id: str, price: float):
+    def early_exit(token_id: str):
+        """
+        执行提前平仓，使用市价单卖出所有持仓。
+
+        Args:
+            token_id: 要卖出的 token ID
+
+        Returns:
+            卖出订单响应
+        """
         client = Polymarket_trade.get_client()
         trades = Polymarket_trade.get_trades(client, asset_id=token_id)
         if len(trades) == 0:
             raise Exception("no trades")
         trade_size = trades[0]["size"]
         token_id = trades[0]["asset_id"]
-        sell_order = client.create_and_post_order(
-            OrderArgs(
-                token_id=token_id,
-                price=price,
-                size=float(trade_size),
-                side=SELL,
-            )
+        # 使用市价单卖出
+        sell_order = Polymarket_trade.create_market_sell_order(
+            client=client,
+            size=float(trade_size),
+            token_id=token_id,
         )
         return sell_order
 

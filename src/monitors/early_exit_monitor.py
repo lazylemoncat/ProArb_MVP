@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from ..fetch_data.polymarket.polymarket_client import PolymarketClient
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.CsvHandler import CsvHandler
 
@@ -52,19 +51,11 @@ def early_exit_process_row(row: pd.Series) -> pd.Series:
     market_id = row["market_id"]
 
     try:
-        # 获取当前价格
-        prices = PolymarketClient.get_prices(market_id)
-        price = prices[0] if strategy == 1 else prices[1]
-
-        # 检查价格是否在有效范围内
-        if price >= 0.001 and price <= 0.999:
-            logger.info(f"Executing early exit for {market_id} at price {price}")
-            Polymarket_trade_client.early_exit(token_id, price)
-            # 只有交易成功后才更新状态为 close
-            row["status"] = "close"
-            logger.info(f"Successfully closed position for {market_id}")
-        else:
-            logger.warning(f"Price {price} out of valid range for early exit on {market_id}, keeping position open")
+        logger.info(f"Executing early exit for {market_id} using market order")
+        Polymarket_trade_client.early_exit(token_id)
+        # 只有交易成功后才更新状态为 close
+        row["status"] = "close"
+        logger.info(f"Successfully closed position for {market_id}")
 
     except Exception as e:
         # 交易失败时保持仓位状态不变，下次循环继续尝试
