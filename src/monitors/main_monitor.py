@@ -278,7 +278,9 @@ async def investment_runner(
                 k2_price=deribit_ctx.k2_strike,
                 k_poly_price=deribit_ctx.K_poly,
                 days_to_expiry=deribit_ctx.days_to_expairy,
-                sigma=deribit_ctx.mark_iv / 100.0,
+                sigma=deribit_ctx.mark_iv / 100.0,  # 保留用于settlement adjustment
+                k1_iv=deribit_ctx.k1_iv / 100.0,    # K1隐含波动率（用于现货价IV插值）
+                k2_iv=deribit_ctx.k2_iv / 100.0,    # K2隐含波动率（用于现货价IV插值）
                 pm_yes_price=yes_avg_price,
                 pm_no_price=no_avg_price,
                 is_DST=datetime.now().dst() is not None,

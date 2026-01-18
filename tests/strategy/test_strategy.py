@@ -9,7 +9,9 @@ def test_strategy():
         k2_price = 93000,
         k_poly_price = 92000,
         days_to_expiry = 0.334, # 以 deribit 为准
-        sigma = 0.2192,
+        sigma = 0.2192,  # 保留用于settlement adjustment
+        k1_iv = 0.22,    # K1隐含波动率
+        k2_iv = 0.21,    # K2隐含波动率
         pm_yes_price= 0.07,
         pm_no_price = 0.96,
         is_DST = False, # 是否为夏令时
