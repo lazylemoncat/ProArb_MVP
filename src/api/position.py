@@ -215,7 +215,7 @@ def get_position(
     end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
 ):
     """
-    获取所有仓位 (OPEN 和 CLOSE)
+    获取所有开放仓位 (status == "OPEN")
 
     Args:
         limit: 返回的记录数量（None 表示返回所有）
@@ -224,7 +224,7 @@ def get_position(
         end_time: 结束时间过滤 (ISO 格式, UTC)
 
     Returns:
-        仓位数据列表
+        开放仓位数据列表
     """
     # 检查并确保 CSV 文件包含所有必需的列
     CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=POSITIONS_FILL_VALUES, dtype=POSITIONS_DTYPE_SPEC)
@@ -237,6 +237,9 @@ def get_position(
 
     if pos_df.empty:
         return []
+
+    # 筛选状态为 OPEN 的行
+    pos_df = pos_df[pos_df['status'].str.upper() == 'OPEN']
 
     # 按时间范围过滤
     pos_df = filter_positions_by_time(pos_df, start_time, end_time)
