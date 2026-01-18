@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query
 import ast
 from dataclasses import fields
 
-from .models import PositionResponse, PMData, DRData, DRK1Data, DRK2Data, DRRiskData
+from .models import PositionResponse
 from ..utils.CsvHandler import CsvHandler
 from ..utils.save_position import SavePosition
 
@@ -133,7 +133,7 @@ POSITIONS_FILL_VALUES = {
 }
 
 def transform_position_row(row: dict) -> dict:
-    """将 CSV 平铺数据转换为嵌套的 PositionResponse 格式"""
+    """将 CSV 平铺数据转换为扁平化的 PositionResponse 格式"""
     # 解析 tuple 字符串
     def parse_tuple(value):
         if isinstance(value, str):
@@ -161,50 +161,50 @@ def transform_position_row(row: dict) -> dict:
     return {
         # A. 基础索引
         "signal_id": row.get("signal_id", ""),
-        "order_id": row.get("trade_id", ""),  # 使用 trade_id 作为 order_id
         "timestamp": str(row.get("entry_timestamp", "")),
-        "market_id": str(row.get("market_id", "")),
+        "market_title": str(row.get("market_title", "")),
 
-        # B. 交易核心
+        # B. 订单信息
+        "dr_order_id": str(row.get("dr_order_id", "")) if row.get("dr_order_id") else None,
+        "pm_order_id": str(row.get("pm_order_id", "")) if row.get("pm_order_id") else None,
         "status": str(row.get("status", "OPEN")).upper(),
-        "action": "sell" if str(row.get("direction")).lower() == "no" else "buy",
         "amount_usd": safe_float(row.get("pm_entry_cost")),
+        "action": "Sell" if str(row.get("direction")).lower() == "no" else "Buy",
+
+        # C. Deribit 合约信息
+        "dr_k1_instruments": str(row.get("inst_k1", "")) if row.get("inst_k1") else None,
+        "dr_k2_instruments": str(row.get("inst_k2", "")) if row.get("inst_k2") else None,
+
+        # D. 入场数据
+        "dr_index_price_t0": safe_float(row.get("spot")),
         "days_to_expiry": safe_float(row.get("days_to_expairy")),
+        "pm_yes_price_t0": safe_float(row.get("yes_price")),
+        "pm_no_price_t0": safe_float(row.get("no_price")),
+        "pm_shares": safe_float(row.get("pm_shares")),
+        "pm_slippage_usd": safe_float(row.get("pm_slippage_usd")),
 
-        # C. PM 数据
-        "pm_data": {
-            "shares": safe_float(row.get("pm_shares")),
-            "yes_avg_price_t0": safe_float(row.get("yes_price")),
-            "no_avg_price_t0": safe_float(row.get("no_price")),
-            "slippage_usd": safe_float(row.get("pm_slippage_usd")),
-            "yes_price": safe_float(row.get("yes_price")),  # 当前快照，暂时用相同值
-            "no_price": safe_float(row.get("no_price")),
-        },
+        # E. Deribit 交易数据
+        "dr_contracts": safe_float(row.get("contracts")),
+        "dr_k1_ask": safe_float(row.get("k1_ask_btc")),
+        "dr_k1_bid": safe_float(row.get("k1_bid_btc")),
+        "dr_k2_ask": safe_float(row.get("k2_ask_btc")),
+        "dr_k2_bid": safe_float(row.get("k2_bid_btc")),
+        "dr_fee_usd": safe_float(row.get("dr_entry_cost")),
 
-        # D. DR 数据
-        "dr_data": {
-            "index_price_t0": safe_float(row.get("spot")),
-            "contracts": safe_float(row.get("contracts")),
-            "fee_usd": safe_float(row.get("dr_entry_cost")),
-            "k1": {
-                "instrument": str(row.get("inst_k1", "")),
-                "price_t0": safe_float(row.get("dr_k1_price")),
-                "iv": safe_float(row.get("k1_iv")),
-                "settlement_price": safe_settlement_price(row.get("k1_settlement_price")),
-            },
-            "k2": {
-                "instrument": str(row.get("inst_k2", "")),
-                "price_t0": safe_float(row.get("dr_k2_price")),
-                "iv": safe_float(row.get("k2_iv")),
-                "settlement_price": safe_settlement_price(row.get("k2_settlement_price")),
-            },
-            "risk": {
-                "iv_t0": safe_float(row.get("mark_iv")),
-                "prob_t0": safe_float(row.get("deribit_prob")),
-                "iv_floor": safe_float(spot_iv_lower[1]) if len(spot_iv_lower) > 1 else None,
-                "iv_ceiling": safe_float(spot_iv_upper[1]) if len(spot_iv_upper) > 1 else None,
-            }
-        }
+        # F. 波动率数据
+        "dr_iv_t0": safe_float(row.get("mark_iv")),
+        "dr_k1_iv": safe_float(row.get("k1_iv")),
+        "dr_k2_iv": safe_float(row.get("k2_iv")),
+        "dr_iv_floor": safe_float(spot_iv_lower[1]) if len(spot_iv_lower) > 1 else None,
+        "dr_iv_ceiling": safe_float(spot_iv_upper[1]) if len(spot_iv_upper) > 1 else None,
+        "dr_prob_t0": safe_float(row.get("deribit_prob")),
+
+        # G. 结算数据
+        "pm_yes_price": safe_settlement_price(row.get("pm_yes_settlement_price")),
+        "pm_no_price": safe_settlement_price(row.get("pm_no_settlement_price")),
+        "dr_k1_settlement_price": safe_settlement_price(row.get("k1_settlement_price")),
+        "dr_k2_settlement_price": safe_settlement_price(row.get("k2_settlement_price")),
+        "dr_index_price_t": safe_settlement_price(row.get("settlement_index_price")),
     }
 
 @position_router.get("/api/position", response_model=list[PositionResponse])
@@ -215,7 +215,7 @@ def get_position(
     end_time: Optional[str] = Query(default=None, description="结束时间 (ISO 格式, 如 2025-01-01T23:59:59Z)")
 ):
     """
-    获取所有仓位 (OPEN 和 CLOSE)
+    获取所有开放仓位 (status == "OPEN")
 
     Args:
         limit: 返回的记录数量（None 表示返回所有）
@@ -224,7 +224,7 @@ def get_position(
         end_time: 结束时间过滤 (ISO 格式, UTC)
 
     Returns:
-        仓位数据列表
+        开放仓位数据列表
     """
     # 检查并确保 CSV 文件包含所有必需的列
     CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=POSITIONS_FILL_VALUES, dtype=POSITIONS_DTYPE_SPEC)
@@ -237,6 +237,9 @@ def get_position(
 
     if pos_df.empty:
         return []
+
+    # 筛选状态为 OPEN 的行
+    pos_df = pos_df[pos_df['status'].str.upper() == 'OPEN']
 
     # 按时间范围过滤
     pos_df = filter_positions_by_time(pos_df, start_time, end_time)

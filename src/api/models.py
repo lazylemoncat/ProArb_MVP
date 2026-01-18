@@ -128,20 +128,53 @@ class DRData(BaseModel):
     risk: DRRiskData                # 风险指标
 
 class PositionResponse(BaseModel):
-    # A. 基础索引 (Identity)
-    signal_id: str                  # 关联策略 id
-    order_id: str                   # 交易所订单号
-    timestamp: str                  # 成交时间 ISO 格式
-    market_id: str                  # PM Market Hash
-    # B. 交易核心 (Action)
-    status: Literal["OPEN", "CLOSE"] # 状态
-    action: Literal["buy", "sell"]
-    amount_usd: float | None = None               # 投入金额
-    days_to_expiry: float | None = None           # 离到期还有几天
-    # C. PM 数据
-    pm_data: PMData
-    # D. DR 数据
-    dr_data: DRData
+    """仓位响应 - 扁平化结构"""
+    # A. 基础索引
+    signal_id: str                                # 主键，唯一标识这次决策
+    timestamp: str                                # YYYYMMDD_HHMMSS
+    market_title: str                             # Bitcoin above 90000 on December 22?
+
+    # B. 订单信息
+    dr_order_id: str | None = None                # dr 订单id
+    pm_order_id: str | None = None                # pm 订单id
+    status: Literal["OPEN", "CLOSE"]              # OPEN/CLOSED
+    amount_usd: float | None = None               # 实际下单金额
+    action: Literal["Buy", "Sell"]                # Buy/Sell
+
+    # C. Deribit 合约信息
+    dr_k1_instruments: str | None = None          # K1 合约名称
+    dr_k2_instruments: str | None = None          # K2 合约名称
+
+    # D. 入场数据
+    dr_index_price_t0: float | None = None        # 入场现货价
+    days_to_expiry: float | None = None           # 入场剩余到期天数
+    pm_yes_price_t0: float | None = None          # PM yes 下单价格
+    pm_no_price_t0: float | None = None           # PM no 下单价格
+    pm_shares: float | None = None                # PM 份数
+    pm_slippage_usd: float | None = None          # 滑点金额
+
+    # E. Deribit 交易数据
+    dr_contracts: float | None = None             # 实际合约数量
+    dr_k1_ask: float | None = None                # K1 ask 价格
+    dr_k1_bid: float | None = None                # K1 bid 价格
+    dr_k2_ask: float | None = None                # K2 ask 价格
+    dr_k2_bid: float | None = None                # K2 bid 价格
+    dr_fee_usd: float | None = None               # Deribit 手续费
+
+    # F. 波动率数据
+    dr_iv_t0: float | None = None                 # 模型使用的波动率
+    dr_k1_iv: float | None = None                 # K1 隐含波动率
+    dr_k2_iv: float | None = None                 # K2 隐含波动率
+    dr_iv_floor: float | None = None              # IV floor
+    dr_iv_ceiling: float | None = None            # IV ceiling
+    dr_prob_t0: float | None = None               # Deribit 隐含概率 (T0)
+
+    # G. 结算数据
+    pm_yes_price: float | None = None             # 结算价格 (YES)
+    pm_no_price: float | None = None              # 结算价格 (NO)
+    dr_k1_settlement_price: float | None = None   # K1 结算价格
+    dr_k2_settlement_price: float | None = None   # K2 结算价格
+    dr_index_price_t: float | None = None         # 结算时刻的现货价格
 
 # ==================== PnL Models ====================
 

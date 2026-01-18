@@ -14,7 +14,9 @@ class Strategy_input:
     k2_price: float
     k_poly_price: float
     days_to_expiry: float
-    sigma: float
+    sigma: float  # 保留用于其他计算（如settlement adjustment）
+    k1_iv: float  # K1行权价的隐含波动率
+    k2_iv: float  # K2行权价的隐含波动率
     pm_yes_price: float
     pm_no_price: float
     is_DST: bool
@@ -267,6 +269,37 @@ def cal_contract_amount(pm_max_ev, price_delta):
     theoretical_contract_amount = pm_max_ev / price_delta
     return theoretical_contract_amount
 
+
+def cal_spot_iv(spot_price: float, k1_price: float, k2_price: float, k1_iv: float, k2_iv: float) -> float:
+    """
+    计算现货价IV（线性插值）
+
+    现货价IV = floor_iv + (现货价 - floor_price) / (ceiling_price - floor_price) × (ceiling_iv - floor_iv)
+
+    其中:
+    - floor_price = k1_price (较低行权价)
+    - ceiling_price = k2_price (较高行权价)
+    - floor_iv = k1_iv (K1的隐含波动率)
+    - ceiling_iv = k2_iv (K2的隐含波动率)
+
+    Args:
+        spot_price: 现货价格
+        k1_price: K1行权价 (floor_price)
+        k2_price: K2行权价 (ceiling_price)
+        k1_iv: K1隐含波动率 (floor_iv)
+        k2_iv: K2隐含波动率 (ceiling_iv)
+
+    Returns:
+        插值计算的现货价IV
+    """
+    if k2_price == k1_price:
+        # 避免除零，如果两个行权价相同，返回平均值
+        return (k1_iv + k2_iv) / 2
+
+    spot_iv = k1_iv + (spot_price - k1_price) / (k2_price - k1_price) * (k2_iv - k1_iv)
+    return round(spot_iv, 6)
+
+
 # Black-Scholes概率计算
 def cal_probability(spot_price, k_price, drift_term, sigma_T):
     ln_price_ratio = round(math.log(spot_price / k_price), 6)
@@ -275,13 +308,16 @@ def cal_probability(spot_price, k_price, drift_term, sigma_T):
     probability = round(_norm_cdf(d2), 4)
     return probability
 
-def cal_Black_Scholes(is_DST, days_to_expiry, sigma, spot_price, k1_price, k_poly_price, k2_price, r=0.05):
+def cal_Black_Scholes(is_DST, days_to_expiry, k1_iv, k2_iv, spot_price, k1_price, k_poly_price, k2_price, r=0.05):
     # 9/24 冬令九小时,夏令8小时
     T_db_pm_dealta = 8/24 if is_DST else 9/24 # Polymarket与deribit结算时间间隔
     T = round((T_db_pm_dealta + days_to_expiry) / 365, 6)
 
-    sigma_T = round(sigma * math.sqrt(T), 6)
-    sigma_squared_divide_2 = round(math.pow(sigma, 2) / 2, 6)
+    # 使用现货价IV进行Black-Scholes概率计算
+    spot_iv = cal_spot_iv(spot_price, k1_price, k2_price, k1_iv, k2_iv)
+
+    sigma_T = round(spot_iv * math.sqrt(T), 6)
+    sigma_squared_divide_2 = round(math.pow(spot_iv, 2) / 2, 6)
     drift_term = round((r + sigma_squared_divide_2) * T, 6)
     # 计算各关键行权价的概率
     probability_above_k1 = cal_probability(spot_price, k1_price, drift_term, sigma_T)
@@ -352,14 +388,15 @@ def cal_strategy_result(strategy_input: Strategy_input) -> StrategyOutput:
     db_premium = cal_db_premium(k1_ask_usd, k2_bid_usd)
     theoretical_contract_amount = cal_contract_amount(pm_max_ev, (strategy_input.k2_price - strategy_input.k1_price))
     contract_amount = round(theoretical_contract_amount, 2)
-    # Black-Scholes概率计算
+    # Black-Scholes概率计算（使用现货价IV插值）
     prob_less_k1, prob_less_k_poly_more_k1, prob_less_k2_more_k_poly, prob_more_k2 = cal_Black_Scholes(
-        strategy_input.is_DST, 
-        strategy_input.days_to_expiry, 
-        strategy_input.sigma, 
-        strategy_input.spot_price, 
-        strategy_input.k1_price, 
-        strategy_input.k_poly_price, 
+        strategy_input.is_DST,
+        strategy_input.days_to_expiry,
+        strategy_input.k1_iv,  # floor_iv
+        strategy_input.k2_iv,  # ceiling_iv
+        strategy_input.spot_price,
+        strategy_input.k1_price,
+        strategy_input.k_poly_price,
         strategy_input.k2_price
     )
     pm_ev = cal_pm_ev(strategy_input)
@@ -452,7 +489,9 @@ if __name__ == "__main__":
         k2_price = 97000,
         k_poly_price = 96000,
         days_to_expiry = 0.951, # 以 deribit 为准
-        sigma = 0.6071,
+        sigma = 0.6071,  # 保留用于其他计算
+        k1_iv = 0.60,    # K1隐含波动率
+        k2_iv = 0.62,    # K2隐含波动率
         pm_yes_price= 0.16,
         pm_no_price = 0.84,
         is_DST = is_DST, # 是否为夏令时
