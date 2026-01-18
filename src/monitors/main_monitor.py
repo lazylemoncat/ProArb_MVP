@@ -278,7 +278,9 @@ async def investment_runner(
                 k2_price=deribit_ctx.k2_strike,
                 k_poly_price=deribit_ctx.K_poly,
                 days_to_expiry=deribit_ctx.days_to_expairy,
-                sigma=deribit_ctx.mark_iv / 100.0,
+                sigma=deribit_ctx.mark_iv / 100.0,  # 保留用于settlement adjustment
+                k1_iv=deribit_ctx.k1_iv / 100.0,    # K1隐含波动率（用于现货价IV插值）
+                k2_iv=deribit_ctx.k2_iv / 100.0,    # K2隐含波动率（用于现货价IV插值）
                 pm_yes_price=yes_avg_price,
                 pm_no_price=no_avg_price,
                 is_DST=datetime.now().dst() is not None,
@@ -337,6 +339,9 @@ async def investment_runner(
             # 写入本次检测结果（使用新的精简格式）
             save_raw_data(pm_ctx, deribit_ctx, raw_output_csv)
 
+            # Generate signal_id early so it's available for both record_signal and trade_signal paths
+            signal_id = generate_signal_id(market_id=pm_ctx.market_id)
+
             # 发送套利机会到 Alert Bot
             if record_signal:
                 await send_opportunity(
@@ -356,7 +361,6 @@ async def investment_runner(
                 save_result(pm_ctx, deribit_ctx, output_path)
 
                 # 保存 EV 数据到 ev.csv
-                signal_id = generate_signal_id(market_id=pm_ctx.market_id)
                 # Use actual shares from slippage calculation
                 pm_shares = pm_open_selected.shares
                 # Use actual cost instead of target
