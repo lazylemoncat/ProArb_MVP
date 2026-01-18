@@ -395,7 +395,7 @@ async def investment_runner(
                     limit_price=round(pm_price, 2),
                     token_id=pm_ctx.no_token_id,
                     fee_total=fee_total,
-                    slippage_pct=slippage_pct,
+                    slippage_pct=slippage_pct_1,
                     net_ev=net_ev,
                     positions_csv=positions_csv,
                     gross_ev=gross_ev,

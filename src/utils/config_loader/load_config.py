@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 import yaml
 
@@ -52,9 +52,7 @@ def read_row_config(config_path: str) -> Dict[str, Any]:
         row_config = yaml.safe_load(f)
     return row_config
 
-def load_config(config_path: str = os.getenv("CONFIG_PATH", "config.yaml")):
-    row_config = read_row_config(config_path)
-
+def parse_config(row_config: Mapping[str, Any]) -> Config:
     thresholds_config = ThresholdsConfig(
         OUTPUT_CSV=get_value_from_dict(row_config['thresholds'], 'OUTPUT_CSV'),
         RAW_OUTPUT_CSV=get_value_from_dict(row_config['thresholds'], "RAW_OUTPUT_CSV"),
@@ -91,3 +89,8 @@ def load_config(config_path: str = os.getenv("CONFIG_PATH", "config.yaml")):
         thresholds=thresholds_config,
         events=events_config
     )
+
+def load_config(config_path: str = os.getenv("CONFIG_PATH", "config.yaml")):
+    row_config = read_row_config(config_path)
+
+    return parse_config(row_config)

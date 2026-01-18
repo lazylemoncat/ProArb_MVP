@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List, Mapping
 
 import yaml
 
@@ -168,9 +168,7 @@ def read_trading_config(config_path: str):
         config_data = yaml.safe_load(f)
     return config_data
 
-def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "trading_config.yaml")) -> Trading_config:
-    config_data = read_trading_config(config_path)
-
+def parse_trading_config(config_data: Mapping[str, Any]) -> Trading_config:
     mode_config = ModeConfig(
         dry_run=get_value_from_dict(config_data['mode'], 'dry_run'),
         allow_execute=get_value_from_dict(config_data['mode'], 'allow_execute'),
@@ -309,3 +307,8 @@ def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "tra
         logging=logging_config,
         early_exit=early_exit_config
     )
+
+def load_trading_config(config_path: str = os.getenv("TRADING_CONFIG_PATH", "trading_config.yaml")) -> Trading_config:
+    config_data = read_trading_config(config_path)
+
+    return parse_trading_config(config_data)
