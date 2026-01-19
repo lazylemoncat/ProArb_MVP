@@ -3,12 +3,12 @@ Save EV (Expected Value) data to SQLite database
 """
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
-from ..api.models import EVResponse
-from ..fetch_data.deribit.deribit_client import DeribitMarketContext
-from ..fetch_data.polymarket.polymarket_client import PolymarketContext
-from .SqliteHandler import SqliteHandler
+from ...api.models import EVResponse
+from ...fetch_data.deribit.deribit_client import DeribitMarketContext
+from ...fetch_data.polymarket.polymarket_client import PolymarketContext
+from ..SqliteHandler import SqliteHandler
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def save_ev(
     signal_id: str,
     pm_ctx: PolymarketContext,
     db_ctx: DeribitMarketContext,
-    strategy: int,
+    strategy: Literal[1, 2],
     pm_entry_cost: float,
     pm_shares: float,
     pm_slippage_usd: float,

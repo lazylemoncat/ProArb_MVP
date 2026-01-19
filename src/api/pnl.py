@@ -23,7 +23,7 @@ from .models import (
 from ..fetch_data.deribit.deribit_api import DeribitAPI
 from ..fetch_data.polymarket.polymarket_api import PolymarketAPI
 from ..utils.SqliteHandler import SqliteHandler
-from ..utils.save_position import SavePosition
+from ..utils.save_data.save_position import SavePosition
 
 logger = logging.getLogger(__name__)
 

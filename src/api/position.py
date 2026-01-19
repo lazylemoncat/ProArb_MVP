@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query
 
 from .models import PositionResponse
 from ..utils.SqliteHandler import SqliteHandler
-from ..utils.save_position import SavePosition
+from ..utils.save_data.save_position import SavePosition
 
 logger = logging.getLogger(__name__)
 

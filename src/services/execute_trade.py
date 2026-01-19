@@ -8,7 +8,7 @@ from ..trading.deribit_trade import DeribitUserCfg
 from ..trading.deribit_trade_client import Deribit_trade_client
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.config_loader import Env_config
-from ..utils.save_position import save_position
+from ..utils.save_data.save_position import save_position
 
 logger = logging.getLogger(__name__)
 

@@ -1,68 +1,110 @@
-import json
-from dataclasses import asdict
-from datetime import timezone
-from typing import Any, Dict, Tuple
+import logging
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from ..SqliteHandler import SqliteHandler
+from ...fetch_data.polymarket.polymarket_client import PolymarketContext
+from ...fetch_data.deribit.deribit_client import DeribitMarketContext
 
-import mysql.connector
-from .save_result2 import SaveResult
-from ..fetch_data.polymarket.polymarket_client import PolymarketContext
-from ..fetch_data.deribit.deribit_client import DeribitMarketContext
+logger = logging.getLogger(__name__)
 
-# 这些字段在 dataclass 里是 list/tuple，建议在 MySQL 表中用 JSON 类型存
-_JSON_FIELDS = {
-    "spot_iv_lower",
-    "spot_iv_upper",
-    "k1_ask_1_usd", "k1_ask_2_usd", "k1_ask_3_usd",
-    "k2_ask_1_usd", "k2_ask_2_usd", "k2_ask_3_usd",
-    "k1_bid_1_usd", "k1_bid_2_usd", "k1_bid_3_usd",
-    "k2_bid_1_usd", "k2_bid_2_usd", "k2_bid_3_usd",
-}
+@dataclass
+class SaveResult:
+    time: datetime
 
+    event_title: str
+    market_title: str
 
-def _normalize_datetime(dt):
-    """MySQL DATETIME 不存时区；如果是 aware datetime，则转成 UTC naive。"""
-    if dt is None:
-        return None
-    if getattr(dt, "tzinfo", None) is not None:
-        return dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt
+    event_id: str
+    market_id: str
 
+    yes_price: float
+    no_price: float
 
-def _prepare_row_for_mysql(row: Dict[str, Any]) -> Dict[str, Any]:
-    """把 list/tuple 转成 JSON 字符串，datetime 做必要归一化。"""
-    row = dict(row)  # copy
+    yes_token_id: str
+    no_token_id: str
 
-    # datetime
-    if "time" in row:
-        row["time"] = _normalize_datetime(row["time"])
+    yes_bid_price_1: float
+    yes_bid_price_size_1: float
+    yes_bid_price_2: float
+    yes_bid_price_size_2: float
+    yes_bid_price_3: float
+    yes_bid_price_size_3: float
 
-    # JSON fields
-    for k in _JSON_FIELDS:
-        if k in row and row[k] is not None:
-            row[k] = json.dumps(row[k], ensure_ascii=False, separators=(",", ":"))
+    yes_ask_price_1: float
+    yes_ask_price_1_size: float
+    yes_ask_price_2: float
+    yes_ask_price_2_size: float
+    yes_ask_price_3: float
+    yes_ask_price_3_size: float
 
-    return row
+    no_bid_price_1: float
+    no_bid_price_size_1: float
+    no_bid_price_2: float
+    no_bid_price_size_2: float
+    no_bid_price_3: float
+    no_bid_price_size_3: float
 
+    no_ask_price_1: float
+    no_ask_price_1_size: float
+    no_ask_price_2: float
+    no_ask_price_2_size: float
+    no_ask_price_3: float
+    no_ask_price_3_size: float
 
-def save_result_to_mysql(
-    pm_ctx: PolymarketContext,  # PolymarketContext
-    db_ctx: DeribitMarketContext,  # DeribitMarketContext
-    mysql_cfg: Dict[str, Any],
-    table: str = "raw_results",
-) -> Tuple["SaveResult", int]:
-    """
-    将 SaveResult 写入 MySQL: proarb.raw_results
-    mysql_cfg 示例：
-      {
-        "host": "127.0.0.1",
-        "port": 3307,
-        "user": "root",
-        "password": "root",
-        "database": "proarb",
-      }
-    返回：(row_obj, inserted_id)
-    """
-    # 1) 组装 dataclass（与你现有逻辑一致）
+    asset: str
+    # 现货价格
+    spot: float
+    # 合约名称
+    inst_k1: str
+    inst_k2: str
+    # k1 k2 代表的价格
+    k1_strike: float
+    k2_strike: float
+    K_poly: float
+    # BTC 计价
+    k1_bid_btc: float
+    k1_ask_btc: float
+    k2_bid_btc: float
+    k2_ask_btc: float
+    k1_mid_btc: float
+    k2_mid_btc: float
+    # USD 计价
+    k1_bid_usd: float
+    k1_ask_usd: float
+    k2_bid_usd: float
+    k2_ask_usd: float
+    k1_mid_usd: float
+    k2_mid_usd: float
+    # 波动率 / 手续费
+    k1_iv: float
+    k2_iv: float
+    spot_iv_lower: tuple
+    spot_iv_upper: tuple
+    k1_fee_approx: float
+    k2_fee_approx: float
+    mark_iv: float
+    # 时间与概率
+    k1_expiration_timestamp: float
+    T: float
+    days_to_expairy: float
+    r: float
+    deribit_prob: float
+    # asks & bids
+    k1_ask_1_usd: list
+    k1_ask_2_usd: list
+    k1_ask_3_usd: list
+    k2_ask_1_usd: list
+    k2_ask_2_usd: list
+    k2_ask_3_usd: list
+
+    k1_bid_1_usd: list
+    k1_bid_2_usd: list
+    k1_bid_3_usd: list
+    k2_bid_1_usd: list
+    k2_bid_2_usd: list
+    k2_bid_3_usd: list
+
+def save_result(pm_ctx: PolymarketContext, db_ctx: DeribitMarketContext):
     row_obj = SaveResult(
         time=pm_ctx.time,
         event_title=pm_ctx.event_title,
@@ -154,25 +196,7 @@ def save_result_to_mysql(
         k2_bid_3_usd=db_ctx.k2_bid_3_usd,
     )
 
-    # 2) 准备 row dict（list/tuple -> JSON；datetime 归一化）
-    row = _prepare_row_for_mysql(asdict(row_obj))
+    # Save to SQLite (primary storage)
+    SqliteHandler.save_to_db(row_dict=asdict(row_obj), class_obj=SaveResult)
 
-    # 3) 生成 INSERT SQL（列名全部加反引号，避免关键字冲突）
-    cols = list(row.keys())
-    col_sql = ", ".join(f"`{c}`" for c in cols)
-    placeholders = ", ".join(["%s"] * len(cols))
-    sql = f"INSERT INTO `{table}` ({col_sql}) VALUES ({placeholders})"
-
-    values = [row[c] for c in cols]
-
-    # 4) 写入数据库
-    conn = mysql.connector.connect(**mysql_cfg)
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, values)
-        conn.commit()
-        inserted_id = cur.lastrowid
-        cur.close()
-        return row_obj, inserted_id
-    finally:
-        conn.close()
+    return row_obj

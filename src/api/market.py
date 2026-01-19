@@ -19,7 +19,7 @@ from .models import (
 )
 from ..utils.signal_id_generator import generate_signal_id as gen_signal_id
 from ..utils.SqliteHandler import SqliteHandler
-from ..utils.save_raw_data import RawData
+from ..utils.save_data.save_raw_data import RawData
 
 logger = logging.getLogger(__name__)
 
