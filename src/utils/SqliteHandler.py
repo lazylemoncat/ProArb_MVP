@@ -1,17 +1,22 @@
 """
 SQLite Handler for ProArb data persistence.
 
-Provides parallel SQLite storage alongside CSV for all data operations.
+Primary SQLite storage for all data operations.
 Supports both dataclasses and Pydantic BaseModel.
 """
+import csv
 import json
 import logging
+import os
 import sqlite3
+import tempfile
 import threading
 from dataclasses import asdict, fields, is_dataclass
-from datetime import datetime
+from datetime import datetime, date, timezone
 from pathlib import Path
-from typing import Any, Optional, Type
+from typing import Any, Optional, Type, Union
+
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -500,6 +505,285 @@ class SqliteHandler:
         conn.commit()
 
         return cursor.rowcount
+
+    @staticmethod
+    def _deserialize_value(value: Any, field_name: str = "") -> Any:
+        """
+        Deserialize value from SQLite storage back to Python type.
+
+        Args:
+            value: Value from SQLite
+            field_name: Field name (for type hints)
+
+        Returns:
+            Deserialized Python value
+        """
+        if value is None:
+            return None
+
+        # Try to parse JSON strings (for lists, tuples, dicts)
+        if isinstance(value, str):
+            # Check if it looks like JSON
+            stripped = value.strip()
+            if stripped.startswith(('[', '{')) and stripped.endswith((']', '}')):
+                try:
+                    return json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+        return value
+
+    @staticmethod
+    def query_to_dataframe(
+        class_obj: Type,
+        where: Optional[str] = None,
+        params: tuple = (),
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+        db_path: str = DEFAULT_DB_PATH
+    ) -> pd.DataFrame:
+        """
+        Query a table and return results as pandas DataFrame.
+
+        Args:
+            class_obj: Dataclass or Pydantic model type
+            where: WHERE clause (without 'WHERE' keyword)
+            params: Query parameters for WHERE clause
+            order_by: ORDER BY clause (without 'ORDER BY' keyword)
+            limit: Maximum number of rows to return
+            offset: Number of rows to skip
+            db_path: Path to SQLite database
+
+        Returns:
+            pandas DataFrame with query results
+        """
+        rows = SqliteHandler.query_table(
+            class_obj=class_obj,
+            where=where,
+            params=params,
+            order_by=order_by,
+            limit=limit,
+            offset=offset,
+            db_path=db_path
+        )
+
+        if not rows:
+            # Return empty DataFrame with expected columns
+            model_fields = SqliteHandler._get_fields(class_obj)
+            columns = ['id', 'created_at'] + [name for name, _ in model_fields]
+            return pd.DataFrame(columns=columns)
+
+        df = pd.DataFrame(rows)
+
+        # Deserialize JSON fields
+        for col in df.columns:
+            df[col] = df[col].apply(lambda x: SqliteHandler._deserialize_value(x, col))
+
+        return df
+
+    @staticmethod
+    def export_to_csv(
+        class_obj: Type,
+        output_path: Optional[str] = None,
+        where: Optional[str] = None,
+        params: tuple = (),
+        order_by: Optional[str] = None,
+        limit: Optional[int] = None,
+        db_path: str = DEFAULT_DB_PATH,
+        include_header: bool = True
+    ) -> str:
+        """
+        Export table data to CSV file.
+
+        Args:
+            class_obj: Dataclass or Pydantic model type
+            output_path: Path for output CSV file (None = temp file)
+            where: WHERE clause for filtering
+            params: Query parameters
+            order_by: ORDER BY clause
+            limit: Maximum rows to export
+            db_path: Path to SQLite database
+            include_header: Whether to include header row
+
+        Returns:
+            Path to the generated CSV file
+        """
+        # Get data as DataFrame
+        df = SqliteHandler.query_to_dataframe(
+            class_obj=class_obj,
+            where=where,
+            params=params,
+            order_by=order_by,
+            limit=limit,
+            db_path=db_path
+        )
+
+        # Determine output path
+        if output_path is None:
+            # Create temp file
+            table_name = SqliteHandler._get_table_name(class_obj)
+            fd, output_path = tempfile.mkstemp(suffix='.csv', prefix=f'{table_name}_')
+            os.close(fd)
+
+        # Export to CSV
+        df.to_csv(output_path, index=False, header=include_header, quoting=csv.QUOTE_NONNUMERIC)
+
+        return output_path
+
+    @staticmethod
+    def export_raw_data_by_date(
+        target_date: Union[date, str],
+        output_path: Optional[str] = None,
+        db_path: str = DEFAULT_DB_PATH
+    ) -> Optional[str]:
+        """
+        Export raw data for a specific date to CSV file.
+
+        Args:
+            target_date: Target date (date object or 'YYYYMMDD' string)
+            output_path: Path for output CSV file (None = temp file)
+            db_path: Path to SQLite database
+
+        Returns:
+            Path to the generated CSV file, or None if no data
+        """
+        from ..utils.save_raw_data import RawData
+
+        # Convert date to string if needed
+        if isinstance(target_date, date):
+            date_str = target_date.strftime("%Y%m%d")
+        else:
+            date_str = target_date
+
+        # Calculate timestamp range for the date
+        try:
+            target_dt = datetime.strptime(date_str, "%Y%m%d").replace(tzinfo=timezone.utc)
+            start_ts = target_dt.timestamp()
+            end_ts = (target_dt.replace(hour=23, minute=59, second=59)).timestamp()
+        except ValueError:
+            logger.error(f"Invalid date format: {date_str}")
+            return None
+
+        # Query data for the date
+        where = "utc >= ? AND utc <= ?"
+        params = (start_ts, end_ts)
+
+        df = SqliteHandler.query_to_dataframe(
+            class_obj=RawData,
+            where=where,
+            params=params,
+            order_by="utc ASC",
+            db_path=db_path
+        )
+
+        if df.empty:
+            logger.info(f"No raw data found for date: {date_str}")
+            return None
+
+        # Determine output path
+        if output_path is None:
+            fd, output_path = tempfile.mkstemp(suffix='.csv', prefix=f'{date_str}_raw_')
+            os.close(fd)
+
+        # Export to CSV (exclude internal columns)
+        export_cols = [col for col in df.columns if col not in ('id', 'created_at')]
+        df[export_cols].to_csv(output_path, index=False, quoting=csv.QUOTE_NONNUMERIC)
+
+        logger.info(f"Exported {len(df)} rows of raw data for {date_str} to {output_path}")
+        return output_path
+
+    @staticmethod
+    def table_exists(
+        class_obj: Type,
+        db_path: str = DEFAULT_DB_PATH
+    ) -> bool:
+        """
+        Check if a table exists in the database.
+
+        Args:
+            class_obj: Dataclass or Pydantic model type
+            db_path: Path to SQLite database
+
+        Returns:
+            True if table exists, False otherwise
+        """
+        table_name = SqliteHandler._get_table_name(class_obj)
+        conn = SqliteHandler._get_connection(db_path)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,)
+        )
+        return cursor.fetchone() is not None
+
+    @staticmethod
+    def get_distinct_values(
+        class_obj: Type,
+        column: str,
+        where: Optional[str] = None,
+        params: tuple = (),
+        db_path: str = DEFAULT_DB_PATH
+    ) -> list[Any]:
+        """
+        Get distinct values from a column.
+
+        Args:
+            class_obj: Dataclass or Pydantic model type
+            column: Column name
+            where: WHERE clause
+            params: Query parameters
+            db_path: Path to SQLite database
+
+        Returns:
+            List of distinct values
+        """
+        table_name = SqliteHandler._get_table_name(class_obj)
+
+        sql = f'SELECT DISTINCT "{column}" FROM "{table_name}"'
+        if where:
+            sql += f" WHERE {where}"
+
+        rows = SqliteHandler.query(sql, params, db_path)
+        return [row[column] for row in rows if row[column] is not None]
+
+    @staticmethod
+    def get_latest_by_group(
+        class_obj: Type,
+        group_column: str,
+        order_column: str = "utc",
+        where: Optional[str] = None,
+        params: tuple = (),
+        db_path: str = DEFAULT_DB_PATH
+    ) -> list[dict]:
+        """
+        Get the latest row for each group (e.g., latest data per market_id).
+
+        Args:
+            class_obj: Dataclass or Pydantic model type
+            group_column: Column to group by (e.g., 'market_id')
+            order_column: Column to determine latest (e.g., 'utc')
+            where: WHERE clause for filtering
+            params: Query parameters
+            db_path: Path to SQLite database
+
+        Returns:
+            List of dictionaries, one per group
+        """
+        table_name = SqliteHandler._get_table_name(class_obj)
+
+        # Use window function to get latest per group
+        sql = f'''
+            SELECT * FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (PARTITION BY "{group_column}" ORDER BY "{order_column}" DESC) as rn
+                FROM "{table_name}"
+                {f"WHERE {where}" if where else ""}
+            ) WHERE rn = 1
+        '''
+
+        return SqliteHandler.query(sql, params, db_path)
 
     @staticmethod
     def close_all() -> None:

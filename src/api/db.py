@@ -4,13 +4,13 @@
 import logging
 import math
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import List
 
-import pandas as pd
 from fastapi import APIRouter, HTTPException
 
 from .models import DBRespone
+from ..utils.SqliteHandler import SqliteHandler
+from ..utils.save_raw_data import RawData
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def safe_float(value, default: float = 0.0) -> float:
     Returns:
         float 值（保证不是 NaN）
     """
-    if value is None or pd.isna(value):
+    if value is None:
         return default
     # 检查字符串形式的 NaN
     if isinstance(value, str) and value.lower() in ('nan', 'inf', '-inf', ''):
@@ -56,7 +56,7 @@ def safe_int(value, default: int = 0) -> int:
     Returns:
         int 值
     """
-    if value is None or pd.isna(value):
+    if value is None:
         return default
     try:
         return int(float(value))
@@ -104,7 +104,6 @@ def parse_deribit_instrument_name(instrument_name: str) -> tuple[str, str, int]:
             strike = int(parts[2])  # 100000
 
             # 解析日期 "17JAN25" -> "2025-01-17"
-            from datetime import datetime
             dt = datetime.strptime(date_str, "%d%b%y")
             expiry_date = dt.strftime("%Y-%m-%d")
 
@@ -134,25 +133,12 @@ def calculate_days_to_expiry(expiry_date_str: str, current_time: datetime) -> fl
         return 0.0
 
 
-def get_raw_csv_path_today() -> Path:
+def transform_row_to_db_response(row: dict) -> DBRespone:
     """
-    获取今天的 raw.csv 文件路径
-
-    Returns:
-        Path 对象
-    """
-    today = datetime.now(timezone.utc).date()
-    date_str = today.strftime("%Y%m%d")
-    csv_path = Path(f"data/{date_str}_raw.csv")
-    return csv_path
-
-
-def transform_row_to_db_response(row: pd.Series) -> DBRespone:
-    """
-    将 CSV 行数据转换为 DBRespone
+    将 SQLite 行数据转换为 DBRespone
 
     Args:
-        row: pandas Series (CSV 的一行)
+        row: dict (SQLite 的一行)
 
     Returns:
         DBRespone 对象
@@ -160,7 +146,7 @@ def transform_row_to_db_response(row: pd.Series) -> DBRespone:
     # 解析时间
     try:
         utc_val = row.get('utc')
-        if utc_val and not pd.isna(utc_val):
+        if utc_val is not None:
             dt = datetime.fromtimestamp(float(utc_val), tz=timezone.utc)
             timestamp = dt.isoformat()
         else:
@@ -252,40 +238,35 @@ def transform_row_to_db_response(row: pd.Series) -> DBRespone:
 @db_router.get("/api/db", response_model=List[DBRespone])
 async def get_db_market_data() -> List[DBRespone]:
     """
-    获取当前时刻的 Deribit 市场数据（从今天的 raw.csv 读取最新快照）
+    获取当前时刻的 Deribit 市场数据（从 SQLite 读取最新快照）
 
     Returns:
         当前所有 Deribit 市场的最新数据列表
     """
     try:
-        # 获取今天的 CSV 文件路径
-        csv_path = get_raw_csv_path_today()
+        # Get today's timestamp range
+        today = datetime.now(timezone.utc).date()
+        start_ts = datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        end_ts = datetime.combine(today, datetime.max.time()).replace(tzinfo=timezone.utc).timestamp()
 
-        if not csv_path.exists():
+        # Get latest data per market_id for today
+        rows = SqliteHandler.get_latest_by_group(
+            class_obj=RawData,
+            group_column="market_id",
+            order_column="utc",
+            where="utc >= ? AND utc <= ?",
+            params=(start_ts, end_ts)
+        )
+
+        if not rows:
             raise HTTPException(
                 status_code=404,
-                detail=f"No raw data file found for today: {csv_path.name}"
+                detail=f"No raw data found for today"
             )
-
-        # 读取 CSV 文件
-        logger.info(f"Reading raw data from: {csv_path}")
-        df = pd.read_csv(csv_path)
-
-        if df.empty:
-            return []
-
-        # 对每个市场，获取最新的数据
-        if 'utc' in df.columns and 'market_id' in df.columns:
-            # 按 market_id 分组，获取每个市场的最新时间戳
-            df = df.sort_values('utc', ascending=False)
-            df = df.groupby('market_id', as_index=False).first()
-        else:
-            # 如果没有必要字段，只返回最后一行
-            df = df.tail(1)
 
         # 转换为响应对象
         results = []
-        for _, row in df.iterrows():
+        for row in rows:
             try:
                 db_response = transform_row_to_db_response(row)
                 results.append(db_response)
