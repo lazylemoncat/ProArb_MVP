@@ -101,11 +101,11 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     Returns:
         PnlPositionDetail
     """
-    signal_id = str(row.get("signal_id", ""))
-    trade_id = str(row.get("trade_id", ""))
-    timestamp = str(row.get("entry_timestamp", ""))
-    market_title = str(row.get("market_title", ""))
-    market_id = str(row.get("market_id", ""))
+    signal_id = row.get("signal_id") or ""
+    trade_id = row.get("trade_id") or ""
+    timestamp = row.get("entry_timestamp") or ""
+    market_title = row.get("market_title") or ""
+    market_id = row.get("market_id") or ""
 
     # 入场数据 (使用 _safe_float 处理 NaN/inf)
     pm_entry_cost = _safe_float(row.get("pm_entry_cost", 0))
@@ -114,11 +114,11 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     entry_spot = _safe_float(row.get("spot", 0))
     contracts = _safe_float(row.get("contracts", 0))
     strategy = int(_safe_float(row.get("strategy", 2), 2))
-    direction = str(row.get("direction", "")).lower()
+    direction = (row.get("direction") or "").lower()
 
     # Deribit 合约信息
-    inst_k1 = str(row.get("inst_k1", ""))
-    inst_k2 = str(row.get("inst_k2", ""))
+    inst_k1 = row.get("inst_k1") or ""
+    inst_k2 = row.get("inst_k2") or ""
     dr_k1_price = _safe_float(row.get("dr_k1_price", 0))
     dr_k2_price = _safe_float(row.get("dr_k2_price", 0))
 

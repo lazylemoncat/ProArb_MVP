@@ -53,12 +53,15 @@ def extract_asset_and_strike_from_market_id(market_id: str) -> tuple[str, float]
         market_id: 市场ID，格式如 "BTC_108000_NO" 或 "ETH_3500_YES"
 
     Returns:
-        (asset, strike) 元组
+        (asset, strike) 元组，asset 保证为 "BTC" 或 "ETH"
     """
     try:
         parts = market_id.split('_')
         if len(parts) >= 2:
-            asset = parts[0]  # BTC 或 ETH
+            asset = parts[0].upper()  # BTC 或 ETH
+            # 确保 asset 是有效的 Literal 值
+            if asset not in ('BTC', 'ETH'):
+                asset = 'BTC'
             strike = float(parts[1])  # 108000
             return asset, strike
     except (ValueError, IndexError):

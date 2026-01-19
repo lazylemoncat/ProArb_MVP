@@ -15,6 +15,7 @@ ev_router = APIRouter(tags=["ev"])
 def clean_nan_values(data: dict) -> dict:
     """
     清理字典中的 NaN 值，将其替换为 None
+    同时处理必填字符串字段的 None 值
 
     Args:
         data: 包含可能 NaN 值的字典
@@ -22,11 +23,25 @@ def clean_nan_values(data: dict) -> dict:
     Returns:
         清理后的字典
     """
+    # 必填字符串字段列表
+    required_string_fields = {'signal_id', 'timestamp', 'market_title'}
+    # Literal 字段默认值
+    literal_defaults = {
+        'strategy': 2,
+        'direction': 'NO'
+    }
+
     cleaned = {}
     for key, value in data.items():
         if isinstance(value, float) and math.isnan(value):
             # 对于数值字段，NaN 替换为 None（JSON 中的 null）
             cleaned[key] = None
+        elif key in required_string_fields:
+            # 必填字符串字段，None 替换为空字符串
+            cleaned[key] = value if value is not None else ""
+        elif key in literal_defaults and value is None:
+            # Literal 字段，使用默认值
+            cleaned[key] = literal_defaults[key]
         else:
             cleaned[key] = value
     return cleaned

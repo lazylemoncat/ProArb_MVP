@@ -96,16 +96,16 @@ def transform_position_row(row: dict) -> dict:
 
     return {
         # A. 基础索引
-        "signal_id": row.get("signal_id", ""),
-        "timestamp": str(row.get("entry_timestamp", "")),
-        "market_title": str(row.get("market_title", "")),
+        "signal_id": row.get("signal_id") or "",
+        "timestamp": str(row.get("entry_timestamp") or ""),
+        "market_title": str(row.get("market_title") or ""),
 
         # B. 订单信息
         "dr_order_id": str(row.get("dr_order_id", "")) if row.get("dr_order_id") else None,
         "pm_order_id": str(row.get("pm_order_id", "")) if row.get("pm_order_id") else None,
-        "status": str(row.get("status", "OPEN")).upper(),
+        "status": str(row.get("status") or "OPEN").upper(),
         "amount_usd": safe_float(row.get("pm_entry_cost")),
-        "action": "Sell" if str(row.get("direction")).lower() == "no" else "Buy",
+        "action": "Sell" if str(row.get("direction") or "").lower() == "no" else "Buy",
 
         # C. Deribit 合约信息
         "dr_k1_instruments": str(row.get("inst_k1", "")) if row.get("inst_k1") else None,
