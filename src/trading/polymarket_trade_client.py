@@ -2,7 +2,7 @@ import logging
 from decimal import ROUND_DOWN, Decimal
 from typing import Any, Dict, Optional
 
-from py_clob_client.clob_types import OrderArgs
+from py_clob_client.clob_types import MarketOrderArgs
 from py_clob_client.order_builder.constants import SELL
 
 from .polymarket_trade import Polymarket_trade
@@ -22,14 +22,14 @@ class Polymarket_trade_client:
             raise Exception("no trades")
         trade_size = trades[0]["size"]
         token_id = trades[0]["asset_id"]
-        sell_order = client.create_and_post_order(
-            OrderArgs(
+        sell_order = client.create_market_order(
+            MarketOrderArgs(
                 token_id=token_id,
-                price=price,
-                size=float(trade_size),
+                amount=float(trade_size),
                 side=SELL,
             )
         )
+        client.post_order(sell_order)
         return sell_order
 
 
