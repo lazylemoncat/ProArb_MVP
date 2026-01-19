@@ -1,17 +1,13 @@
 """
-Save EV (Expected Value) data directly to ev.csv and SQLite
+Save EV (Expected Value) data to SQLite database
 """
 import logging
-from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Optional
-
-import pandas as pd
 
 from ..api.models import EVResponse
 from ..fetch_data.deribit.deribit_client import DeribitMarketContext
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
-from .CsvHandler import CsvHandler
 from .SqliteHandler import SqliteHandler
 
 logger = logging.getLogger(__name__)
@@ -41,10 +37,9 @@ def save_ev(
     theta_adj_ev: float,
     net_ev: float,
     roi_pct: float,
-    ev_csv_path: str = "./data/ev.csv",
 ) -> EVResponse:
     """
-    Save EV data directly to ev.csv file.
+    Save EV data to SQLite database.
 
     Args:
         signal_id: Unique signal identifier
@@ -61,25 +56,21 @@ def save_ev(
         theta_adj_ev: Theta-adjusted expected value
         net_ev: Net expected value (after fees)
         roi_pct: Return on investment percentage
-        ev_csv_path: Path to ev.csv file
 
     Returns:
         EVResponse object that was saved
     """
-    # Ensure CSV has all required columns
-    expected_columns = pydantic_field_names(EVResponse)
-    CsvHandler.check_csv(ev_csv_path, expected_columns=expected_columns)
+    # Check for duplicates in SQLite
+    existing = SqliteHandler.query_table(
+        class_obj=EVResponse,
+        where='signal_id = ?',
+        params=(signal_id,),
+        limit=1
+    )
 
-    # Read existing data to check for duplicates
-    df = pd.read_csv(ev_csv_path)
-    existing_ids = df["signal_id"].tolist() if "signal_id" in df.columns else []
-
-    # Skip if signal_id already exists
-    if signal_id in existing_ids:
+    if existing:
         # Return existing entry
-        idx = df.index[df["signal_id"] == signal_id].tolist()[0]
-        row = df.loc[idx]
-        return EVResponse.model_validate(row.to_dict())
+        return EVResponse.model_validate(existing[0])
 
     # Determine direction based on strategy
     direction = "YES" if strategy == 1 else "NO"
@@ -127,17 +118,8 @@ def save_ev(
         roi_model_pct=roi_pct,
     )
 
-    # Convert to dict and save
+    # Save to SQLite (primary storage)
     row_data = ev_data.model_dump() if hasattr(ev_data, "model_dump") else ev_data.dict()
-    new_row = pd.Series(row_data).reindex(df.columns)
-
-    df.loc[len(df)] = new_row
-    df.to_csv(ev_csv_path, index=False)
-
-    # Save to SQLite
-    try:
-        SqliteHandler.save_to_db(row_dict=row_data, class_obj=EVResponse)
-    except Exception as e:
-        logger.warning(f"Failed to save EV data to SQLite: {e}")
+    SqliteHandler.save_to_db(row_dict=row_data, class_obj=EVResponse)
 
     return ev_data

@@ -13,12 +13,10 @@
     ROI 低于规定 1.0 时, 跳过交易
     概率差小于规定 0.01 时, 跳过交易
 """
-import csv
-from dataclasses import dataclass, fields as dataclass_fields
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from pathlib import Path
 
-from ..utils.CsvHandler import CsvHandler
+from ..utils.SqliteHandler import SqliteHandler
 from ..utils.save_position import SavePosition
 
 
@@ -46,28 +44,24 @@ class Trade_filter:
     min_roi_pct: float                  # 最小允许 roi
     min_prob_edge_pct: float            # 最小允许概率差
 
-def _load_positions(csv_path: str = "data/positions.csv") -> list[dict]:
-    # 检查并确保 CSV 文件包含所有必需的列
-    positions_columns = [f.name for f in dataclass_fields(SavePosition)]
-    CsvHandler.check_csv(csv_path, positions_columns, fill_value="")
-
-    path = Path(csv_path)
-    if not path.exists():
-        return []
-
+def _load_positions() -> list[dict]:
+    """从 SQLite 加载所有持仓数据"""
     try:
-        with path.open("r", newline="", encoding="utf-8") as f:
-            return list(csv.DictReader(f))
+        return SqliteHandler.query_table(class_obj=SavePosition)
     except Exception:
         return []
-    
+
 def _count_daily_trades(rows: list[dict], day: date) -> int:
     """统计指定日期内已执行的真实交易数量，用于每日最多 1 笔的仓位管理规则。"""
     count = 0
     for row in rows:
         ts = row.get("entry_timestamp") or ""
         try:
-            ts_date = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+            # Handle both string and datetime types
+            if isinstance(ts, datetime):
+                ts_date = ts.date()
+            else:
+                ts_date = datetime.fromisoformat(str(ts).replace("Z", "+00:00")).date()
         except Exception:
             continue
         if ts_date == day and str(row.get("status") or "").upper() != "DRY_RUN":
@@ -76,11 +70,11 @@ def _count_daily_trades(rows: list[dict], day: date) -> int:
 
 
 def _count_open_positions(rows: list[dict]) -> int:
-    """计算当前 CSV 中仍为 OPEN 的记录数量，对应最大持仓数 3 的限制。"""
+    """计算当前 SQLite 中仍为 OPEN 的记录数量，对应最大持仓数 3 的限制。"""
     return sum(1 for row in rows if str(row.get("status") or "").upper() == "OPEN")
 
 def _has_open_position_for_market(rows: list[dict], market_id: str) -> bool:
-    """检查某市场是否已有未平仓头寸，落实“同一市场不加仓”规则。"""
+    """检查某市场是否已有未平仓头寸，落实"同一市场不加仓"规则。"""
     market_id = str(market_id)
     for row in rows:
         if (
@@ -127,7 +121,7 @@ def check_repeat_open_position(trade_filter_input: Trade_filter_input, trade_fil
 
     if trade_filter.allow_repeat_open_position:
         return True, details
-    
+
     positions_rows = _load_positions()
     if _has_open_position_for_market(positions_rows, trade_filter_input.market_id):
         details += f"{trade_filter_input.market_id} 已有持仓且规则不允许重复开仓"

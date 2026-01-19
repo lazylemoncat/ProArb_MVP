@@ -4,13 +4,13 @@
 import logging
 import math
 from datetime import datetime, timezone, date, timedelta
-from pathlib import Path
 from typing import List, Optional
 
-import pandas as pd
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from .models import PMResponse
+from ..utils.SqliteHandler import SqliteHandler
+from ..utils.save_raw_data import RawData
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def safe_float(value, default: float = 0.0) -> float:
     Returns:
         float 值（保证不是 NaN）
     """
-    if value is None or pd.isna(value):
+    if value is None:
         return default
     # 检查字符串形式的 NaN
     if isinstance(value, str) and value.lower() in ('nan', 'inf', '-inf', ''):
@@ -66,32 +66,12 @@ def extract_asset_and_strike_from_market_id(market_id: str) -> tuple[str, float]
     return 'BTC', 0.0
 
 
-def get_raw_csv_path(target_date: Optional[date] = None) -> Path:
+def transform_row_to_pm_response(row: dict) -> PMResponse:
     """
-    获取 raw.csv 文件路径（支持日期分割）
+    将 SQLite 行数据转换为 PMResponse
 
     Args:
-        target_date: 目标日期，None 表示今天
-
-    Returns:
-        Path 对象
-    """
-    if target_date is None:
-        target_date = datetime.now(timezone.utc).date()
-
-    # 使用格式: YYYYMMDD_raw.csv
-    date_str = target_date.strftime("%Y%m%d")
-    csv_path = Path(f"data/{date_str}_raw.csv")
-
-    return csv_path
-
-
-def transform_row_to_pm_response(row: pd.Series) -> PMResponse:
-    """
-    将 CSV 行数据转换为 PMResponse
-
-    Args:
-        row: pandas Series (CSV 的一行)
+        row: dict (SQLite 的一行)
 
     Returns:
         PMResponse 对象
@@ -103,7 +83,7 @@ def transform_row_to_pm_response(row: pd.Series) -> PMResponse:
     # 解析时间 - 使用 utc 字段（Unix 时间戳）
     try:
         utc_val = row.get('utc')
-        if utc_val and not pd.isna(utc_val):
+        if utc_val is not None:
             dt = datetime.fromtimestamp(float(utc_val), tz=timezone.utc)
             timestamp = dt.isoformat()
         else:
@@ -155,40 +135,35 @@ def transform_row_to_pm_response(row: pd.Series) -> PMResponse:
 @pm_router.get("/api/pm", response_model=List[PMResponse])
 async def get_pm_market_data() -> List[PMResponse]:
     """
-    获取当前时刻的 Polymarket 市场数据（从今天的 raw.csv 读取最新快照）
+    获取当前时刻的 Polymarket 市场数据（从 SQLite 读取最新快照）
 
     Returns:
         当前所有 Polymarket 市场的最新数据列表
     """
     try:
-        # 获取今天的 CSV 文件路径
-        csv_path = get_raw_csv_path(target_date=None)  # None = today
+        # Get today's timestamp range
+        today = datetime.now(timezone.utc).date()
+        start_ts = datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+        end_ts = datetime.combine(today, datetime.max.time()).replace(tzinfo=timezone.utc).timestamp()
 
-        if not csv_path.exists():
+        # Get latest data per market_id for today
+        rows = SqliteHandler.get_latest_by_group(
+            class_obj=RawData,
+            group_column="market_id",
+            order_column="utc",
+            where="utc >= ? AND utc <= ?",
+            params=(start_ts, end_ts)
+        )
+
+        if not rows:
             raise HTTPException(
                 status_code=404,
-                detail=f"No raw data file found for today: {csv_path.name}"
+                detail=f"No raw data found for today"
             )
-
-        # 读取 CSV 文件
-        logger.info(f"Reading raw data from: {csv_path}")
-        df = pd.read_csv(csv_path)
-
-        if df.empty:
-            return []
-
-        # 对每个市场，获取最新的数据
-        if 'utc' in df.columns and 'market_id' in df.columns:
-            # 按 market_id 分组，获取每个市场的最新时间戳
-            df = df.sort_values('utc', ascending=False)
-            df = df.groupby('market_id', as_index=False).first()
-        else:
-            # 如果没有必要字段，只返回最后一行
-            df = df.tail(1)
 
         # 转换为响应对象
         results = []
-        for _, row in df.iterrows():
+        for row in rows:
             try:
                 pm_response = transform_row_to_pm_response(row)
                 results.append(pm_response)
