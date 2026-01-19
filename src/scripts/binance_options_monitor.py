@@ -13,6 +13,10 @@ API Endpoints used:
     - GET /eapi/v1/depth - Orderbook depth (bid/ask levels)
     - GET /eapi/v1/mark - Mark price and IV
     - GET /eapi/v1/ticker - 24hr ticker statistics
+
+Note:
+    Binance Options API (EAPI) may have regional restrictions.
+    If you encounter connection issues, try using a VPN or proxy.
 """
 
 import asyncio
@@ -32,13 +36,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Binance EAPI base URL
-BINANCE_EAPI_BASE_URL = "https://eapi.binance.com"
+# Binance EAPI base URLs (try in order if one fails)
+BINANCE_EAPI_BASE_URLS = [
+    "https://eapi.binance.com",
+    "https://vapi.binance.com",  # Alternative endpoint
+]
 
 # Default configuration
 DEFAULT_CHECK_INTERVAL_SEC = 10
 DEFAULT_STRIKE_OFFSETS = [-3000, -2000, -1000, 1000, 4000, 5000]  # Offsets from rounded spot
 DEFAULT_CSV_PATH = "./data/binance.csv"
+DEFAULT_TIMEOUT_SEC = 30  # Increased timeout
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY_SEC = 2  # Base delay for exponential backoff
 
 
 @dataclass
@@ -179,11 +189,110 @@ class BinanceOptionsSnapshot:
 
 
 class BinanceOptionsAPI:
-    """Binance European Options API client."""
+    """Binance European Options API client with retry logic."""
 
-    def __init__(self, session: aiohttp.ClientSession):
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str = None,
+        timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_delay_sec: int = DEFAULT_RETRY_DELAY_SEC
+    ):
         self.session = session
-        self.base_url = BINANCE_EAPI_BASE_URL
+        self.base_urls = BINANCE_EAPI_BASE_URLS if base_url is None else [base_url]
+        self.current_base_url_idx = 0
+        self.timeout = aiohttp.ClientTimeout(total=timeout_sec)
+        self.max_retries = max_retries
+        self.retry_delay_sec = retry_delay_sec
+
+    @property
+    def base_url(self) -> str:
+        """Get current base URL."""
+        return self.base_urls[self.current_base_url_idx]
+
+    def _switch_base_url(self) -> bool:
+        """
+        Switch to next available base URL.
+
+        Returns:
+            True if switched successfully, False if no more URLs available
+        """
+        if self.current_base_url_idx < len(self.base_urls) - 1:
+            self.current_base_url_idx += 1
+            logger.info(f"Switching to alternative base URL: {self.base_url}")
+            return True
+        return False
+
+    async def _request_with_retry(
+        self,
+        endpoint: str,
+        params: dict = None,
+        description: str = "API request"
+    ) -> dict:
+        """
+        Make HTTP request with retry logic and exponential backoff.
+
+        Args:
+            endpoint: API endpoint path (e.g., /eapi/v1/index)
+            params: Query parameters
+            description: Description for logging
+
+        Returns:
+            Response JSON as dict
+
+        Raises:
+            Exception: If all retries fail
+        """
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            for url_idx in range(len(self.base_urls)):
+                base_url = self.base_urls[(self.current_base_url_idx + url_idx) % len(self.base_urls)]
+                url = f"{base_url}{endpoint}"
+
+                try:
+                    logger.debug(f"{description}: attempt {attempt + 1}/{self.max_retries}, URL: {url}")
+
+                    async with self.session.get(
+                        url,
+                        params=params,
+                        timeout=self.timeout
+                    ) as resp:
+                        if resp.status == 200:
+                            # Update current base URL to the working one
+                            self.current_base_url_idx = (self.current_base_url_idx + url_idx) % len(self.base_urls)
+                            return await resp.json()
+                        elif resp.status == 429:
+                            # Rate limited - wait and retry
+                            retry_after = int(resp.headers.get("Retry-After", self.retry_delay_sec))
+                            logger.warning(f"Rate limited. Waiting {retry_after}s before retry...")
+                            await asyncio.sleep(retry_after)
+                            continue
+                        else:
+                            text = await resp.text()
+                            last_error = Exception(f"{description} failed: {resp.status} - {text}")
+                            logger.warning(f"{description} failed with status {resp.status}: {text}")
+
+                except asyncio.TimeoutError as e:
+                    last_error = e
+                    logger.warning(f"{description} timeout on {base_url} (attempt {attempt + 1})")
+
+                except aiohttp.ClientError as e:
+                    last_error = e
+                    logger.warning(f"{description} connection error on {base_url}: {e}")
+
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"{description} unexpected error: {e}")
+
+            # Exponential backoff before next retry round
+            if attempt < self.max_retries - 1:
+                delay = self.retry_delay_sec * (2 ** attempt)
+                logger.info(f"Retrying in {delay}s (attempt {attempt + 2}/{self.max_retries})...")
+                await asyncio.sleep(delay)
+
+        raise Exception(f"{description} failed after {self.max_retries} attempts: {last_error}")
 
     async def get_index_price(self, underlying: str = "BTCUSDT") -> float:
         """
@@ -195,15 +304,13 @@ class BinanceOptionsAPI:
         Returns:
             Current index price as float
         """
-        url = f"{self.base_url}/eapi/v1/index"
         params = {"underlying": underlying}
-
-        async with self.session.get(url, params=params, timeout=10) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                raise Exception(f"Failed to get index price: {resp.status} - {text}")
-            data = await resp.json()
-            return float(data.get("indexPrice", 0))
+        data = await self._request_with_retry(
+            "/eapi/v1/index",
+            params=params,
+            description="Get index price"
+        )
+        return float(data.get("indexPrice", 0))
 
     async def get_exchange_info(self) -> dict:
         """
@@ -212,13 +319,10 @@ class BinanceOptionsAPI:
         Returns:
             Exchange info dict with optionSymbols list
         """
-        url = f"{self.base_url}/eapi/v1/exchangeInfo"
-
-        async with self.session.get(url, timeout=10) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                raise Exception(f"Failed to get exchange info: {resp.status} - {text}")
-            return await resp.json()
+        return await self._request_with_retry(
+            "/eapi/v1/exchangeInfo",
+            description="Get exchange info"
+        )
 
     async def get_depth(self, symbol: str, limit: int = 10) -> dict:
         """
@@ -231,15 +335,17 @@ class BinanceOptionsAPI:
         Returns:
             Orderbook dict with bids and asks
         """
-        url = f"{self.base_url}/eapi/v1/depth"
         params = {"symbol": symbol, "limit": limit}
 
-        async with self.session.get(url, params=params, timeout=10) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                logger.warning(f"Failed to get depth for {symbol}: {resp.status} - {text}")
-                return {"bids": [], "asks": []}
-            return await resp.json()
+        try:
+            return await self._request_with_retry(
+                "/eapi/v1/depth",
+                params=params,
+                description=f"Get depth for {symbol}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to get depth for {symbol}: {e}")
+            return {"bids": [], "asks": []}
 
     async def get_mark_price(self, symbol: Optional[str] = None) -> list:
         """
@@ -251,20 +357,20 @@ class BinanceOptionsAPI:
         Returns:
             List of mark price data dicts
         """
-        url = f"{self.base_url}/eapi/v1/mark"
         params = {}
         if symbol:
             params["symbol"] = symbol
 
-        async with self.session.get(url, params=params, timeout=10) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                raise Exception(f"Failed to get mark price: {resp.status} - {text}")
-            data = await resp.json()
-            # Returns list when no symbol specified, single dict when symbol specified
-            if isinstance(data, list):
-                return data
-            return [data]
+        data = await self._request_with_retry(
+            "/eapi/v1/mark",
+            params=params if params else None,
+            description="Get mark price"
+        )
+
+        # Returns list when no symbol specified, single dict when symbol specified
+        if isinstance(data, list):
+            return data
+        return [data]
 
     async def get_ticker(self, symbol: Optional[str] = None) -> list:
         """
@@ -276,19 +382,19 @@ class BinanceOptionsAPI:
         Returns:
             List of ticker data dicts
         """
-        url = f"{self.base_url}/eapi/v1/ticker"
         params = {}
         if symbol:
             params["symbol"] = symbol
 
-        async with self.session.get(url, params=params, timeout=10) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                raise Exception(f"Failed to get ticker: {resp.status} - {text}")
-            data = await resp.json()
-            if isinstance(data, list):
-                return data
-            return [data]
+        data = await self._request_with_retry(
+            "/eapi/v1/ticker",
+            params=params if params else None,
+            description="Get ticker"
+        )
+
+        if isinstance(data, list):
+            return data
+        return [data]
 
 
 class BinanceOptionsMonitor:
@@ -303,11 +409,19 @@ class BinanceOptionsMonitor:
         self,
         csv_path: str = DEFAULT_CSV_PATH,
         check_interval_sec: int = DEFAULT_CHECK_INTERVAL_SEC,
-        strike_offsets: list = None
+        strike_offsets: list = None,
+        base_url: str = None,
+        timeout_sec: int = DEFAULT_TIMEOUT_SEC,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        proxy: str = None
     ):
         self.csv_path = csv_path
         self.check_interval_sec = check_interval_sec
         self.strike_offsets = strike_offsets or DEFAULT_STRIKE_OFFSETS
+        self.base_url = base_url
+        self.timeout_sec = timeout_sec
+        self.max_retries = max_retries
+        self.proxy = proxy
         self.session: Optional[aiohttp.ClientSession] = None
         self.api: Optional[BinanceOptionsAPI] = None
 
@@ -640,15 +754,43 @@ class BinanceOptionsMonitor:
             return True
         return False
 
+    def _create_session(self) -> aiohttp.ClientSession:
+        """Create aiohttp session with optional proxy support."""
+        connector = None
+        if self.proxy:
+            logger.info(f"Using proxy: {self.proxy}")
+
+        # Configure TCP connector with longer timeouts
+        connector = aiohttp.TCPConnector(
+            limit=10,
+            ttl_dns_cache=300,
+            enable_cleanup_closed=True
+        )
+
+        return aiohttp.ClientSession(
+            connector=connector,
+            trust_env=True  # Respect HTTP_PROXY/HTTPS_PROXY environment variables
+        )
+
     async def run_loop(self) -> None:
         """Run continuous monitoring loop."""
         logger.info(f"Starting Binance options monitor (interval: {self.check_interval_sec}s)")
         logger.info(f"Strike offsets: {self.strike_offsets}")
         logger.info(f"CSV path: {self.csv_path}")
+        logger.info(f"Timeout: {self.timeout_sec}s, Max retries: {self.max_retries}")
+        if self.base_url:
+            logger.info(f"Base URL: {self.base_url}")
+        if self.proxy:
+            logger.info(f"Proxy: {self.proxy}")
 
-        async with aiohttp.ClientSession() as session:
+        async with self._create_session() as session:
             self.session = session
-            self.api = BinanceOptionsAPI(session)
+            self.api = BinanceOptionsAPI(
+                session,
+                base_url=self.base_url,
+                timeout_sec=self.timeout_sec,
+                max_retries=self.max_retries
+            )
 
             while True:
                 try:
@@ -662,9 +804,14 @@ class BinanceOptionsMonitor:
 
     async def run_single(self) -> None:
         """Run a single fetch (for testing)."""
-        async with aiohttp.ClientSession() as session:
+        async with self._create_session() as session:
             self.session = session
-            self.api = BinanceOptionsAPI(session)
+            self.api = BinanceOptionsAPI(
+                session,
+                base_url=self.base_url,
+                timeout_sec=self.timeout_sec,
+                max_retries=self.max_retries
+            )
             await self.run_once()
 
 
@@ -672,7 +819,32 @@ async def main():
     """Main entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Binance BTC Options Liquidity Monitor")
+    parser = argparse.ArgumentParser(
+        description="Binance BTC Options Liquidity Monitor",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic usage (continuous monitoring)
+  python -m src.scripts.binance_options_monitor
+
+  # Single fetch for testing
+  python -m src.scripts.binance_options_monitor --once
+
+  # Custom strike offsets
+  python -m src.scripts.binance_options_monitor --offsets "-3000,-2000,-1000,1000,2000,3000"
+
+  # With proxy (for regions where Binance is restricted)
+  python -m src.scripts.binance_options_monitor --proxy "http://127.0.0.1:7890"
+
+  # Or set environment variable:
+  export HTTPS_PROXY="http://127.0.0.1:7890"
+  python -m src.scripts.binance_options_monitor
+
+Note:
+  Binance Options API may be restricted in certain regions.
+  If you encounter timeout errors, try using a VPN or proxy.
+        """
+    )
     parser.add_argument(
         "--csv",
         default=DEFAULT_CSV_PATH,
@@ -695,8 +867,47 @@ async def main():
         default=None,
         help="Comma-separated strike offsets (e.g., '-3000,-2000,-1000,1000,4000,5000')"
     )
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help=f"Binance EAPI base URL (default: tries {BINANCE_EAPI_BASE_URLS})"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT_SEC,
+        help=f"Request timeout in seconds (default: {DEFAULT_TIMEOUT_SEC})"
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=DEFAULT_MAX_RETRIES,
+        help=f"Maximum retry attempts (default: {DEFAULT_MAX_RETRIES})"
+    )
+    parser.add_argument(
+        "--proxy",
+        type=str,
+        default=None,
+        help="HTTP/HTTPS proxy URL (e.g., 'http://127.0.0.1:7890'). "
+             "Can also use HTTPS_PROXY environment variable."
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging"
+    )
 
     args = parser.parse_args()
+
+    # Set logging level
+    if args.debug:
+        logging.getLogger(__name__).setLevel(logging.DEBUG)
+
+    # Set proxy environment variable if provided
+    if args.proxy:
+        os.environ["HTTPS_PROXY"] = args.proxy
+        os.environ["HTTP_PROXY"] = args.proxy
 
     # Parse offsets if provided
     strike_offsets = None
@@ -706,7 +917,11 @@ async def main():
     monitor = BinanceOptionsMonitor(
         csv_path=args.csv,
         check_interval_sec=args.interval,
-        strike_offsets=strike_offsets
+        strike_offsets=strike_offsets,
+        base_url=args.base_url,
+        timeout_sec=args.timeout,
+        max_retries=args.max_retries,
+        proxy=args.proxy
     )
 
     if args.once:
