@@ -10,7 +10,6 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
-import pandas as pd
 from fastapi import APIRouter, Query
 
 from .models import (
