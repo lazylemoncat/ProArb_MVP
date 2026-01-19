@@ -1,14 +1,13 @@
 import logging
 from typing import Optional
 import math
+import json
 
 import pandas as pd
 from fastapi import APIRouter, Query
-import ast
-from dataclasses import fields
 
 from .models import PositionResponse
-from ..utils.CsvHandler import CsvHandler
+from ..utils.SqliteHandler import SqliteHandler
 from ..utils.save_position import SavePosition
 
 logger = logging.getLogger(__name__)
@@ -56,95 +55,32 @@ def parse_iso_timestamp(time_str: str) -> Optional[pd.Timestamp]:
         return None
 
 
-def filter_positions_by_time(
-    df: pd.DataFrame,
-    start_time: Optional[str],
-    end_time: Optional[str],
-    timestamp_col: str = "entry_timestamp"
-) -> pd.DataFrame:
-    """
-    按时间范围过滤 positions DataFrame
+def parse_tuple(value):
+    """解析可能是 JSON 字符串的 tuple 值"""
+    if value is None:
+        return (0, 0)
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, (list, tuple)):
+                return tuple(parsed)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Try ast.literal_eval as fallback
+        try:
+            import ast
+            return ast.literal_eval(value)
+        except:
+            pass
+    return (0, 0)
 
-    Args:
-        df: positions DataFrame
-        start_time: 起始时间 (ISO 格式)
-        end_time: 结束时间 (ISO 格式)
-        timestamp_col: 时间戳列名
-
-    Returns:
-        过滤后的 DataFrame
-    """
-    if df.empty or timestamp_col not in df.columns:
-        return df
-
-    # 转换时间戳列为 datetime
-    df['_ts_parsed'] = pd.to_datetime(df[timestamp_col], errors='coerce')
-
-    if start_time:
-        start_ts = parse_iso_timestamp(start_time)
-        if start_ts:
-            df = df[df['_ts_parsed'] >= start_ts]
-        else:
-            logger.warning(f"Invalid start_time format: {start_time}")
-
-    if end_time:
-        end_ts = parse_iso_timestamp(end_time)
-        if end_ts:
-            df = df[df['_ts_parsed'] <= end_ts]
-        else:
-            logger.warning(f"Invalid end_time format: {end_time}")
-
-    # 按时间倒序排序（最新的在前）
-    df = df.sort_values('_ts_parsed', ascending=False)
-
-    # 删除临时列
-    df = df.drop(columns=['_ts_parsed'])
-
-    return df
-
-# 获取 positions.csv 的期望列
-POSITIONS_EXPECTED_COLUMNS = [f.name for f in fields(SavePosition)]
-
-# 定义 token_id 等字段的数据类型（防止大整数被转换为科学计数法）
-POSITIONS_DTYPE_SPEC = {
-    "yes_token_id": str,
-    "no_token_id": str,
-    "event_id": str,
-    "market_id": str,
-    "trade_id": str,
-    "signal_id": str
-}
-
-# 定义字符串字段的默认填充值（用于新增列）
-POSITIONS_FILL_VALUES = {
-    'signal_id': '',
-    'trade_id': '',
-    'event_id': '',
-    'market_id': '',
-    'yes_token_id': '',
-    'no_token_id': '',
-    'asset': '',
-    'inst_k1': '',
-    'inst_k2': '',
-    'event_title': '',
-    'market_title': '',
-    'direction': '',
-    'status': '',
-}
 
 def transform_position_row(row: dict) -> dict:
-    """将 CSV 平铺数据转换为扁平化的 PositionResponse 格式"""
-    # 解析 tuple 字符串
-    def parse_tuple(value):
-        if isinstance(value, str):
-            try:
-                return ast.literal_eval(value)
-            except:
-                return (0, 0)
-        return value
-
-    spot_iv_lower = parse_tuple(row.get("spot_iv_lower", "(0, 0)"))
-    spot_iv_upper = parse_tuple(row.get("spot_iv_upper", "(0, 0)"))
+    """将 SQLite 数据转换为扁平化的 PositionResponse 格式"""
+    spot_iv_lower = parse_tuple(row.get("spot_iv_lower"))
+    spot_iv_upper = parse_tuple(row.get("spot_iv_upper"))
 
     # 处理 settlement_price，如果值为 NaN 或空则返回 None
     def safe_settlement_price(value):
@@ -207,6 +143,42 @@ def transform_position_row(row: dict) -> dict:
         "dr_index_price_t": safe_settlement_price(row.get("settlement_index_price")),
     }
 
+
+def build_where_clause(
+    status_filter: Optional[str],
+    start_time: Optional[str],
+    end_time: Optional[str]
+) -> tuple[Optional[str], tuple]:
+    """
+    构建 SQLite WHERE 子句
+
+    Args:
+        status_filter: 状态过滤 (OPEN/CLOSE)
+        start_time: 起始时间
+        end_time: 结束时间
+
+    Returns:
+        (WHERE 子句, 参数元组)
+    """
+    conditions = []
+    params = []
+
+    if status_filter:
+        conditions.append("UPPER(status) = ?")
+        params.append(status_filter.upper())
+
+    if start_time:
+        conditions.append("entry_timestamp >= ?")
+        params.append(start_time)
+
+    if end_time:
+        conditions.append("entry_timestamp <= ?")
+        params.append(end_time)
+
+    where_clause = " AND ".join(conditions) if conditions else None
+    return where_clause, tuple(params)
+
+
 @position_router.get("/api/position", response_model=list[PositionResponse])
 def get_position(
     limit: Optional[int] = Query(default=None, ge=1, description="返回的记录数量（默认返回所有）"),
@@ -226,36 +198,27 @@ def get_position(
     Returns:
         开放仓位数据列表
     """
-    # 检查并确保 CSV 文件包含所有必需的列
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=POSITIONS_FILL_VALUES, dtype=POSITIONS_DTYPE_SPEC)
+    # Build WHERE clause
+    where_clause, params = build_where_clause("OPEN", start_time, end_time)
 
-    pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
+    # Query from SQLite
+    rows = SqliteHandler.query_table(
+        class_obj=SavePosition,
+        where=where_clause,
+        params=params,
+        order_by="entry_timestamp DESC",
+        limit=limit,
+        offset=offset
+    )
 
-    # 确保 signal_id 列是字符串类型，将 NaN 替换为空字符串
-    if 'signal_id' in pos_df.columns:
-        pos_df['signal_id'] = pos_df['signal_id'].fillna('').astype(str)
-
-    if pos_df.empty:
+    if not rows:
         return []
 
-    # 筛选状态为 OPEN 的行
-    pos_df = pos_df[pos_df['status'].str.upper() == 'OPEN']
-
-    # 按时间范围过滤
-    pos_df = filter_positions_by_time(pos_df, start_time, end_time)
-
-    # 分页
-    if limit is None:
-        pos_df = pos_df.iloc[offset:]
-    else:
-        pos_df = pos_df.iloc[offset:offset + limit]
-
-    rows = pos_df.to_dict(orient="records")
-
-    # 转换为嵌套结构
+    # 转换为响应格式
     transformed_rows = [transform_position_row(row) for row in rows]
 
     return [PositionResponse.model_validate(r) for r in transformed_rows]
+
 
 @position_router.get("/api/close", response_model=list[PositionResponse])
 def get_closed_positions(
@@ -276,33 +239,23 @@ def get_closed_positions(
     Returns:
         已关闭仓位数据列表
     """
-    # 检查并确保 CSV 文件包含所有必需的列
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=POSITIONS_FILL_VALUES, dtype=POSITIONS_DTYPE_SPEC)
+    # Build WHERE clause
+    where_clause, params = build_where_clause("CLOSE", start_time, end_time)
 
-    pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
+    # Query from SQLite
+    rows = SqliteHandler.query_table(
+        class_obj=SavePosition,
+        where=where_clause,
+        params=params,
+        order_by="entry_timestamp DESC",
+        limit=limit,
+        offset=offset
+    )
 
-    # 确保 signal_id 列是字符串类型，将 NaN 替换为空字符串
-    if 'signal_id' in pos_df.columns:
-        pos_df['signal_id'] = pos_df['signal_id'].fillna('').astype(str)
-
-    if pos_df.empty:
+    if not rows:
         return []
 
-    # 筛选状态为 CLOSE 的行
-    closed_df = pos_df[pos_df['status'].str.upper() == 'CLOSE']
-
-    # 按时间范围过滤
-    closed_df = filter_positions_by_time(closed_df, start_time, end_time)
-
-    # 分页
-    if limit is None:
-        closed_df = closed_df.iloc[offset:]
-    else:
-        closed_df = closed_df.iloc[offset:offset + limit]
-
-    rows = closed_df.to_dict(orient="records")
-
-    # 转换为嵌套结构
+    # 转换为响应格式
     transformed_rows = [transform_position_row(row) for row in rows]
 
     return [PositionResponse.model_validate(r) for r in transformed_rows]

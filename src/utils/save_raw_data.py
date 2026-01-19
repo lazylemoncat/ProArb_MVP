@@ -2,7 +2,6 @@ import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Optional
-from .CsvHandler import CsvHandler
 from .SqliteHandler import SqliteHandler
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..fetch_data.deribit.deribit_client import DeribitMarketContext
@@ -113,17 +112,15 @@ def extract_orderbook_level(orderbook_list: list, index: int, default_price: Opt
 def save_raw_data(
     pm_ctx: PolymarketContext,
     db_ctx: DeribitMarketContext,
-    csv_path: str,
     fill_id: Optional[str] = None,
     snapshot_id: Optional[str] = None
 ) -> RawData:
     """
-    Save raw market data snapshot to CSV file.
+    Save raw market data snapshot to SQLite database.
 
     Args:
         pm_ctx: Polymarket context with orderbook data
         db_ctx: Deribit context with option data
-        csv_path: Path to CSV file
         fill_id: Optional fill ID (auto-generated if not provided)
         snapshot_id: Optional snapshot ID (auto-generated if not provided)
 
@@ -246,13 +243,7 @@ def save_raw_data(
         dr_data_valid=data_valid,
     )
 
-    # Save to CSV using CsvHandler
-    CsvHandler.save_to_csv(csv_path, row_dict=asdict(row_obj), class_obj=RawData)
-
-    # Save to SQLite
-    try:
-        SqliteHandler.save_to_db(row_dict=asdict(row_obj), class_obj=RawData)
-    except Exception as e:
-        logger.warning(f"Failed to save raw data to SQLite: {e}")
+    # Save to SQLite (primary storage)
+    SqliteHandler.save_to_db(row_dict=asdict(row_obj), class_obj=RawData)
 
     return row_obj

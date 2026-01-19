@@ -28,8 +28,6 @@ async def execute_trade(
     fee_total: float,
     slippage_pct: float,
     net_ev: float,
-    positions_csv: str,
-    # 新增参数
     gross_ev: float,
     roi_pct: float,
     signal_id: str
@@ -164,7 +162,6 @@ async def execute_trade(
         contracts=contract_amount,
         dr_entry_cost=fee_total,
         expiry_timestamp=deribit_ctx.k1_expiration_timestamp,
-        csv_path=positions_csv,
         slippage_pct=slippage_pct,
         gross_ev=gross_ev,
         net_ev=net_ev,

@@ -2,10 +2,10 @@ import logging
 from typing import Optional
 import math
 
-import pandas as pd
 from fastapi import APIRouter, Query
 
 from .models import EVResponse
+from ..utils.SqliteHandler import SqliteHandler
 
 logger = logging.getLogger(__name__)
 
@@ -32,20 +32,33 @@ def clean_nan_values(data: dict) -> dict:
     return cleaned
 
 
-def parse_iso_timestamp(time_str: str) -> Optional[pd.Timestamp]:
+def build_ev_where_clause(
+    start_time: Optional[str],
+    end_time: Optional[str]
+) -> tuple[Optional[str], tuple]:
     """
-    解析 ISO 格式时间字符串为 pandas Timestamp
+    构建 SQLite WHERE 子句
 
     Args:
-        time_str: ISO 格式时间字符串
+        start_time: 起始时间
+        end_time: 结束时间
 
     Returns:
-        pandas Timestamp 或 None (如果解析失败)
+        (WHERE 子句, 参数元组)
     """
-    try:
-        return pd.to_datetime(time_str)
-    except Exception:
-        return None
+    conditions = []
+    params = []
+
+    if start_time:
+        conditions.append("timestamp >= ?")
+        params.append(start_time)
+
+    if end_time:
+        conditions.append("timestamp <= ?")
+        params.append(end_time)
+
+    where_clause = " AND ".join(conditions) if conditions else None
+    return where_clause, tuple(params)
 
 
 @ev_router.get("/api/no/ev1", response_model=list[EVResponse])
@@ -67,46 +80,21 @@ def get_ev(
     Returns:
         EV 数据列表
     """
-    try:
-        ev_df = pd.read_csv('./data/ev.csv')
-    except FileNotFoundError:
+    # Build WHERE clause
+    where_clause, params = build_ev_where_clause(start_time, end_time)
+
+    # Query from SQLite
+    rows = SqliteHandler.query_table(
+        class_obj=EVResponse,
+        where=where_clause,
+        params=params,
+        order_by="timestamp DESC",
+        limit=limit,
+        offset=offset
+    )
+
+    if not rows:
         return []
-
-    if ev_df.empty:
-        return []
-
-    # 按时间范围过滤 - EVResponse 使用 timestamp 字段 (ISO 格式字符串)
-    if 'timestamp' in ev_df.columns:
-        # 转换 timestamp 列为 datetime
-        ev_df['_ts_parsed'] = pd.to_datetime(ev_df['timestamp'], errors='coerce')
-
-        if start_time:
-            start_ts = parse_iso_timestamp(start_time)
-            if start_ts:
-                ev_df = ev_df[ev_df['_ts_parsed'] >= start_ts]
-            else:
-                logger.warning(f"Invalid start_time format: {start_time}")
-
-        if end_time:
-            end_ts = parse_iso_timestamp(end_time)
-            if end_ts:
-                ev_df = ev_df[ev_df['_ts_parsed'] <= end_ts]
-            else:
-                logger.warning(f"Invalid end_time format: {end_time}")
-
-        # 按时间倒序排序（最新的在前）
-        ev_df = ev_df.sort_values('_ts_parsed', ascending=False)
-
-        # 删除临时列
-        ev_df = ev_df.drop(columns=['_ts_parsed'])
-
-    # 分页
-    if limit is None:
-        ev_df = ev_df.iloc[offset:]
-    else:
-        ev_df = ev_df.iloc[offset:offset + limit]
-
-    rows = ev_df.to_dict(orient="records")
 
     # 清理 NaN 值以避免 JSON 序列化错误
     cleaned_rows = [clean_nan_values(r) for r in rows]

@@ -115,43 +115,59 @@ def get_previous_day_raw_csv_path(base_path: str, use_utc: bool = True) -> str:
 
 async def send_previous_day_raw_csv(bot: TG_bot, base_path: str) -> bool:
     """
-    发送前一天的 raw.csv 文件到 Telegram
+    从 SQLite 导出前一天的原始数据到临时 CSV 文件并发送到 Telegram
 
     Args:
         bot: Telegram bot 实例
-        base_path: raw.csv 基础路径模板
+        base_path: 未使用（保留参数以兼容旧代码）
 
     Returns:
         是否发送成功
     """
-    try:
-        # 获取前一天的文件路径
-        previous_day_path = get_previous_day_raw_csv_path(base_path)
-        previous_day_file = Path(previous_day_path)
+    import os
+    from ..utils.SqliteHandler import SqliteHandler
 
-        if not previous_day_file.exists():
-            logger.warning(f"Previous day raw.csv not found: {previous_day_path}")
+    temp_csv_path = None
+    try:
+        # 获取前一天的日期
+        yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1))
+
+        # 从 SQLite 导出前一天的数据到临时 CSV
+        temp_csv_path = SqliteHandler.export_raw_data_by_date(
+            target_date=yesterday,
+            output_path=None  # 使用临时文件
+        )
+
+        if temp_csv_path is None:
+            logger.warning(f"No raw data found for {yesterday.strftime('%Y-%m-%d')}")
             return False
 
-        # 获取文件日期用于消息
-        yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1))
+        # 发送到 Telegram
         caption = f"📊 Raw market data for {yesterday.strftime('%Y-%m-%d')} (UTC)"
 
         success, msg_id = await bot.send_document(
-            file_path=str(previous_day_file),
+            file_path=str(temp_csv_path),
             caption=caption
         )
 
         if success:
-            logger.info(f"Successfully sent previous day raw.csv: {previous_day_path}")
+            logger.info(f"Successfully sent previous day raw data for {yesterday}")
         else:
-            logger.warning(f"Failed to send previous day raw.csv: {previous_day_path}")
+            logger.warning(f"Failed to send previous day raw data for {yesterday}")
 
         return success
 
     except Exception as e:
         logger.error(f"Error sending previous day raw.csv: {e}", exc_info=True)
         return False
+    finally:
+        # 删除临时文件
+        if temp_csv_path and os.path.exists(temp_csv_path):
+            try:
+                os.remove(temp_csv_path)
+                logger.debug(f"Removed temp CSV: {temp_csv_path}")
+            except Exception as e:
+                logger.warning(f"Failed to remove temp CSV {temp_csv_path}: {e}")
 
 
 # ==================== Telegram Notifications ====================
@@ -336,8 +352,8 @@ async def investment_runner(
             if previous_snapshot is None:
                 signal_state[signal_key] = now_snapshot
 
-            # 写入本次检测结果（使用新的精简格式）
-            save_raw_data(pm_ctx, deribit_ctx, raw_output_csv)
+            # 写入本次检测结果（使用 SQLite）
+            save_raw_data(pm_ctx, deribit_ctx)
 
             # Generate signal_id early so it's available for both record_signal and trade_signal paths
             signal_id = generate_signal_id(market_id=pm_ctx.market_id)
@@ -357,8 +373,8 @@ async def investment_runner(
                     trade_details
                 )
                 signal_state[signal_key] = now_snapshot
-                # 写入本次检测结果
-                save_result(pm_ctx, deribit_ctx, output_path)
+                # 写入本次检测结果 (使用 SQLite)
+                save_result(pm_ctx, deribit_ctx)
 
                 # 保存 EV 数据到 ev.csv
                 # Use actual shares from slippage calculation
@@ -382,7 +398,6 @@ async def investment_runner(
                     theta_adj_ev=adjusted_gross_ev,  # Theta-adjusted gross EV
                     net_ev=net_ev,
                     roi_pct=result.roi_pct,
-                    ev_csv_path="./data/ev.csv"
                 )
 
             if trade_signal and time_condition:
@@ -401,7 +416,6 @@ async def investment_runner(
                     fee_total=fee_total,
                     slippage_pct=slippage_pct_1,
                     net_ev=net_ev,
-                    positions_csv=positions_csv,
                     gross_ev=gross_ev,
                     roi_pct=result.roi_pct,
                     signal_id=signal_id

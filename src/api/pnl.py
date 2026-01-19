@@ -7,7 +7,6 @@ PnL (Profit and Loss) API 端点
 import logging
 import math
 from collections import defaultdict
-from dataclasses import fields
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -22,15 +21,10 @@ from .models import (
     ShadowLeg,
     ShadowView,
 )
-from .position import (
-    POSITIONS_DTYPE_SPEC,
-    POSITIONS_EXPECTED_COLUMNS,
-    POSITIONS_FILL_VALUES,
-    filter_positions_by_time,
-)
 from ..fetch_data.deribit.deribit_api import DeribitAPI
 from ..fetch_data.polymarket.polymarket_api import PolymarketAPI
-from ..utils.CsvHandler import CsvHandler
+from ..utils.SqliteHandler import SqliteHandler
+from ..utils.save_position import SavePosition
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +94,7 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     计算单个 position 的 PnL
 
     Args:
-        row: positions.csv 的一行数据
+        row: positions 的一行数据
         current_spot: 当前 BTC 现货价格
         price_cache: 价格缓存 {instrument: price}
 
@@ -353,6 +347,43 @@ def _aggregate_shadow_view(position_details: list[PnlPositionDetail]) -> ShadowV
     )
 
 
+def _build_pnl_where_clause(
+    start_time: Optional[str],
+    end_time: Optional[str],
+    status: Optional[str]
+) -> tuple[Optional[str], tuple]:
+    """
+    构建 SQLite WHERE 子句
+
+    Args:
+        start_time: 起始时间
+        end_time: 结束时间
+        status: 状态筛选
+
+    Returns:
+        (WHERE 子句, 参数元组)
+    """
+    conditions = []
+    params = []
+
+    if status:
+        status_upper = status.strip().upper()
+        if status_upper in ('OPEN', 'CLOSE'):
+            conditions.append("UPPER(status) = ?")
+            params.append(status_upper)
+
+    if start_time:
+        conditions.append("entry_timestamp >= ?")
+        params.append(start_time)
+
+    if end_time:
+        conditions.append("entry_timestamp <= ?")
+        params.append(end_time)
+
+    where_clause = " AND ".join(conditions) if conditions else None
+    return where_clause, tuple(params)
+
+
 @pnl_router.get("/api/pnl", response_model=PnlSummaryResponse)
 def get_pnl_summary(
     start_time: Optional[str] = Query(default=None, description="起始时间 (ISO 格式, 如 2025-01-01T00:00:00Z)"),
@@ -375,18 +406,20 @@ def get_pnl_summary(
     Returns:
         PnL 汇总数据
     """
-    # 确保 CSV 文件包含所有必需列
-    CsvHandler.check_csv('./data/positions.csv', POSITIONS_EXPECTED_COLUMNS, fill_value=POSITIONS_FILL_VALUES, dtype=POSITIONS_DTYPE_SPEC)
-
-    pos_df = pd.read_csv('./data/positions.csv', dtype=POSITIONS_DTYPE_SPEC, low_memory=False)
-
-    # 确保 signal_id 列是字符串类型，将 NaN 替换为空字符串
-    if 'signal_id' in pos_df.columns:
-        pos_df['signal_id'] = pos_df['signal_id'].fillna('').astype(str)
-
     now_str = datetime.now(timezone.utc).isoformat()
 
-    if pos_df.empty:
+    # Build WHERE clause
+    where_clause, params = _build_pnl_where_clause(start_time, end_time, status)
+
+    # Query from SQLite
+    rows = SqliteHandler.query_table(
+        class_obj=SavePosition,
+        where=where_clause,
+        params=params,
+        order_by="entry_timestamp DESC"
+    )
+
+    if not rows:
         return PnlSummaryResponse(
             timestamp=now_str,
             total_positions=0,
@@ -402,35 +435,6 @@ def get_pnl_summary(
             diff_usd=0.0,
             positions=[]
         )
-
-    # 根据 status 参数筛选仓位 (默认返回全部)
-    filtered_df = pos_df
-    if status:
-        status_upper = status.strip().upper()
-        if status_upper in ('OPEN', 'CLOSE'):
-            filtered_df = pos_df[pos_df['status'].str.upper() == status_upper]
-
-    # 按时间范围过滤
-    filtered_df = filter_positions_by_time(filtered_df, start_time, end_time)
-
-    if filtered_df.empty:
-        return PnlSummaryResponse(
-            timestamp=now_str,
-            total_positions=0,
-            total_cost_basis_usd=0.0,
-            total_unrealized_pnl_usd=0.0,
-            total_pm_pnl_usd=0.0,
-            total_dr_pnl_usd=0.0,
-            total_currency_pnl_usd=0.0,
-            total_funding_usd=0.0,
-            total_ev_usd=0.0,
-            shadow_view=ShadowView(pnl_usd=0.0, legs=[]),
-            real_view=RealView(pnl_usd=0.0, net_positions=[]),
-            diff_usd=0.0,
-            positions=[]
-        )
-
-    rows = filtered_df.to_dict(orient="records")
 
     # 获取当前 BTC 现货价格
     try:

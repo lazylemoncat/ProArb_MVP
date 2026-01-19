@@ -6,24 +6,18 @@ This module handles:
 - Automatic early exit execution when conditions are met
 - Position status updates
 """
-import csv
 import logging
-from dataclasses import fields
 from datetime import datetime, timezone
-
-import pandas as pd
 
 from ..fetch_data.polymarket.polymarket_client import PolymarketClient
 from ..trading.polymarket_trade_client import Polymarket_trade_client
-from ..utils.CsvHandler import CsvHandler
+from ..utils.SqliteHandler import SqliteHandler
+from ..utils.save_position import SavePosition
 
 logger = logging.getLogger(__name__)
 
-# Default positions CSV path
-DEFAULT_POSITIONS_CSV = "./data/positions.csv"
 
-
-def early_exit_process_row(row: pd.Series) -> pd.Series:
+def early_exit_process_row(row: dict) -> tuple[dict, bool]:
     """
     处理单行持仓数据，检查是否需要提前平仓
 
@@ -31,25 +25,28 @@ def early_exit_process_row(row: pd.Series) -> pd.Series:
         row: 持仓数据行
 
     Returns:
-        处理后的数据行（可能更新了 status）
+        (处理后的数据行, 是否更新了状态)
     """
     # 已关闭的仓位跳过
-    if str(row["status"]).upper() == "CLOSE":
-        return row
+    if str(row.get("status", "")).upper() == "CLOSE":
+        return row, False
 
     # 当前 UTC 毫秒
     now = int(datetime.now(timezone.utc).timestamp() * 1000)
-    expired = (now >= row["expiry_timestamp"])
+    expiry_timestamp = row.get("expiry_timestamp", 0)
+    if expiry_timestamp:
+        expiry_timestamp = float(expiry_timestamp)
+    expired = (now >= expiry_timestamp)
 
     if not expired:
-        return row
+        return row, False
 
-    logger.info(f"{row['market_id']} early_exit triggered - position expired")
+    market_id = row.get("market_id", "")
+    logger.info(f"{market_id} early_exit triggered - position expired")
 
     # 根据策略决定卖出哪个 token
-    strategy = row["strategy"]
-    token_id = row["yes_token_id"] if strategy == 1 else row["no_token_id"]
-    market_id = row["market_id"]
+    strategy = row.get("strategy", 2)
+    token_id = row.get("yes_token_id") if strategy == 1 else row.get("no_token_id")
 
     try:
         # 获取当前价格
@@ -61,8 +58,9 @@ def early_exit_process_row(row: pd.Series) -> pd.Series:
             logger.info(f"Executing early exit for {market_id} at price {price}")
             Polymarket_trade_client.early_exit(token_id, price)
             # 只有交易成功后才更新状态为 close
-            row["status"] = "close"
+            row["status"] = "CLOSE"
             logger.info(f"Successfully closed position for {market_id}")
+            return row, True
         else:
             logger.warning(f"Price {price} out of valid range for early exit on {market_id}, keeping position open")
 
@@ -70,56 +68,48 @@ def early_exit_process_row(row: pd.Series) -> pd.Series:
         # 交易失败时保持仓位状态不变，下次循环继续尝试
         logger.error(f"Failed to execute early exit for {market_id}: {e}, will retry next cycle", exc_info=True)
 
-    return row
+    return row, False
 
 
-async def early_exit_monitor(positions_csv: str = DEFAULT_POSITIONS_CSV) -> None:
+async def early_exit_monitor() -> None:
     """
     提前平仓监控器 - 检查所有开放仓位并执行必要的提前平仓
 
-    Args:
-        positions_csv: 持仓 CSV 文件路径
-
     This function:
-    1. Reads positions.csv
+    1. Reads open positions from SQLite
     2. For each OPEN position, checks if expiry is reached
     3. If expired, executes early exit trade
-    4. Updates position status to "close"
-    5. Saves updated data back to CSV
+    4. Updates position status to "CLOSE" in SQLite
     """
     try:
-        from ..utils.save_position import SavePosition
+        # Query only OPEN positions from SQLite
+        open_positions = SqliteHandler.query_table(
+            class_obj=SavePosition,
+            where="UPPER(status) = ?",
+            params=("OPEN",)
+        )
 
-        positions_columns = [f.name for f in fields(SavePosition)]
-
-        # 定义 token_id 列的数据类型为字符串（防止大整数被转换为科学计数法）
-        dtype_spec = {
-            "yes_token_id": str,
-            "no_token_id": str,
-            "event_id": str,
-            "market_id": str,
-            "trade_id": str
-        }
-
-        # 检查并确保 positions.csv 包含所有必需的列
-        CsvHandler.check_csv(positions_csv, positions_columns, fill_value=0.0, dtype=dtype_spec)
-
-        # 读取 CSV
-        csv_df = pd.read_csv(positions_csv, dtype=dtype_spec, low_memory=False)
-
-        if csv_df.empty:
-            logger.debug("No positions to check for early exit")
+        if not open_positions:
+            logger.debug("No open positions to check for early exit")
             return
 
-        # 处理每一行
-        csv_df = csv_df.apply(early_exit_process_row, axis=1)
+        updated_count = 0
+        for row in open_positions:
+            processed_row, was_updated = early_exit_process_row(row)
 
-        # 保存回 CSV (使用 QUOTE_NONNUMERIC 防止科学计数法)
-        csv_df.to_csv(positions_csv, index=False, quoting=csv.QUOTE_NONNUMERIC)
+            if was_updated:
+                # Update the status in SQLite
+                row_id = row.get("id")
+                if row_id:
+                    SqliteHandler.update(
+                        class_obj=SavePosition,
+                        set_values={"status": "CLOSE"},
+                        where="id = ?",
+                        params=(row_id,)
+                    )
+                    updated_count += 1
 
-        logger.debug(f"Early exit monitor completed, checked {len(csv_df)} positions")
+        logger.debug(f"Early exit monitor completed, checked {len(open_positions)} positions, updated {updated_count}")
 
-    except FileNotFoundError:
-        logger.debug(f"Positions file not found: {positions_csv}, skipping early exit check")
     except Exception as e:
         logger.error(f"Error in early exit monitor: {e}", exc_info=True)
