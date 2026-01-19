@@ -271,7 +271,8 @@ def save_position(
 
         # EV 相关数据计算
         pm_shares=pm_entry_cost / entry_price_pm if entry_price_pm > 0 else 0,
-        pm_slippage_usd=pm_entry_cost * slippage_pct,
+        # slippage_pct is a percentage (e.g., 9.77 for 9.77%), so divide by 100
+        pm_slippage_usd=pm_entry_cost * slippage_pct / 100,
         slippage_pct=slippage_pct,
         # 策略2: long K1 (ask), short K2 (bid)
         # 策略1: short K1 (bid), long K2 (ask)
