@@ -224,6 +224,16 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     fee_dr_usd = _safe_float(row.get("k1_fee_approx", 0)) + _safe_float(row.get("k2_fee_approx", 0))
     fee_pm_usd = _safe_float(row.get("pm_slippage_usd", 0))  # PM 滑点作为费用
 
+    # Sanity check: cap fees at 20% of entry cost to handle legacy data with incorrect slippage calculation
+    # (old bug: slippage_pct was multiplied without dividing by 100)
+    max_reasonable_pm_fee = pm_entry_cost * 0.20  # 20% max
+    if fee_pm_usd > max_reasonable_pm_fee and pm_entry_cost > 0:
+        logger.warning(
+            f"Position {signal_id}: pm_slippage_usd ({fee_pm_usd:.2f}) exceeds 20% of pm_entry_cost ({pm_entry_cost:.2f}). "
+            f"Capping to {max_reasonable_pm_fee:.2f}. This may be legacy data with incorrect slippage calculation."
+        )
+        fee_pm_usd = max_reasonable_pm_fee
+
     real_dr_pnl = shadow_dr_pnl - fee_dr_usd
     real_pnl_usd = real_dr_pnl + pm_pnl_usd - fee_pm_usd
 
