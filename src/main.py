@@ -14,8 +14,6 @@ import csv
 import logging
 import time
 from datetime import date
-from logging.handlers import TimedRotatingFileHandler
-from pathlib import Path
 from typing import List
 
 from .fetch_data.deribit.deribit_client import DeribitUserCfg
@@ -31,48 +29,11 @@ from .monitors import (
 )
 from .telegram.TG_bot import TG_bot
 from .utils.config_loader import load_all_configs
+from .utils.logging_config import setup_logging
 
 # ==================== Logging Setup ====================
 
-LOG_DIR = Path("data")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-# 这个是"当前正在写入"的文件（每天午夜会滚动）
-ACTIVE_LOG = LOG_DIR / "proarb.log"
-
-handler = TimedRotatingFileHandler(
-    filename=str(ACTIVE_LOG),
-    when="midnight",      # 每天午夜切分
-    interval=1,
-    backupCount=30,       # 保留 30 天
-    utc=True,             # 使用 UTC 作为"午夜"
-    encoding="utf-8",
-)
-
-# 默认滚动名形如：proarb.log.2025_12_28
-handler.suffix = "%Y_%m_%d"
-
-
-# 把默认滚动名改成：proarb_2025_12_28.log
-def namer(default_name: str) -> str:
-    p = Path(default_name)
-    date_part = p.name.split(".")[-1]  # 取到 2025_12_28
-    return str(p.with_name(f"proarb_{date_part}.log"))
-
-
-handler.namer = namer
-
-formatter = logging.Formatter(
-    fmt="%(asctime)s %(levelname)s %(name)s %(filename)s:%(lineno)d - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-handler.setFormatter(formatter)
-
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-root_logger.handlers.clear()          # 避免重复 handler
-root_logger.addHandler(handler)
-
+setup_logging(log_file_prefix="proarb")
 logger = logging.getLogger(__name__)
 
 
