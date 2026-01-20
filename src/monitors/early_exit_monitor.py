@@ -48,6 +48,7 @@ def early_exit_process_row(row: dict) -> tuple[dict, bool]:
     strategy = row.get("strategy", 2)
     token_id = row.get("yes_token_id") if strategy == 1 else row.get("no_token_id")
 
+    trade_executed = False
     try:
         # 获取当前价格
         prices = PolymarketClient.get_prices(market_id)
@@ -57,18 +58,23 @@ def early_exit_process_row(row: dict) -> tuple[dict, bool]:
         if price >= 0.001 and price <= 0.999:
             logger.info(f"Executing early exit for {market_id} at price {price}")
             Polymarket_trade_client.early_exit(token_id, price)
-            # 只有交易成功后才更新状态为 close
-            row["status"] = "CLOSE"
-            logger.info(f"Successfully closed position for {market_id}")
-            return row, True
+            trade_executed = True
+            logger.info(f"Successfully executed early exit trade for {market_id}")
         else:
-            logger.warning(f"Price {price} out of valid range for early exit on {market_id}, keeping position open")
+            logger.warning(f"Price {price} out of valid range for early exit on {market_id}, marking as closed without trade")
 
     except Exception as e:
-        # 交易失败时保持仓位状态不变，下次循环继续尝试
-        logger.error(f"Failed to execute early exit for {market_id}: {e}, will retry next cycle", exc_info=True)
+        logger.error(f"Failed to execute early exit trade for {market_id}: {e}, marking as closed due to expiry", exc_info=True)
 
-    return row, False
+    # 仓位已过期，无论交易是否成功都标记为 CLOSE
+    # 避免流动性不足时无限循环尝试
+    row["status"] = "CLOSE"
+    if trade_executed:
+        logger.info(f"Position {market_id} closed with successful trade execution")
+    else:
+        logger.warning(f"Position {market_id} marked as closed (expired) without successful trade - may require manual settlement")
+
+    return row, True
 
 
 async def early_exit_monitor() -> None:
