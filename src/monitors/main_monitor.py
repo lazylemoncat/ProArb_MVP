@@ -41,6 +41,7 @@ from ..utils.save_data.save_result2 import save_result
 from ..utils.save_data.save_raw_data import save_raw_data
 from ..utils.save_data.save_ev import save_ev
 from ..utils.signal_id_generator import generate_signal_id
+from ..utils.state_tracker import check_state_completed, mark_state_completed, get_state_key
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,8 @@ async def send_previous_day_raw_csv(bot: TG_bot, base_path: str) -> bool:
     """
     从 SQLite 导出前一天的原始数据到临时 CSV 文件并发送到 Telegram
 
+    使用状态跟踪避免程序重启后重复发送
+
     Args:
         bot: Telegram bot 实例
         base_path: 未使用（保留参数以兼容旧代码）
@@ -127,11 +130,18 @@ async def send_previous_day_raw_csv(bot: TG_bot, base_path: str) -> bool:
     import os
     from ..utils.SqliteHandler import SqliteHandler
 
+    # 获取前一天的日期
+    yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1))
+    date_str = yesterday.strftime("%Y-%m-%d")
+    state_key = get_state_key("raw_daily_report", date_str)
+
+    # 检查是否已经发送过
+    if check_state_completed(state_key):
+        logger.info(f"Raw data for {date_str} already sent, skipping")
+        return True
+
     temp_csv_path = None
     try:
-        # 获取前一天的日期
-        yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1))
-
         # 从 SQLite 导出前一天的数据到临时 CSV
         temp_csv_path = SqliteHandler.export_raw_data_by_date(
             target_date=yesterday,
@@ -139,11 +149,18 @@ async def send_previous_day_raw_csv(bot: TG_bot, base_path: str) -> bool:
         )
 
         if temp_csv_path is None:
-            logger.warning(f"No raw data found for {yesterday.strftime('%Y-%m-%d')}")
-            return False
+            logger.warning(f"No raw data found for {date_str}")
+            # 标记为已完成，避免重复尝试
+            mark_state_completed(
+                state_key=state_key,
+                date=date_str,
+                state_type="raw_daily_report",
+                metadata={"status": "no_data"}
+            )
+            return True
 
         # 发送到 Telegram
-        caption = f"📊 Raw market data for {yesterday.strftime('%Y-%m-%d')} (UTC)"
+        caption = f"Raw market data for {date_str} (UTC)"
 
         success, msg_id = await bot.send_document(
             file_path=str(temp_csv_path),
@@ -151,9 +168,16 @@ async def send_previous_day_raw_csv(bot: TG_bot, base_path: str) -> bool:
         )
 
         if success:
-            logger.info(f"Successfully sent previous day raw data for {yesterday}")
+            # 标记为已完成
+            mark_state_completed(
+                state_key=state_key,
+                date=date_str,
+                state_type="raw_daily_report",
+                metadata={"message_id": msg_id}
+            )
+            logger.info(f"Successfully sent previous day raw data for {date_str}")
         else:
-            logger.warning(f"Failed to send previous day raw data for {yesterday}")
+            logger.warning(f"Failed to send previous day raw data for {date_str}")
 
         return success
 
