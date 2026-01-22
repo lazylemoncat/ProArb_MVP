@@ -134,8 +134,6 @@ class PositionResponse(BaseModel):
     signal_id: str                                # 主键，唯一标识这次决策
     timestamp: str                                # YYYYMMDD_HHMMSS
     market_title: str                             # Bitcoin above 90000 on December 22?
-    event_id: str | None = None                   # PM event ID
-    market_id: str | None = None                  # PM market ID
 
     # B. 订单信息
     dr_order_id: str | None = None                # dr 订单id
@@ -143,36 +141,25 @@ class PositionResponse(BaseModel):
     status: Literal["OPEN", "CLOSE"]              # OPEN/CLOSED
     amount_usd: float | None = None               # 实际下单金额
     action: Literal["Buy", "Sell"]                # Buy/Sell
-    direction: str | None = None                  # YES/NO
-    strategy: int | None = None                   # 策略编号 (1 或 2)
-    dry_run: bool | None = None                   # 是否干跑模式
 
     # C. Deribit 合约信息
     dr_k1_instruments: str | None = None          # K1 合约名称
     dr_k2_instruments: str | None = None          # K2 合约名称
-    k1_strike: float | None = None                # K1 行权价
-    k2_strike: float | None = None                # K2 行权价
-    k_poly: float | None = None                   # PM 对应的行权价
 
     # D. 入场数据
     dr_index_price_t0: float | None = None        # 入场现货价
     days_to_expiry: float | None = None           # 入场剩余到期天数
-    pm_yes_price_t0: float | None = None          # PM yes 入场价格
-    pm_no_price_t0: float | None = None           # PM no 入场价格
+    pm_yes_price_t0: float | None = None          # PM yes 下单价格
+    pm_no_price_t0: float | None = None           # PM no 下单价格
     pm_shares: float | None = None                # PM 份数
     pm_slippage_usd: float | None = None          # 滑点金额
-    slippage_pct: float | None = None             # 滑点百分比
 
     # E. Deribit 交易数据
     dr_contracts: float | None = None             # 实际合约数量
-    dr_k1_ask: float | None = None                # K1 ask 价格 (BTC)
-    dr_k1_bid: float | None = None                # K1 bid 价格 (BTC)
-    dr_k2_ask: float | None = None                # K2 ask 价格 (BTC)
-    dr_k2_bid: float | None = None                # K2 bid 价格 (BTC)
-    dr_k1_mid_usd: float | None = None            # K1 mid 价格 (USD)
-    dr_k2_mid_usd: float | None = None            # K2 mid 价格 (USD)
-    dr_k1_price: float | None = None              # K1 实际成交价格 (USD)
-    dr_k2_price: float | None = None              # K2 实际成交价格 (USD)
+    dr_k1_ask: float | None = None                # K1 ask 价格
+    dr_k1_bid: float | None = None                # K1 bid 价格
+    dr_k2_ask: float | None = None                # K2 ask 价格
+    dr_k2_bid: float | None = None                # K2 bid 价格
     dr_fee_usd: float | None = None               # Deribit 手续费
 
     # F. 波动率数据
@@ -184,14 +171,7 @@ class PositionResponse(BaseModel):
     dr_iv_ceiling: float | None = None            # IV ceiling
     dr_prob_t0: float | None = None               # Deribit 隐含概率 (T0)
 
-    # G. EV 数据
-    ev_gross_usd: float | None = None             # 毛利润 (未扣费用)
-    ev_theta_adj_usd: float | None = None         # 时间修正后的毛利润
-    ev_model_usd: float | None = None             # 净利润 (扣除手续费和滑点)
-    roi_model_pct: float | None = None            # ROI 百分比
-    funding_usd: float | None = None              # Deribit 资金费用
-
-    # H. 结算数据
+    # G. 结算数据
     pm_yes_price: float | None = None             # 结算价格 (YES)
     pm_no_price: float | None = None              # 结算价格 (NO)
     dr_k1_settlement_price: float | None = None   # K1 结算价格

@@ -99,8 +99,6 @@ def transform_position_row(row: dict) -> dict:
         "signal_id": row.get("signal_id") or "",
         "timestamp": str(row.get("entry_timestamp") or ""),
         "market_title": str(row.get("market_title") or ""),
-        "event_id": str(row.get("event_id", "")) if row.get("event_id") else None,
-        "market_id": str(row.get("market_id", "")) if row.get("market_id") else None,
 
         # B. 订单信息
         "dr_order_id": str(row.get("dr_order_id", "")) if row.get("dr_order_id") else None,
@@ -108,16 +106,10 @@ def transform_position_row(row: dict) -> dict:
         "status": str(row.get("status") or "OPEN").upper(),
         "amount_usd": safe_float(row.get("pm_entry_cost")),
         "action": "Sell" if str(row.get("direction") or "").lower() == "no" else "Buy",
-        "direction": str(row.get("direction") or "").upper() if row.get("direction") else None,
-        "strategy": int(row.get("strategy")) if row.get("strategy") else None,
-        "dry_run": bool(row.get("dry_run")) if row.get("dry_run") is not None else None,
 
         # C. Deribit 合约信息
         "dr_k1_instruments": str(row.get("inst_k1", "")) if row.get("inst_k1") else None,
         "dr_k2_instruments": str(row.get("inst_k2", "")) if row.get("inst_k2") else None,
-        "k1_strike": safe_float(row.get("k1_strike")),
-        "k2_strike": safe_float(row.get("k2_strike")),
-        "k_poly": safe_float(row.get("K_poly")),
 
         # D. 入场数据
         "dr_index_price_t0": safe_float(row.get("spot")),
@@ -126,7 +118,6 @@ def transform_position_row(row: dict) -> dict:
         "pm_no_price_t0": safe_float(row.get("no_price")),
         "pm_shares": safe_float(row.get("pm_shares")),
         "pm_slippage_usd": safe_float(row.get("pm_slippage_usd")),
-        "slippage_pct": safe_float(row.get("slippage_pct")),
 
         # E. Deribit 交易数据
         "dr_contracts": safe_float(row.get("contracts")),
@@ -134,10 +125,6 @@ def transform_position_row(row: dict) -> dict:
         "dr_k1_bid": safe_float(row.get("k1_bid_btc")),
         "dr_k2_ask": safe_float(row.get("k2_ask_btc")),
         "dr_k2_bid": safe_float(row.get("k2_bid_btc")),
-        "dr_k1_mid_usd": safe_float(row.get("k1_mid_usd")),
-        "dr_k2_mid_usd": safe_float(row.get("k2_mid_usd")),
-        "dr_k1_price": safe_float(row.get("dr_k1_price")),
-        "dr_k2_price": safe_float(row.get("dr_k2_price")),
         "dr_fee_usd": safe_float(row.get("dr_entry_cost")),
 
         # F. 波动率数据
@@ -149,14 +136,7 @@ def transform_position_row(row: dict) -> dict:
         "dr_iv_ceiling": safe_float(spot_iv_upper[1]) if len(spot_iv_upper) > 1 else None,
         "dr_prob_t0": safe_float(row.get("deribit_prob")),
 
-        # G. EV 数据
-        "ev_gross_usd": safe_float(row.get("ev_gross_usd")),
-        "ev_theta_adj_usd": safe_float(row.get("ev_theta_adj_usd")),
-        "ev_model_usd": safe_float(row.get("ev_model_usd")),
-        "roi_model_pct": safe_float(row.get("roi_model_pct")),
-        "funding_usd": safe_float(row.get("funding_usd")),
-
-        # H. 结算数据 (平仓时更新，开仓时为 0.0)
+        # G. 结算数据
         "pm_yes_price": safe_settlement_price(row.get("pm_yes_settlement_price")),
         "pm_no_price": safe_settlement_price(row.get("pm_no_settlement_price")),
         "dr_k1_settlement_price": safe_settlement_price(row.get("k1_settlement_price")),
