@@ -134,6 +134,11 @@ class SavePosition:
     roi_model_pct: float          # ROI 百分比
     funding_usd: float            # Net funding payments on Deribit (for hedging vs spot BTC holdings)
 
+    # 结算数据 (平仓时更新)
+    pm_yes_settlement_price: float = 0.0   # PM YES 结算价格
+    pm_no_settlement_price: float = 0.0    # PM NO 结算价格
+    settlement_index_price: float = 0.0    # 结算时的现货价格
+
 def save_position(
         dry_run: bool,
         pm_ctx: PolymarketContext,

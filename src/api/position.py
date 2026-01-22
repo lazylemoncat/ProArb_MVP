@@ -156,7 +156,7 @@ def transform_position_row(row: dict) -> dict:
         "roi_model_pct": safe_float(row.get("roi_model_pct")),
         "funding_usd": safe_float(row.get("funding_usd")),
 
-        # H. 结算数据
+        # H. 结算数据 (平仓时更新，开仓时为 0.0)
         "pm_yes_price": safe_settlement_price(row.get("pm_yes_settlement_price")),
         "pm_no_price": safe_settlement_price(row.get("pm_no_settlement_price")),
         "dr_k1_settlement_price": safe_settlement_price(row.get("k1_settlement_price")),
