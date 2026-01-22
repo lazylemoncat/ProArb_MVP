@@ -130,7 +130,7 @@ async def main():
             )
 
             # 2. 提前平仓监控
-            await early_exit_monitor(POSITIONS_CSV)
+            await early_exit_monitor()
 
             # 3. 数据维护监控
             await data_monitor()
