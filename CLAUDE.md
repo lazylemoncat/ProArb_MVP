@@ -25,12 +25,12 @@
 
 ## Project Statistics
 
-- **Total Python Files**: 53
-- **Total Lines of Code**: ~9,811
+- **Total Python Files**: 57
+- **Total Lines of Code**: ~10,400
 - **API Endpoints**: 11
-- **Pydantic Models**: 26 (283 lines in models.py)
-- **Dataclasses**: 49+
-- **Monitors**: 3 (main_monitor, early_exit_monitor, data_monitor)
+- **Pydantic Models**: 36 (includes 10 new PnL models)
+- **Dataclasses**: 52+
+- **Monitors**: 4 (main_monitor, early_exit_monitor, data_monitor, pnl_monitor)
 - **Test Files**: 17
 - **Configuration Files**: 2 YAML + 1 .env
 
@@ -41,10 +41,11 @@ ProArb_MVP/
 ├── src/
 │   ├── api_server.py                    # FastAPI REST API server (entry point)
 │   │
-│   ├── monitors/                        # Monitoring modules (26,000+ lines)
+│   ├── monitors/                        # Monitoring modules (27,000+ lines)
 │   │   ├── main_monitor.py              # Core arbitrage monitoring loop (18,741 lines)
 │   │   ├── early_exit_monitor.py        # Position early exit on expiry (3,912 lines)
-│   │   └── data_monitor.py              # Data integrity & maintenance (4,488 lines)
+│   │   ├── data_monitor.py              # Data integrity & maintenance (4,488 lines)
+│   │   └── pnl_monitor.py               # PnL snapshots & daily Telegram reports (305 lines)
 │   │
 │   ├── api/                             # API route handlers (2,202 lines total)
 │   │   ├── health.py                    # Health check endpoint
@@ -102,6 +103,8 @@ ProArb_MVP/
 │   │
 │   └── utils/
 │       ├── CsvHandler.py                # CSV read/write utilities with auto-column handling
+│       ├── logging_config.py            # Centralized logging setup (92 lines)
+│       ├── state_tracker.py             # State persistence for monitors (94 lines)
 │       ├── save_result2.py              # Result logging to CSV
 │       ├── save_result_mysql.py         # MySQL result logging (optional)
 │       ├── save_position.py             # Position tracking (SavePosition dataclass, 137 fields)
@@ -109,6 +112,9 @@ ProArb_MVP/
 │       ├── save_ev.py                   # EV data saving
 │       ├── signal_id_generator.py       # Unique signal ID generation
 │       ├── get_bot.py                   # Bot retrieval helper
+│       ├── save_data/                   # Data persistence modules
+│       │   ├── save_pnl_snapshot.py     # PnL snapshot dataclass (45 lines)
+│       │   └── save_monitor_state.py    # Monitor state tracking dataclass (34 lines)
 │       └── loadAllConfig/               # Configuration loaders (renamed from dataloader)
 │           ├── load_all_configs.py      # Main entry point
 │           ├── env_loader.py            # .env file parsing
@@ -141,9 +147,9 @@ ProArb_MVP/
 
 ## Key Components Explained
 
-### 1. Monitor Architecture (3 Separate Modules in `src/monitors/`)
+### 1. Monitor Architecture (4 Separate Modules in `src/monitors/`)
 
-The ProArb MVP uses a **three-monitor architecture** where each monitor runs as an independent async function:
+The ProArb MVP uses a **four-monitor architecture** where each monitor runs as an independent async function:
 
 #### **A. Main Monitor** (`src/monitors/main_monitor.py` - 18,741 lines)
 
@@ -208,6 +214,37 @@ The ProArb MVP uses a **three-monitor architecture** where each monitor runs as 
 - Validate data integrity
 
 **Note**: This replaces the older `src/maintain_data/maintain_data.py` module.
+
+#### **D. PnL Monitor** (`src/monitors/pnl_monitor.py` - 305 lines)
+
+**Purpose**: Track PnL with hourly snapshots to SQLite and send daily CSV reports via Telegram.
+
+**Key Functions**:
+- `run_pnl_monitor()` - Main async loop (hourly snapshots + midnight reports)
+- `save_pnl_snapshot()` - Calculate current PnL and store to SQLite
+- `_generate_daily_pnl_csv(target_date)` - Create daily CSV report for Telegram
+
+**Features**:
+- **Hourly Snapshots**: Captures complete PnL state every hour to `pnl_snapshots` SQLite table
+- **Daily Reports**: Generates CSV at midnight UTC and sends via Telegram
+- **State Tracking**: Uses `state_tracker.py` to prevent duplicate reports on container restart
+- **Shadow/Real Views**: Tracks both strategy logic perspective and physical reality (netting)
+
+**Configuration** (hardcoded defaults in module):
+```python
+PNL_MONITOR_ENABLED = True
+PNL_SNAPSHOT_INTERVAL_SECONDS = 3600  # 1 hour
+PNL_REPORT_HOUR_UTC = 0               # Midnight UTC
+PNL_DRY_RUN = False
+```
+
+**PnL Snapshot Fields** (`PnlSnapshot` dataclass):
+- Position counts and summary metrics
+- PnL breakdown: `total_pm_pnl_usd`, `total_dr_pnl_usd`, `total_currency_pnl_usd`
+- View totals: `shadow_pnl_usd`, `real_pnl_usd`, `diff_usd`
+- JSON storage for detailed position data
+
+**Integration**: Runs as background task in API server lifespan (`src/api/lifespan.py`)
 
 ### 2. Strategy Calculation (`src/strategy/strategy2.py`)
 
@@ -315,6 +352,7 @@ Validates whether to **execute trades**. Checks:
 Returns detailed EV calculation data with the following key fields:
 - `k1_ask`, `k1_bid`: K1 strike bid/ask prices in BTC
 - `k2_ask`, `k2_bid`: K2 strike bid/ask prices in BTC
+- `dr_k_poly_iv`: Implied volatility at K_poly strike (Polymarket strike price on Deribit)
 - `pm_slippage_usd`: Actual slippage cost (calculated as `actual_cost - target_cost`)
 - `pm_shares`: Actual shares received from PM trade (accounting for slippage)
 - `target_usd`: Target investment amount (what you intended to spend)
@@ -323,6 +361,7 @@ Returns detailed EV calculation data with the following key fields:
 - `ev_model_usd`: Final net EV after fees and slippage
 
 **Recent Changes**:
+- Added `dr_k_poly_iv` field to EV, position, and close APIs (commit 721c91d)
 - EV endpoint renamed from `/api/ev` to `/api/no/ev` (commit 4226f46)
 - Added k1/k2 bid/ask prices in BTC to EV response (commit 4226f46)
 - Fixed slippage calculation to use actual cost difference (commit 4226f46)
@@ -391,6 +430,66 @@ mysql < src/sql/1.sql  # Create schema
 ```
 
 **Integration**: `save_result_mysql.py` provides parallel saving alongside CSV (not currently active by default)
+
+### 8. Logging Configuration (`src/utils/logging_config.py`)
+
+**Purpose**: Centralized, reusable logging configuration to eliminate code duplication.
+
+**Key Function**: `setup_logging()`
+```python
+def setup_logging(
+    log_file_prefix: str = "proarb",
+    log_dir: str | Path = "data",
+    backup_count: int = 30,
+    log_level: int = logging.INFO,
+    use_utc: bool = True,
+) -> logging.Logger:
+```
+
+**Features**:
+- **Daily rotation** at midnight UTC
+- **30-day retention** (configurable via `backup_count`)
+- **Custom naming**: `{prefix}_YYYY_MM_DD.log` format
+- **Consistent format**: `%(asctime)s %(levelname)s %(name)s %(filename)s:%(lineno)d - %(message)s`
+
+**Usage**:
+```python
+from src.utils.logging_config import setup_logging
+
+# Main monitor
+logger = setup_logging(log_file_prefix="proarb")
+
+# API server
+logger = setup_logging(log_file_prefix="server_proarb")
+```
+
+**Benefits**: Removed ~79 lines of duplicated logging code from `main.py` and `api_server.py`.
+
+### 9. State Tracker Utility (`src/utils/state_tracker.py`)
+
+**Purpose**: Persistent state tracking for monitors to avoid duplicate actions on container restart.
+
+**Key Functions**:
+- `check_state_completed(state_key: str) -> bool` - Check if an action was already completed
+- `mark_state_completed(state_key, date, state_type, metadata) -> bool` - Mark action as done
+- `get_state_key(prefix: str, date: str) -> str` - Generate unique state key
+
+**Usage Pattern**:
+```python
+from src.utils.state_tracker import get_state_key, check_state_completed, mark_state_completed
+
+state_key = get_state_key("pnl_daily_report", "2026-01-22")
+if not check_state_completed(state_key):
+    # Perform the action
+    send_daily_report()
+    mark_state_completed(state_key, "2026-01-22", "pnl_daily_report")
+```
+
+**Storage**: Uses SQLite `monitor_state` table for persistence across container restarts.
+
+**Current Uses**:
+- PnL daily report tracking (prevents duplicate sends)
+- Raw data CSV send tracking in main monitor
 
 ## Configuration Files
 
@@ -1055,13 +1154,38 @@ When making changes:
 
 ---
 
-**Last Updated**: 2026-01-17
+**Last Updated**: 2026-01-22
 **Maintainer**: lazylemoncat
 **Repository**: lazylemoncat/ProArb_MVP
 
 ---
 
 ## Recent Changes & Changelog
+
+### 2026-01-22
+- **Feature**: Added PnL tracking with hourly snapshots and daily Telegram reports (PR #87, commit ed68bfc)
+  - New `pnl_monitor.py` runs as background task in API server
+  - Hourly snapshots stored to SQLite `pnl_snapshots` table
+  - Daily CSV report sent via Telegram at midnight UTC
+  - Shadow/real view tracking for strategy logic vs physical reality
+  - State persistence prevents duplicate sends on restart
+  - New dataclasses: `PnlSnapshot`, `MonitorState`
+
+- **Feature**: Added `dr_k_poly_iv` field to EV, position, and close APIs (commit 721c91d)
+  - Represents implied volatility at K_poly (Polymarket strike) on Deribit
+  - Added to `EVResponse` and `PositionResponse` models
+  - Maps to `db_ctx.mark_iv` from Deribit context
+
+- **Refactor**: Extracted logging configuration into reusable module (PR #86, commit 06c7eff)
+  - New `src/utils/logging_config.py` with `setup_logging()` function
+  - Removed ~79 lines of duplicated code from `main.py` and `api_server.py`
+  - Consistent logging format across all services
+  - Daily rotation at midnight UTC with 30-day retention
+
+- **Feature**: Added state tracker utility (`src/utils/state_tracker.py`)
+  - Persistent state tracking using SQLite `monitor_state` table
+  - Prevents duplicate actions on container restart
+  - Used by PnL monitor and raw data CSV sends
 
 ### 2026-01-17
 - **Documentation**: Major CLAUDE.md overhaul based on comprehensive codebase analysis (commit TBD)
