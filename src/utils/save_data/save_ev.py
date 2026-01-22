@@ -109,6 +109,7 @@ def save_ev(
         dr_iv=db_ctx.mark_iv,
         dr_k1_iv=db_ctx.k1_iv,
         dr_k2_iv=db_ctx.k2_iv,
+        dr_k_poly_iv=db_ctx.mark_iv,  # K_poly 处的 IV
         dr_iv_floor=iv_floor,
         dr_iv_celling=iv_ceiling,
         dr_prob=db_ctx.deribit_prob,

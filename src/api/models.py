@@ -55,6 +55,7 @@ class EVResponse(BaseModel):
     dr_iv: float | None = None # 模型使用的波动率
     dr_k1_iv: float | None = None
     dr_k2_iv: float | None = None
+    dr_k_poly_iv: float | None = None # K_poly 处的隐含波动率
     dr_iv_floor: float | None = None # 与现货最接近的合约的 floor 的 iv
     dr_iv_celling: float | None = None
     dr_prob: float | None = None # Deribit 隐含概率(T0)
@@ -165,6 +166,7 @@ class PositionResponse(BaseModel):
     dr_iv_t0: float | None = None                 # 模型使用的波动率
     dr_k1_iv: float | None = None                 # K1 隐含波动率
     dr_k2_iv: float | None = None                 # K2 隐含波动率
+    dr_k_poly_iv: float | None = None             # K_poly 处的隐含波动率
     dr_iv_floor: float | None = None              # IV floor
     dr_iv_ceiling: float | None = None            # IV ceiling
     dr_prob_t0: float | None = None               # Deribit 隐含概率 (T0)

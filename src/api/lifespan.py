@@ -6,6 +6,7 @@ import httpx
 from fastapi import FastAPI
 from httpx import ASGITransport
 
+from ..monitors.pnl_monitor import run_pnl_monitor
 from ..telegram.TG_bot import TG_bot
 from ..utils.config_loader import load_all_configs
 
@@ -41,10 +42,22 @@ async def hourly_health_job(app: FastAPI) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(hourly_health_job(app))
+    # Start background tasks
+    health_task = asyncio.create_task(hourly_health_job(app))
+    pnl_task = asyncio.create_task(run_pnl_monitor())
+
+    logging.info("Started lifespan background tasks: health_job, pnl_monitor")
+
     try:
         yield
     finally:
-        task.cancel()
+        # Cancel all tasks
+        health_task.cancel()
+        pnl_task.cancel()
+
         with suppress(asyncio.CancelledError):
-            await task
+            await health_task
+        with suppress(asyncio.CancelledError):
+            await pnl_task
+
+        logging.info("Stopped lifespan background tasks")
