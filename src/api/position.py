@@ -131,6 +131,7 @@ def transform_position_row(row: dict) -> dict:
         "dr_iv_t0": safe_float(row.get("mark_iv")),
         "dr_k1_iv": safe_float(row.get("k1_iv")),
         "dr_k2_iv": safe_float(row.get("k2_iv")),
+        "dr_k_poly_iv": safe_float(row.get("mark_iv")),  # K_poly 处的 IV (与 dr_iv_t0 相同)
         "dr_iv_floor": safe_float(spot_iv_lower[1]) if len(spot_iv_lower) > 1 else None,
         "dr_iv_ceiling": safe_float(spot_iv_upper[1]) if len(spot_iv_upper) > 1 else None,
         "dr_prob_t0": safe_float(row.get("deribit_prob")),
