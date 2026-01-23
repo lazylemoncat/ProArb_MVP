@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .SqliteHandler import SqliteHandler
-from .save_data.save_monitor_state import MonitorState
+from ..core.save.save_monitor_state import MonitorState
 
 logger = logging.getLogger(__name__)
 
