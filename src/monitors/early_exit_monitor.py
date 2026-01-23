@@ -14,7 +14,7 @@ from ..fetch_data.polymarket.polymarket_client import PolymarketClient
 from ..fetch_data.deribit.deribit_api import DeribitAPI
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..utils.SqliteHandler import SqliteHandler
-from ..utils.save_data.save_position import SavePosition
+from ..core.save.save_position import SavePosition
 
 logger = logging.getLogger(__name__)
 

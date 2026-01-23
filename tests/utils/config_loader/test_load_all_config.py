@@ -1,4 +1,4 @@
-from src.utils.config_loader import load_all_configs, Env_config, Config, Trading_config
+from src.core.config import load_all_configs, Env_config, Config, Trading_config
 
 def test_dataloader():
     env_config, config, tradinf_config = load_all_configs()

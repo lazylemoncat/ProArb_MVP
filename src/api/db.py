@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 
 from .models import DBRespone
 from ..utils.SqliteHandler import SqliteHandler
-from ..utils.save_data.save_raw_data import RawData
+from ..core.save.save_raw_data import RawData
 
 logger = logging.getLogger(__name__)
 

@@ -16,8 +16,8 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
-from ..utils.SqliteHandler import SqliteHandler
-from ..utils.save_data.save_position import SavePosition
+from ...utils.SqliteHandler import SqliteHandler
+from ..save.save_position import SavePosition
 
 
 @dataclass

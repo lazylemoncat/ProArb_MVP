@@ -9,7 +9,7 @@ from httpx import ASGITransport
 from ..monitors.daily_csv_monitor import run_daily_csv_monitor
 from ..monitors.pnl_monitor import run_pnl_monitor
 from ..telegram.TG_bot import TG_bot
-from ..utils.config_loader import load_all_configs
+from ..core.config import load_all_configs
 
 async def hourly_health_job(app: FastAPI) -> None:
     """

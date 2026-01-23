@@ -1,4 +1,4 @@
-from src.utils.config_loader.load_env_config import Env_config, load_env_config, parse_env_config
+from src.core.config.load_env_config import Env_config, load_env_config, parse_env_config
 
 def test_parse_env_config():
     env = {

@@ -16,8 +16,8 @@ from typing import Optional
 
 from ..api.models import EVResponse
 from ..telegram.TG_bot import TG_bot
-from ..utils.config_loader import load_all_configs
-from ..utils.save_data.save_position import SavePosition
+from ..core.config import load_all_configs
+from ..core.save.save_position import SavePosition
 from ..utils.SqliteHandler import SqliteHandler
 from ..utils.state_tracker import check_state_completed, get_state_key, mark_state_completed
 
