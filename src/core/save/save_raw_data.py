@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Optional
-from ..SqliteHandler import SqliteHandler
+from ...utils.SqliteHandler import SqliteHandler
 from ...fetch_data.polymarket.polymarket_client import PolymarketContext
 from ...fetch_data.deribit.deribit_client import DeribitMarketContext
 
