@@ -1,6 +1,6 @@
 import pytest
 
-from src.utils.config_loader._get_value import (
+from src.core.config._get_value import (
     Miss_env_exception,
     Miss_key_exception,
     get_value_from_dict,

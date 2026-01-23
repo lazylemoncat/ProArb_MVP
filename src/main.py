@@ -17,7 +17,7 @@ from datetime import date
 from typing import List
 
 from .fetch_data.deribit.deribit_client import DeribitUserCfg
-from .filters.filters import (
+from .core.filters.filters import (
     Record_signal_filter,
     SignalSnapshot,
     Trade_filter,
@@ -28,7 +28,7 @@ from .monitors import (
     data_monitor,
 )
 from .telegram.TG_bot import TG_bot
-from .utils.config_loader import load_all_configs
+from .core.config import load_all_configs
 from .utils.logging_config import setup_logging
 
 # ==================== Logging Setup ====================

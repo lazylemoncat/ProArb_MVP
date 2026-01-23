@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Tuple
 
 from ..utils.CsvHandler import CsvHandler
 
-from ..utils.config_loader import Config
+from ..core.config import Config
 from .build_event_for_data import build_events_for_date
 from .init_markets import init_markets
 

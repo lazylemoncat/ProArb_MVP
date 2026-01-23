@@ -1,7 +1,7 @@
 import yaml
 import pytest
 
-from src.utils.config_loader.load_trading_config import (
+from src.core.config.load_trading_config import (
     read_trading_config,
     parse_trading_config,
     load_trading_config,
@@ -209,7 +209,7 @@ def test_load_trading_config(monkeypatch):
     fake_config = make_valid_config()
 
     monkeypatch.setattr(
-        "src.utils.config_loader.load_trading_config.read_trading_config",
+        "src.core.config.load_trading_config.read_trading_config",
         lambda _: fake_config
     )
 

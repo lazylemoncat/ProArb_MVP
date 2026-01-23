@@ -2,7 +2,7 @@ from typing import Dict
 import pytest
 import yaml
 
-from src.utils.config_loader.load_config import (
+from src.core.config.load_config import (
     Config,
     parse_config,
     read_row_config,

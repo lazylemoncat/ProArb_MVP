@@ -8,7 +8,7 @@ import certifi
 import requests
 from requests.exceptions import RequestException, HTTPError
 
-from ...utils.config_loader.load_env_config import load_env_config
+from ...core.config.load_env_config import load_env_config
 
 BASE_URL = "https://gamma-api.polymarket.com"
 LIST_MARKET_URL = f"{BASE_URL}/markets"
