@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from ...api.models import EVResponse
 from ...fetch_data.deribit.deribit_client import DeribitMarketContext
 from ...fetch_data.polymarket.polymarket_client import PolymarketContext
-from ..SqliteHandler import SqliteHandler
+from ...utils.SqliteHandler import SqliteHandler
 
 logger = logging.getLogger(__name__)
 
