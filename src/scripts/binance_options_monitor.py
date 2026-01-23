@@ -76,8 +76,9 @@ class BinanceStrikeData:
 @dataclass
 class BinanceOptionsSnapshot:
     """Complete snapshot of Binance BTC options data."""
-    timestamp: str  # YYYYMMDD_HHMMSS format
+    utc: float  # Unix timestamp in seconds (same as Deribit/raw.csv format)
     index_price: float  # BTC spot price
+    strikes: str  # All strike prices as comma-separated string (e.g., "89000,90000,91000,93000,96000,97000")
 
     # Strike k1 (lowest)
     BN_k1_strike: int
@@ -637,16 +638,20 @@ class BinanceOptionsMonitor:
                     iv=0, mark_price=0, settlement_price=0
                 ))
 
-            # Build timestamp
+            # Build timestamp (Unix format, same as Deribit/raw.csv)
             now = datetime.now(timezone.utc)
-            timestamp = now.strftime("%Y%m%d_%H%M%S")
+            unix_timestamp = now.timestamp()
 
             # Create snapshot
             k1, k2, k3, k4, k5, k6 = strike_data_list[:6]
 
+            # Create strikes string (comma-separated list of all strike prices)
+            strikes_str = ",".join(str(s.strike) for s in strike_data_list[:6])
+
             snapshot = BinanceOptionsSnapshot(
-                timestamp=timestamp,
+                utc=unix_timestamp,
                 index_price=index_price,
+                strikes=strikes_str,
                 # k1
                 BN_k1_strike=k1.strike,
                 BN_k1_bid1_price=k1.bid1_price, BN_k1_bid1_size=k1.bid1_size,
@@ -739,7 +744,7 @@ class BinanceOptionsMonitor:
 
             writer.writerow(row)
 
-        logger.info(f"Saved snapshot to {self.csv_path} at {snapshot.timestamp}")
+        logger.info(f"Saved snapshot to {self.csv_path} at utc={snapshot.utc}")
 
     async def run_once(self) -> bool:
         """
