@@ -17,6 +17,13 @@ class RawData:
     market_id: str                  # Market identifier (e.g., BTC_108000_NO)
     spot_usd: float                 # Spot price of BTC
 
+    # Strike prices and expiry
+    k1_strike: Optional[float]      # K1 strike price
+    k2_strike: Optional[float]      # K2 strike price
+    k_poly: Optional[float]         # K_poly (Polymarket strike price)
+    dr_k_poly_iv: Optional[float]   # IV at K_poly strike on Deribit
+    expiry_timestamp: Optional[float]  # Option expiry timestamp (Unix seconds)
+
     # Polymarket YES token orderbook (3 levels)
     pm_yes_bid1_price: Optional[float]
     pm_yes_bid1_shares: Optional[float]
@@ -173,6 +180,13 @@ def save_raw_data(
         utc=unix_timestamp,
         market_id=pm_ctx.market_id,
         spot_usd=db_ctx.spot,
+
+        # Strike prices and expiry
+        k1_strike=db_ctx.k1_strike,
+        k2_strike=db_ctx.k2_strike,
+        k_poly=db_ctx.K_poly,
+        dr_k_poly_iv=db_ctx.mark_iv,
+        expiry_timestamp=db_ctx.k1_expiration_timestamp,
 
         # Polymarket YES orderbook
         pm_yes_bid1_price=pm_ctx.yes_bid_price_1,
