@@ -451,6 +451,9 @@ class SqliteHandler:
         if not is_dataclass(class_obj) and not is_pydantic_model(class_obj):
             raise ValueError(f"{class_obj} is not a dataclass or Pydantic model")
 
+        # Ensure table exists and has all required columns
+        SqliteHandler._ensure_table(class_obj, db_path)
+
         table_name = SqliteHandler._get_table_name(class_obj)
         model_fields = SqliteHandler._get_fields(class_obj)
         field_types = {name: ftype for name, ftype in model_fields}
