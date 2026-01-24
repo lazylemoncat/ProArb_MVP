@@ -1,11 +1,24 @@
 import asyncio
+import itertools
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from websockets import ClientConnection
 
+logger = logging.getLogger(__name__)
+
 RPC_TIMEOUT_SEC = 10
+
+# Thread-safe counter for unique RPC message IDs
+_rpc_id_counter = itertools.count(start=1)
+
+
+def _next_rpc_id() -> int:
+    """Generate a unique RPC message ID."""
+    return next(_rpc_id_counter)
+
 
 @dataclass
 class DeribitUserCfg:
@@ -23,7 +36,7 @@ class Deribit_trade:
         depth: int
     ):
         msg = {
-            "id": int(deribitUserCfg.user_id),
+            "id": _next_rpc_id(),
             "jsonrpc": "2.0",
             "method": "public/get_order_book",
             "params": {
@@ -65,7 +78,7 @@ class Deribit_trade:
     @staticmethod
     async def websocket_auth(websocket: ClientConnection, deribitUserCfg: DeribitUserCfg) -> Dict[str, Any]:
         msg = {
-            "id": int(deribitUserCfg.user_id),
+            "id": _next_rpc_id(),
             "jsonrpc": "2.0",
             "method": "public/auth",
             "params": {
@@ -85,12 +98,14 @@ class Deribit_trade:
         type: str = "market",
     ) -> Dict[str, Any]:
         msg = {
-            "id": int(deribitUserCfg.user_id),
+            "id": _next_rpc_id(),
             "jsonrpc": "2.0",
             "method": "private/buy",
             "params": {"amount": amount, "instrument_name": instrument_name, "type": type},
         }
-        return await Deribit_trade._send_rpc(websocket, msg)
+        resp = await Deribit_trade._send_rpc(websocket, msg)
+        logger.info(f"Deribit BUY {instrument_name} amount={amount}: {resp}")
+        return resp
 
     @staticmethod
     async def close_position(
@@ -101,9 +116,11 @@ class Deribit_trade:
         type: str = "market",
     ) -> Dict[str, Any]:
         msg = {
-            "id": int(deribitUserCfg.user_id),
+            "id": _next_rpc_id(),
             "jsonrpc": "2.0",
             "method": "private/sell",
             "params": {"amount": amount, "instrument_name": instrument_name, "type": type},
         }
-        return await Deribit_trade._send_rpc(websocket, msg)
+        resp = await Deribit_trade._send_rpc(websocket, msg)
+        logger.info(f"Deribit SELL {instrument_name} amount={amount}: {resp}")
+        return resp
