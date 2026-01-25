@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query
 from .models import PositionResponse
 from ..utils.SqliteHandler import SqliteHandler
 from ..core.save.save_position import SavePosition
+from ..fetch_data.polymarket.polymarket_api import PolymarketAPI
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +78,41 @@ def parse_tuple(value):
     return (0, 0)
 
 
-def transform_position_row(row: dict) -> dict:
-    """将 SQLite 数据转换为扁平化的 PositionResponse 格式"""
+def _get_pm_current_prices(market_id: str, price_cache: dict) -> tuple[float | None, float | None]:
+    """
+    获取 Polymarket 当前价格 (带缓存)
+
+    Args:
+        market_id: PM 市场 ID
+        price_cache: 价格缓存字典
+
+    Returns:
+        (yes_price, no_price) 或 (None, None) 如果获取失败
+    """
+    cache_key = f"pm_{market_id}"
+    if cache_key in price_cache:
+        return price_cache[cache_key]
+
+    try:
+        yes_price, no_price = PolymarketAPI.get_prices(market_id)
+        price_cache[cache_key] = (yes_price, no_price)
+        return yes_price, no_price
+    except Exception as e:
+        logger.warning(f"Failed to get PM prices for {market_id}: {e}")
+        price_cache[cache_key] = (None, None)
+        return None, None
+
+
+def transform_position_row(row: dict, price_cache: dict | None = None) -> dict:
+    """将 SQLite 数据转换为扁平化的 PositionResponse 格式
+
+    Args:
+        row: 原始数据行
+        price_cache: 可选的价格缓存字典 (用于批量获取时减少 API 调用)
+    """
+    if price_cache is None:
+        price_cache = {}
+
     spot_iv_lower = parse_tuple(row.get("spot_iv_lower"))
     spot_iv_upper = parse_tuple(row.get("spot_iv_upper"))
 
@@ -93,6 +127,12 @@ def transform_position_row(row: dict) -> dict:
             return result
         except (ValueError, TypeError):
             return None
+
+    # 获取当前 PM 价格
+    market_id = row.get("market_id") or ""
+    pm_yes_now, pm_no_now = None, None
+    if market_id:
+        pm_yes_now, pm_no_now = _get_pm_current_prices(market_id, price_cache)
 
     return {
         # A. 基础索引
@@ -116,6 +156,8 @@ def transform_position_row(row: dict) -> dict:
         "days_to_expiry": safe_float(row.get("days_to_expairy")),
         "pm_yes_price_t0": safe_float(row.get("yes_price")),
         "pm_no_price_t0": safe_float(row.get("no_price")),
+        "pm_yes_price_now": pm_yes_now,
+        "pm_no_price_now": pm_no_now,
         "pm_shares": safe_float(row.get("pm_shares")),
         "pm_slippage_usd": safe_float(row.get("pm_slippage_usd")),
 
@@ -215,8 +257,9 @@ def get_position(
     if not rows:
         return []
 
-    # 转换为响应格式
-    transformed_rows = [transform_position_row(row) for row in rows]
+    # 转换为响应格式 (使用共享的 price_cache 减少 API 调用)
+    price_cache: dict = {}
+    transformed_rows = [transform_position_row(row, price_cache) for row in rows]
 
     return [PositionResponse.model_validate(r) for r in transformed_rows]
 
@@ -256,7 +299,8 @@ def get_closed_positions(
     if not rows:
         return []
 
-    # 转换为响应格式
-    transformed_rows = [transform_position_row(row) for row in rows]
+    # 转换为响应格式 (使用共享的 price_cache 减少 API 调用)
+    price_cache: dict = {}
+    transformed_rows = [transform_position_row(row, price_cache) for row in rows]
 
     return [PositionResponse.model_validate(r) for r in transformed_rows]

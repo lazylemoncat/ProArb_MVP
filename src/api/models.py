@@ -151,6 +151,8 @@ class PositionResponse(BaseModel):
     days_to_expiry: float | None = None           # 入场剩余到期天数
     pm_yes_price_t0: float | None = None          # PM yes 下单价格
     pm_no_price_t0: float | None = None           # PM no 下单价格
+    pm_yes_price_now: float | None = None         # PM yes 当前价格
+    pm_no_price_now: float | None = None          # PM no 当前价格
     pm_shares: float | None = None                # PM 份数
     pm_slippage_usd: float | None = None          # 滑点金额
 
