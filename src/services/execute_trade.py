@@ -30,7 +30,8 @@ async def execute_trade(
     net_ev: float,
     gross_ev: float,
     roi_pct: float,
-    signal_id: str
+    signal_id: str,
+    im_value_usd: float = 0.0  # Deribit 初始保证金 (PME计算)
 ):
     # 参数验证
     if not trade_signal:
@@ -165,7 +166,8 @@ async def execute_trade(
         slippage_pct=slippage_pct,
         gross_ev=gross_ev,
         net_ev=net_ev,
-        roi_pct=roi_pct
+        roi_pct=roi_pct,
+        im_value_usd=im_value_usd
     )
     # 通知
     try:

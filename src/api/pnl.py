@@ -270,8 +270,9 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     expected_diff = -(fee_dr_usd + fee_pm_usd)
     residual_error_usd = diff_usd - expected_diff
 
-    # 从 row 读取 funding_usd (如果有)
+    # 从 row 读取 funding_usd 和 im_value_usd (如果有)
     funding_usd = _safe_float(row.get("funding_usd", 0.0))
+    im_value_usd = _safe_float(row.get("im_value_usd", 0.0))
 
     return PnlPositionDetail(
         signal_id=signal_id,
@@ -280,6 +281,7 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
         funding_usd=funding_usd,
         cost_basis_usd=cost_basis_usd,
         total_unrealized_pnl_usd=total_unrealized_pnl_usd,
+        im_value_usd=im_value_usd,
         shadow_view=shadow_view,
         real_view=real_view,
         pm_pnl_usd=pm_pnl_usd,
@@ -439,6 +441,7 @@ def get_pnl_summary(
             total_currency_pnl_usd=0.0,
             total_funding_usd=0.0,
             total_ev_usd=0.0,
+            total_im_value_usd=0.0,
             shadow_view=ShadowView(pnl_usd=0.0, legs=[]),
             real_view=RealView(pnl_usd=0.0, net_positions=[]),
             diff_usd=0.0,
@@ -474,6 +477,7 @@ def get_pnl_summary(
     total_currency_pnl_usd = sum(d.currency_pnl_usd for d in position_details)
     total_funding_usd = sum(d.funding_usd for d in position_details)
     total_ev_usd = sum(d.ev_usd for d in position_details)
+    total_im_value_usd = sum(d.im_value_usd for d in position_details)
 
     # 聚合账本
     shadow_view = _aggregate_shadow_view(position_details)
@@ -492,6 +496,7 @@ def get_pnl_summary(
         total_currency_pnl_usd=total_currency_pnl_usd,
         total_funding_usd=total_funding_usd,
         total_ev_usd=total_ev_usd,
+        total_im_value_usd=total_im_value_usd,
         shadow_view=shadow_view,
         real_view=real_view,
         diff_usd=diff_usd,

@@ -219,6 +219,7 @@ class PnlPositionDetail(BaseModel):
     funding_usd: float              # 资金费用 (暂时为 0)
     cost_basis_usd: float           # 实际投入总成本 (PM + DR)
     total_unrealized_pnl_usd: float # 当前总浮盈
+    im_value_usd: float             # Deribit 初始保证金 (PME计算)
 
     # 账本视图
     shadow_view: ShadowView
@@ -254,6 +255,7 @@ class PnlSummaryResponse(BaseModel):
     total_currency_pnl_usd: float            # 币价波动总盈亏
     total_funding_usd: float                 # Net funding payments on Deribit (for hedging vs spot BTC)
     total_ev_usd: float                      # 模型预测总 EV
+    total_im_value_usd: float                # 总初始保证金 (Deribit PME)
 
     # 汇总账本
     shadow_view: ShadowView                  # 影子账本汇总
