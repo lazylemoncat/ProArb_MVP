@@ -1,8 +1,8 @@
 """
-PnL Monitor - Hourly PnL tracking and daily report generation.
+PnL Monitor - Per-minute PnL tracking and daily report generation.
 
 This module handles:
-- Hourly PnL calculation and storage to SQLite
+- Per-minute PnL calculation and storage to SQLite
 - Daily PnL CSV report generation at midnight UTC
 - Telegram notification with daily CSV file
 - State tracking to avoid duplicate sends on restart
@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 
 # Hardcoded defaults for PnL monitor
 PNL_MONITOR_ENABLED = True
-PNL_HOURLY_SNAPSHOT_ENABLED = True
+PNL_SNAPSHOT_ENABLED = True  # Renamed from HOURLY to reflect per-minute
 PNL_DAILY_REPORT_ENABLED = True
-PNL_SNAPSHOT_INTERVAL_SECONDS = 3600  # 1 hour
+PNL_SNAPSHOT_INTERVAL_SECONDS = 60  # 1 minute (changed from 1 hour)
 PNL_REPORT_HOUR_UTC = 0  # Midnight UTC
 PNL_DRY_RUN = False
 
@@ -56,6 +56,7 @@ async def save_pnl_snapshot() -> Optional[int]:
             total_currency_pnl_usd=pnl_response.total_currency_pnl_usd,
             total_funding_usd=pnl_response.total_funding_usd,
             total_ev_usd=pnl_response.total_ev_usd,
+            total_im_value_usd=pnl_response.total_im_value_usd,
             shadow_pnl_usd=pnl_response.shadow_view.pnl_usd,
             real_pnl_usd=pnl_response.real_view.pnl_usd,
             diff_usd=pnl_response.diff_usd,
@@ -128,6 +129,7 @@ def _generate_daily_pnl_csv(target_date: datetime) -> Optional[str]:
             "total_currency_pnl_usd",
             "total_funding_usd",
             "total_ev_usd",
+            "total_im_value_usd",
             "shadow_pnl_usd",
             "real_pnl_usd",
             "diff_usd",
@@ -240,7 +242,7 @@ async def pnl_monitor() -> None:
     PnL Monitor - Main monitoring loop.
 
     Runs continuously to:
-    1. Save PnL snapshot every hour
+    1. Save PnL snapshot every minute
     2. Send daily PnL CSV report at midnight UTC
     """
     if not PNL_MONITOR_ENABLED:
@@ -260,21 +262,22 @@ async def pnl_monitor() -> None:
         f"report_hour={PNL_REPORT_HOUR_UTC}:00 UTC, dry_run={PNL_DRY_RUN}"
     )
 
-    last_snapshot_hour = None
+    last_snapshot_minute = None
     last_report_date = None
 
     while True:
         try:
             now = datetime.now(timezone.utc)
             current_hour = now.hour
+            current_minute = now.minute
             current_date = now.date()
 
-            # Hourly snapshot
-            if PNL_HOURLY_SNAPSHOT_ENABLED:
-                if last_snapshot_hour != current_hour:
-                    logger.debug(f"Taking hourly PnL snapshot at {now.isoformat()}")
+            # Per-minute snapshot (changed from hourly)
+            if PNL_SNAPSHOT_ENABLED:
+                if last_snapshot_minute != current_minute:
+                    logger.debug(f"Taking PnL snapshot at {now.isoformat()}")
                     await save_pnl_snapshot()
-                    last_snapshot_hour = current_hour
+                    last_snapshot_minute = current_minute
 
             # Daily report at configured hour
             if PNL_DAILY_REPORT_ENABLED:
@@ -285,8 +288,8 @@ async def pnl_monitor() -> None:
                     await send_daily_pnl_report(bot, yesterday, dry_run=PNL_DRY_RUN)
                     last_report_date = current_date
 
-            # Sleep for a minute before checking again
-            await asyncio.sleep(60)
+            # Sleep before checking again (shorter interval for minute-based snapshots)
+            await asyncio.sleep(30)
 
         except asyncio.CancelledError:
             logger.info("PnL monitor cancelled")

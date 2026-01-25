@@ -442,7 +442,8 @@ async def investment_runner(
                     net_ev=net_ev,
                     gross_ev=gross_ev,
                     roi_pct=result.roi_pct,
-                    signal_id=signal_id
+                    signal_id=signal_id,
+                    im_value_usd=result.im_value_usd
                 )
 
         except Exception as e:

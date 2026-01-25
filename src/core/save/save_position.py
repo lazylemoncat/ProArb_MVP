@@ -133,6 +133,7 @@ class SavePosition:
     ev_model_usd: float           # 净利润 (扣除手续费和滑点)
     roi_model_pct: float          # ROI 百分比
     funding_usd: float            # Net funding payments on Deribit (for hedging vs spot BTC holdings)
+    im_value_usd: float           # Deribit 初始保证金 (PME计算)
 
     # 结算数据 (平仓时更新)
     pm_yes_settlement_price: float = 0.0   # PM YES 结算价格
@@ -157,7 +158,8 @@ def save_position(
         gross_ev: float,
         net_ev: float,
         roi_pct: float,
-        funding_usd: float = 0.0  # Net funding payments on Deribit
+        funding_usd: float = 0.0,  # Net funding payments on Deribit
+        im_value_usd: float = 0.0  # Deribit 初始保证金 (PME计算)
     ):
     # 获取 K1 和 K2 的 ticker 数据 - settlement prices
     k1_settlement_price, k2_settlement_price = 0.0, 0.0
@@ -288,6 +290,7 @@ def save_position(
         ev_model_usd=net_ev,
         roi_model_pct=roi_pct,
         funding_usd=funding_usd,
+        im_value_usd=im_value_usd,
     )
 
     # Save to SQLite (primary storage)

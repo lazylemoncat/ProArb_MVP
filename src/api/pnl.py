@@ -220,22 +220,21 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
             current_mark_price=current_k2_price
         ))
 
-    # Real PnL (包含手续费)
-    fee_dr_usd = _safe_float(row.get("k1_fee_approx", 0)) + _safe_float(row.get("k2_fee_approx", 0))
-    fee_pm_usd = _safe_float(row.get("pm_slippage_usd", 0))  # PM 滑点作为费用
+    # Real PnL = Shadow PnL - early close fees (Deribit only)
+    # 提前平仓手续费: 0.03% of underlying OR 0.125% of option value (取小)
+    # 使用当前 mark price 计算平仓手续费
+    delivery_fee_k1 = 0.0003 * current_spot * contracts  # 0.03% of underlying
+    option_fee_k1 = 0.00125 * current_k1_price * contracts  # 0.125% of option value
+    close_fee_k1 = min(delivery_fee_k1, option_fee_k1)
 
-    # Sanity check: cap fees at 20% of entry cost to handle legacy data with incorrect slippage calculation
-    # (old bug: slippage_pct was multiplied without dividing by 100)
-    max_reasonable_pm_fee = pm_entry_cost * 0.20  # 20% max
-    if fee_pm_usd > max_reasonable_pm_fee and pm_entry_cost > 0:
-        logger.warning(
-            f"Position {signal_id}: pm_slippage_usd ({fee_pm_usd:.2f}) exceeds 20% of pm_entry_cost ({pm_entry_cost:.2f}). "
-            f"Capping to {max_reasonable_pm_fee:.2f}. This may be legacy data with incorrect slippage calculation."
-        )
-        fee_pm_usd = max_reasonable_pm_fee
+    delivery_fee_k2 = 0.0003 * current_spot * contracts
+    option_fee_k2 = 0.00125 * current_k2_price * contracts
+    close_fee_k2 = min(delivery_fee_k2, option_fee_k2)
 
-    real_dr_pnl = shadow_dr_pnl - fee_dr_usd
-    real_pnl_usd = real_dr_pnl + pm_pnl_usd - fee_pm_usd
+    # 总平仓手续费 (两腿)
+    close_fee_dr_usd = close_fee_k1 + close_fee_k2
+
+    real_pnl_usd = shadow_pnl_usd - close_fee_dr_usd
 
     real_view = RealView(
         pnl_usd=real_pnl_usd,
@@ -266,12 +265,13 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     total_unrealized_pnl_usd = real_pnl_usd
     diff_usd = real_pnl_usd - shadow_pnl_usd
 
-    # 残差校验: 理论上 diff 应该等于负的手续费
-    expected_diff = -(fee_dr_usd + fee_pm_usd)
+    # 残差校验: 理论上 diff 应该等于负的平仓手续费
+    expected_diff = -close_fee_dr_usd
     residual_error_usd = diff_usd - expected_diff
 
-    # 从 row 读取 funding_usd (如果有)
+    # 从 row 读取 funding_usd 和 im_value_usd (如果有)
     funding_usd = _safe_float(row.get("funding_usd", 0.0))
+    im_value_usd = _safe_float(row.get("im_value_usd", 0.0))
 
     return PnlPositionDetail(
         signal_id=signal_id,
@@ -280,12 +280,13 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
         funding_usd=funding_usd,
         cost_basis_usd=cost_basis_usd,
         total_unrealized_pnl_usd=total_unrealized_pnl_usd,
+        im_value_usd=im_value_usd,
         shadow_view=shadow_view,
         real_view=real_view,
         pm_pnl_usd=pm_pnl_usd,
-        fee_pm_usd=fee_pm_usd,
+        fee_pm_usd=0.0,  # PM 无提前平仓手续费
         dr_pnl_usd=shadow_dr_pnl,
-        fee_dr_usd=fee_dr_usd,
+        fee_dr_usd=close_fee_dr_usd,  # Deribit 提前平仓手续费
         currency_pnl_usd=currency_pnl_usd,
         unrealized_pnl_usd=total_unrealized_pnl_usd,
         diff_usd=diff_usd,
@@ -439,6 +440,7 @@ def get_pnl_summary(
             total_currency_pnl_usd=0.0,
             total_funding_usd=0.0,
             total_ev_usd=0.0,
+            total_im_value_usd=0.0,
             shadow_view=ShadowView(pnl_usd=0.0, legs=[]),
             real_view=RealView(pnl_usd=0.0, net_positions=[]),
             diff_usd=0.0,
@@ -474,6 +476,7 @@ def get_pnl_summary(
     total_currency_pnl_usd = sum(d.currency_pnl_usd for d in position_details)
     total_funding_usd = sum(d.funding_usd for d in position_details)
     total_ev_usd = sum(d.ev_usd for d in position_details)
+    total_im_value_usd = sum(d.im_value_usd for d in position_details)
 
     # 聚合账本
     shadow_view = _aggregate_shadow_view(position_details)
@@ -492,6 +495,7 @@ def get_pnl_summary(
         total_currency_pnl_usd=total_currency_pnl_usd,
         total_funding_usd=total_funding_usd,
         total_ev_usd=total_ev_usd,
+        total_im_value_usd=total_im_value_usd,
         shadow_view=shadow_view,
         real_view=real_view,
         diff_usd=diff_usd,

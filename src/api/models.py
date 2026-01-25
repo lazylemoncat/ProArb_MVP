@@ -151,6 +151,8 @@ class PositionResponse(BaseModel):
     days_to_expiry: float | None = None           # 入场剩余到期天数
     pm_yes_price_t0: float | None = None          # PM yes 下单价格
     pm_no_price_t0: float | None = None           # PM no 下单价格
+    pm_yes_price_now: float | None = None         # PM yes 当前价格
+    pm_no_price_now: float | None = None          # PM no 当前价格
     pm_shares: float | None = None                # PM 份数
     pm_slippage_usd: float | None = None          # 滑点金额
 
@@ -219,6 +221,7 @@ class PnlPositionDetail(BaseModel):
     funding_usd: float              # 资金费用 (暂时为 0)
     cost_basis_usd: float           # 实际投入总成本 (PM + DR)
     total_unrealized_pnl_usd: float # 当前总浮盈
+    im_value_usd: float             # Deribit 初始保证金 (PME计算)
 
     # 账本视图
     shadow_view: ShadowView
@@ -226,14 +229,14 @@ class PnlPositionDetail(BaseModel):
 
     # 盈亏归因
     pm_pnl_usd: float               # PM 部分盈亏
-    fee_pm_usd: float               # PM 手续费
-    dr_pnl_usd: float               # Deribit 部分盈亏
-    fee_dr_usd: float               # Deribit 手续费
+    fee_pm_usd: float               # PM 手续费 (已弃用，始终为0)
+    dr_pnl_usd: float               # Deribit 部分盈亏 (Shadow)
+    fee_dr_usd: float               # Deribit 提前平仓手续费
     currency_pnl_usd: float         # 币价波动盈亏
     unrealized_pnl_usd: float       # 未实现盈亏 (冗余校验)
 
     # 偏差与校验
-    diff_usd: float                 # Real - Shadow (通常=手续费+滑点)
+    diff_usd: float                 # Real - Shadow (= -平仓手续费)
     residual_error_usd: float       # 计算残差 (应为 0)
 
     # 模型验证
@@ -254,6 +257,7 @@ class PnlSummaryResponse(BaseModel):
     total_currency_pnl_usd: float            # 币价波动总盈亏
     total_funding_usd: float                 # Net funding payments on Deribit (for hedging vs spot BTC)
     total_ev_usd: float                      # 模型预测总 EV
+    total_im_value_usd: float                # 总初始保证金 (Deribit PME)
 
     # 汇总账本
     shadow_view: ShadowView                  # 影子账本汇总

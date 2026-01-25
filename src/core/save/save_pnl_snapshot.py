@@ -26,6 +26,7 @@ class PnlSnapshot:
     total_currency_pnl_usd: float
     total_funding_usd: float
     total_ev_usd: float
+    total_im_value_usd: float  # 总初始保证金 (Deribit PME)
 
     # Aggregated view totals (from ShadowView and RealView)
     shadow_pnl_usd: float  # From shadow_view.pnl_usd
