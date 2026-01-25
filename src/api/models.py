@@ -229,14 +229,14 @@ class PnlPositionDetail(BaseModel):
 
     # 盈亏归因
     pm_pnl_usd: float               # PM 部分盈亏
-    fee_pm_usd: float               # PM 手续费
-    dr_pnl_usd: float               # Deribit 部分盈亏
-    fee_dr_usd: float               # Deribit 手续费
+    fee_pm_usd: float               # PM 手续费 (已弃用，始终为0)
+    dr_pnl_usd: float               # Deribit 部分盈亏 (Shadow)
+    fee_dr_usd: float               # Deribit 提前平仓手续费
     currency_pnl_usd: float         # 币价波动盈亏
     unrealized_pnl_usd: float       # 未实现盈亏 (冗余校验)
 
     # 偏差与校验
-    diff_usd: float                 # Real - Shadow (通常=手续费+滑点)
+    diff_usd: float                 # Real - Shadow (= -平仓手续费)
     residual_error_usd: float       # 计算残差 (应为 0)
 
     # 模型验证
