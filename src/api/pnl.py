@@ -376,17 +376,18 @@ def _build_pnl_where_clause(
     conditions = []
     params = []
 
-    if status:
+    # Handle Query objects when called directly (not via FastAPI)
+    if status and isinstance(status, str):
         status_upper = status.strip().upper()
         if status_upper in ('OPEN', 'CLOSE'):
             conditions.append("UPPER(status) = ?")
             params.append(status_upper)
 
-    if start_time:
+    if start_time and isinstance(start_time, str):
         conditions.append("entry_timestamp >= ?")
         params.append(start_time)
 
-    if end_time:
+    if end_time and isinstance(end_time, str):
         conditions.append("entry_timestamp <= ?")
         params.append(end_time)
 
