@@ -87,66 +87,113 @@ async def save_pnl_snapshot() -> Optional[int]:
 
 def _generate_daily_pnl_csv(target_date: datetime) -> Optional[str]:
     """
-    Generate CSV file with PnL snapshots for a specific date.
+    生成每笔交易 PnL 详情的 CSV 文件，格式与 /api/pnl 端点返回一致。
 
     Args:
-        target_date: Target date (UTC)
+        target_date: 目标日期 (UTC)
 
     Returns:
-        Path to generated CSV file, or None if no data
+        生成的 CSV 文件路径，无数据时返回 None
     """
     try:
-        # Calculate date range
         date_str = target_date.strftime("%Y-%m-%d")
-        start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day = start_of_day + timedelta(days=1)
 
-        # Query snapshots for the date
-        rows = SqliteHandler.query_table(
-            class_obj=PnlSnapshot,
-            where="timestamp >= ? AND timestamp < ?",
-            params=(start_of_day.isoformat(), end_of_day.isoformat()),
-            order_by="timestamp ASC"
-        )
+        # 直接调用 API 获取当前所有 position 的 PnL 详情
+        pnl_response = get_pnl_summary()
 
-        if not rows:
-            logger.info(f"No PnL snapshots found for {date_str}")
+        if not pnl_response.positions:
+            logger.info(f"No positions found for PnL report on {date_str}")
             return None
 
-        # Create output file
+        # 创建输出目录
         output_dir = Path("./data")
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"pnl_{date_str}.csv"
 
-        # Define columns for CSV (exclude large JSON fields)
+        # 定义 CSV 列名 - 与 PnlPositionDetail 模型一致
         csv_columns = [
+            # 基础信息
+            "signal_id",
             "timestamp",
-            "total_positions",
-            "total_cost_basis_usd",
+            "market_title",
+            # 核心财务指标
+            "funding_usd",
+            "cost_basis_usd",
             "total_unrealized_pnl_usd",
-            "total_pm_pnl_usd",
-            "total_dr_pnl_usd",
-            "total_currency_pnl_usd",
-            "total_funding_usd",
-            "total_ev_usd",
-            "total_im_value_usd",
+            "im_value_usd",
+            # 账本视图 PnL
             "shadow_pnl_usd",
             "real_pnl_usd",
+            # 盈亏归因
+            "pm_pnl_usd",
+            "dr_pnl_usd",
+            "fee_dr_usd",
+            "currency_pnl_usd",
+            # 偏差与校验
             "diff_usd",
-            "open_positions",
-            "closed_positions",
+            "residual_error_usd",
+            # 模型验证
+            "ev_usd",
+            "total_pnl_usd",
+            # Leg 1 (K1) 详情
+            "leg1_instrument",
+            "leg1_qty",
+            "leg1_entry_price",
+            "leg1_current_price",
+            "leg1_pnl",
+            # Leg 2 (K2) 详情
+            "leg2_instrument",
+            "leg2_qty",
+            "leg2_entry_price",
+            "leg2_current_price",
+            "leg2_pnl",
         ]
 
-        # Write CSV
+        # 写入 CSV
         with open(output_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=csv_columns, extrasaction="ignore")
             writer.writeheader()
-            for row in rows:
-                # Filter to only include desired columns
-                filtered_row = {k: row.get(k) for k in csv_columns}
-                writer.writerow(filtered_row)
 
-        logger.info(f"Generated PnL CSV for {date_str}: {output_path} ({len(rows)} snapshots)")
+            for position in pnl_response.positions:
+                # 基础字段
+                row = {
+                    "signal_id": position.signal_id,
+                    "timestamp": position.timestamp,
+                    "market_title": position.market_title,
+                    "funding_usd": position.funding_usd,
+                    "cost_basis_usd": position.cost_basis_usd,
+                    "total_unrealized_pnl_usd": position.total_unrealized_pnl_usd,
+                    "im_value_usd": position.im_value_usd,
+                    "shadow_pnl_usd": position.shadow_view.pnl_usd,
+                    "real_pnl_usd": position.real_view.pnl_usd,
+                    "pm_pnl_usd": position.pm_pnl_usd,
+                    "dr_pnl_usd": position.dr_pnl_usd,
+                    "fee_dr_usd": position.fee_dr_usd,
+                    "currency_pnl_usd": position.currency_pnl_usd,
+                    "diff_usd": position.diff_usd,
+                    "residual_error_usd": position.residual_error_usd,
+                    "ev_usd": position.ev_usd,
+                    "total_pnl_usd": position.total_pnl_usd,
+                }
+
+                # 展开 shadow_view.legs（通常有 2 腿: K1 和 K2）
+                legs = position.shadow_view.legs
+                if len(legs) >= 1:
+                    row["leg1_instrument"] = legs[0].instrument
+                    row["leg1_qty"] = legs[0].qty
+                    row["leg1_entry_price"] = legs[0].entry_price
+                    row["leg1_current_price"] = legs[0].current_price
+                    row["leg1_pnl"] = legs[0].pnl
+                if len(legs) >= 2:
+                    row["leg2_instrument"] = legs[1].instrument
+                    row["leg2_qty"] = legs[1].qty
+                    row["leg2_entry_price"] = legs[1].entry_price
+                    row["leg2_current_price"] = legs[1].current_price
+                    row["leg2_pnl"] = legs[1].pnl
+
+                writer.writerow(row)
+
+        logger.info(f"Generated PnL CSV for {date_str}: {output_path} ({len(pnl_response.positions)} positions)")
         return str(output_path)
 
     except Exception as e:
@@ -174,11 +221,14 @@ async def send_daily_pnl_report(bot: TG_bot, target_date: datetime, dry_run: boo
         logger.info(f"Daily PnL report for {date_str} already sent, skipping")
         return True
 
-    # Generate CSV
+    # 获取 PnL 汇总用于生成 caption
+    pnl_response = get_pnl_summary()
+
+    # 生成 CSV
     csv_path = _generate_daily_pnl_csv(target_date)
     if not csv_path:
         logger.warning(f"No PnL data available for {date_str}")
-        # Still mark as completed to avoid retry spam
+        # 仍然标记为完成，避免重复尝试
         mark_state_completed(
             state_key=state_key,
             date=date_str,
@@ -187,25 +237,13 @@ async def send_daily_pnl_report(bot: TG_bot, target_date: datetime, dry_run: boo
         )
         return True
 
-    # Calculate summary for caption
-    rows = SqliteHandler.query_table(
-        class_obj=PnlSnapshot,
-        where="timestamp >= ? AND timestamp < ?",
-        params=(
-            target_date.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
-            (target_date.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)).isoformat()
-        ),
-        order_by="timestamp DESC",
-        limit=1
-    )
-
-    caption = f"Daily PnL Report: {date_str}\n"
-    if rows:
-        latest = rows[0]
-        caption += f"Positions: {latest.get('total_positions', 0)}\n"
-        caption += f"Unrealized PnL: ${latest.get('total_unrealized_pnl_usd', 0):.2f}\n"
-        caption += f"Cost Basis: ${latest.get('total_cost_basis_usd', 0):.2f}\n"
-        caption += f"Snapshots: {len(rows)}"
+    # 生成 Telegram 消息摘要
+    caption = f"📊 Daily PnL Report: {date_str}\n"
+    caption += f"Positions: {pnl_response.total_positions}\n"
+    caption += f"Shadow PnL: ${pnl_response.shadow_view.pnl_usd:.2f}\n"
+    caption += f"Real PnL: ${pnl_response.real_view.pnl_usd:.2f}\n"
+    caption += f"Cost Basis: ${pnl_response.total_cost_basis_usd:.2f}\n"
+    caption += f"Total EV: ${pnl_response.total_ev_usd:.2f}"
 
     if dry_run:
         logger.info(f"[DRY_RUN] Would send PnL report: {csv_path}")
