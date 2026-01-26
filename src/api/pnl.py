@@ -30,16 +30,16 @@ logger = logging.getLogger(__name__)
 pnl_router = APIRouter(tags=["pnl"])
 
 
-def _safe_float(value, default: float = 0.0) -> float:
+def _safe_float(value, default: Optional[float] = 0.0) -> Optional[float]:
     """
     安全地将值转换为 float，处理 NaN/inf/None/空字符串等异常情况
 
     Args:
         value: 要转换的值
-        default: 转换失败时的默认值
+        default: 转换失败时的默认值，可以为 None
 
     Returns:
-        有效的 float 值
+        有效的 float 值，或 default（可能为 None）
     """
     try:
         result = float(value)
@@ -50,7 +50,7 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _get_deribit_current_price(instrument_name: str) -> float:
+def _get_deribit_current_price(instrument_name: str) -> Optional[float]:
     """
     获取 Deribit 合约的当前标记价格 (USD)
 
@@ -58,20 +58,32 @@ def _get_deribit_current_price(instrument_name: str) -> float:
         instrument_name: 合约名称 (e.g., "BTC-16JAN26-91000-C")
 
     Returns:
-        当前标记价格 (USD)
+        当前标记价格 (USD)，获取失败时返回 None
     """
     try:
         ticker = DeribitAPI.get_ticker(instrument_name)
-        mark_price_btc = _safe_float(ticker.get("mark_price", 0.0))
+        mark_price_btc = ticker.get("mark_price")
+        if mark_price_btc is None:
+            logger.warning(f"No mark_price in ticker for {instrument_name}")
+            return None
+        mark_price_btc = _safe_float(mark_price_btc, default=None)
+        if mark_price_btc is None:
+            return None
         # mark_price 是 BTC 计价，需要转换为 USD
-        spot = _safe_float(DeribitAPI.get_spot_price("btc_usd"))
-        return _safe_float(mark_price_btc * spot)
+        spot = DeribitAPI.get_spot_price("btc_usd")
+        if spot is None:
+            logger.warning(f"Failed to get spot price for {instrument_name}")
+            return None
+        spot = _safe_float(spot, default=None)
+        if spot is None:
+            return None
+        return _safe_float(mark_price_btc * spot, default=None)
     except Exception as e:
         logger.warning(f"Failed to get ticker for {instrument_name}: {e}")
-        return 0.0
+        return None
 
 
-def _get_pm_current_prices(market_id: str) -> tuple[float, float]:
+def _get_pm_current_prices(market_id: str) -> tuple[Optional[float], Optional[float]]:
     """
     获取 Polymarket 当前价格
 
@@ -79,26 +91,30 @@ def _get_pm_current_prices(market_id: str) -> tuple[float, float]:
         market_id: PM 市场 ID
 
     Returns:
-        (yes_price, no_price)
+        (yes_price, no_price)，获取失败时返回 (None, None)
     """
     try:
-        return PolymarketAPI.get_prices(market_id)
+        yes_price, no_price = PolymarketAPI.get_prices(market_id)
+        # 验证返回值是否有效
+        yes_price = _safe_float(yes_price, default=None)
+        no_price = _safe_float(no_price, default=None)
+        return yes_price, no_price
     except Exception as e:
         logger.warning(f"Failed to get PM prices for {market_id}: {e}")
-        return 0.0, 0.0
+        return None, None
 
 
-def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -> PnlPositionDetail:
+def _calculate_position_pnl(row: dict, current_spot: Optional[float], price_cache: dict) -> Optional[PnlPositionDetail]:
     """
     计算单个 position 的 PnL
 
     Args:
         row: positions 的一行数据
-        current_spot: 当前 BTC 现货价格
+        current_spot: 当前 BTC 现货价格，可能为 None
         price_cache: 价格缓存 {instrument: price}
 
     Returns:
-        PnlPositionDetail
+        PnlPositionDetail，如果价格获取失败则返回 None
     """
     signal_id = row.get("signal_id") or ""
     trade_id = row.get("trade_id") or ""
@@ -131,14 +147,34 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     if inst_k2 not in price_cache:
         price_cache[inst_k2] = _get_deribit_current_price(inst_k2)
 
-    current_k1_price = price_cache.get(inst_k1, 0.0)
-    current_k2_price = price_cache.get(inst_k2, 0.0)
+    current_k1_price = price_cache.get(inst_k1)
+    current_k2_price = price_cache.get(inst_k2)
+
+    # 检查 Deribit 价格是否有效
+    if current_k1_price is None or current_k2_price is None:
+        signal_id = row.get("signal_id") or ""
+        logger.warning(f"Skipping position {signal_id}: Deribit price unavailable "
+                      f"(k1={current_k1_price}, k2={current_k2_price})")
+        return None
 
     # PM 价格
     pm_cache_key = f"pm_{market_id}"
     if pm_cache_key not in price_cache:
         price_cache[pm_cache_key] = _get_pm_current_prices(market_id)
-    current_yes_price, current_no_price = price_cache.get(pm_cache_key, (0.0, 0.0))
+    current_yes_price, current_no_price = price_cache.get(pm_cache_key, (None, None))
+
+    # 检查 PM 价格是否有效
+    if current_yes_price is None or current_no_price is None:
+        signal_id = row.get("signal_id") or ""
+        logger.warning(f"Skipping position {signal_id}: PM price unavailable "
+                      f"(yes={current_yes_price}, no={current_no_price})")
+        return None
+
+    # 检查现货价格是否有效
+    if current_spot is None:
+        signal_id = row.get("signal_id") or ""
+        logger.warning(f"Skipping position {signal_id}: Spot price unavailable")
+        return None
 
     # ========== Shadow View 计算 ==========
     # strategy=2: Long K1, Short K2
@@ -449,24 +485,35 @@ def get_pnl_summary(
         )
 
     # 获取当前 BTC 现货价格
+    current_spot: Optional[float] = None
     try:
-        current_spot = DeribitAPI.get_spot_price("btc_usd")
+        spot_value = DeribitAPI.get_spot_price("btc_usd")
+        current_spot = _safe_float(spot_value, default=None)
+        if current_spot is None:
+            logger.warning("Spot price returned invalid value")
     except Exception as e:
         logger.warning(f"Failed to get spot price: {e}")
-        current_spot = 0.0
 
     # 价格缓存
     price_cache: dict = {}
 
     # 计算每个 position 的 PnL
     position_details: list[PnlPositionDetail] = []
+    skipped_count = 0
     for row in rows:
         try:
             detail = _calculate_position_pnl(row, current_spot, price_cache)
+            if detail is None:
+                # 价格获取失败，跳过此 position
+                skipped_count += 1
+                continue
             position_details.append(detail)
         except Exception as e:
             logger.error(f"Failed to calculate PnL for {row.get('trade_id')}: {e}", exc_info=True)
             continue
+
+    if skipped_count > 0:
+        logger.info(f"Skipped {skipped_count} positions due to unavailable prices")
 
     # 汇总数据
     total_positions = len(position_details)

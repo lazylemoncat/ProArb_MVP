@@ -1,5 +1,20 @@
 # ProArb MVP - AI Assistant Guide
 
+## 开发规范 (Development Rules)
+
+**重要**: 以下规则必须严格遵守。
+
+### 规则 1: 语言规范
+- 代码注释使用中文
+- AI 回答使用中文
+
+### 规则 2: API 返回值规范
+- 当 API 返回的数据为空或获取失败时，统一返回 `null`（JSON）或 `None`（Python），而不是默认值（如 `0.0`、`""`、`[]` 等）
+- 调用方需要检查返回值是否为 `null`/`None`，并做相应处理
+- 例外情况：除非业务逻辑明确要求使用默认值
+
+---
+
 ## Project Overview
 
 **ProArb** is a cryptocurrency arbitrage bot that identifies and executes profitable trading opportunities between **Polymarket** (prediction markets) and **Deribit** (options exchange). The system monitors BTC/ETH markets in real-time, calculates expected value using Black-Scholes pricing models, and executes hedged positions when favorable opportunities arise.
