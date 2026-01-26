@@ -10,7 +10,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, BackgroundTasks
+from pydantic import BaseModel
 
 from .models import (
     PnlPositionDetail,
@@ -30,16 +31,16 @@ logger = logging.getLogger(__name__)
 pnl_router = APIRouter(tags=["pnl"])
 
 
-def _safe_float(value, default: float = 0.0) -> float:
+def _safe_float(value, default: Optional[float] = 0.0) -> Optional[float]:
     """
     安全地将值转换为 float，处理 NaN/inf/None/空字符串等异常情况
 
     Args:
         value: 要转换的值
-        default: 转换失败时的默认值
+        default: 转换失败时的默认值，可以为 None
 
     Returns:
-        有效的 float 值
+        有效的 float 值，或 default（可能为 None）
     """
     try:
         result = float(value)
@@ -50,7 +51,7 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _get_deribit_current_price(instrument_name: str) -> float:
+def _get_deribit_current_price(instrument_name: str) -> Optional[float]:
     """
     获取 Deribit 合约的当前标记价格 (USD)
 
@@ -58,20 +59,32 @@ def _get_deribit_current_price(instrument_name: str) -> float:
         instrument_name: 合约名称 (e.g., "BTC-16JAN26-91000-C")
 
     Returns:
-        当前标记价格 (USD)
+        当前标记价格 (USD)，获取失败时返回 None
     """
     try:
         ticker = DeribitAPI.get_ticker(instrument_name)
-        mark_price_btc = _safe_float(ticker.get("mark_price", 0.0))
+        mark_price_btc = ticker.get("mark_price")
+        if mark_price_btc is None:
+            logger.warning(f"No mark_price in ticker for {instrument_name}")
+            return None
+        mark_price_btc = _safe_float(mark_price_btc, default=None)
+        if mark_price_btc is None:
+            return None
         # mark_price 是 BTC 计价，需要转换为 USD
-        spot = _safe_float(DeribitAPI.get_spot_price("btc_usd"))
-        return _safe_float(mark_price_btc * spot)
+        spot = DeribitAPI.get_spot_price("btc_usd")
+        if spot is None:
+            logger.warning(f"Failed to get spot price for {instrument_name}")
+            return None
+        spot = _safe_float(spot, default=None)
+        if spot is None:
+            return None
+        return _safe_float(mark_price_btc * spot, default=None)
     except Exception as e:
         logger.warning(f"Failed to get ticker for {instrument_name}: {e}")
-        return 0.0
+        return None
 
 
-def _get_pm_current_prices(market_id: str) -> tuple[float, float]:
+def _get_pm_current_prices(market_id: str) -> tuple[Optional[float], Optional[float]]:
     """
     获取 Polymarket 当前价格
 
@@ -79,26 +92,30 @@ def _get_pm_current_prices(market_id: str) -> tuple[float, float]:
         market_id: PM 市场 ID
 
     Returns:
-        (yes_price, no_price)
+        (yes_price, no_price)，获取失败时返回 (None, None)
     """
     try:
-        return PolymarketAPI.get_prices(market_id)
+        yes_price, no_price = PolymarketAPI.get_prices(market_id)
+        # 验证返回值是否有效
+        yes_price = _safe_float(yes_price, default=None)
+        no_price = _safe_float(no_price, default=None)
+        return yes_price, no_price
     except Exception as e:
         logger.warning(f"Failed to get PM prices for {market_id}: {e}")
-        return 0.0, 0.0
+        return None, None
 
 
-def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -> PnlPositionDetail:
+def _calculate_position_pnl(row: dict, current_spot: Optional[float], price_cache: dict) -> Optional[PnlPositionDetail]:
     """
     计算单个 position 的 PnL
 
     Args:
         row: positions 的一行数据
-        current_spot: 当前 BTC 现货价格
+        current_spot: 当前 BTC 现货价格，可能为 None
         price_cache: 价格缓存 {instrument: price}
 
     Returns:
-        PnlPositionDetail
+        PnlPositionDetail，如果价格获取失败则返回 None
     """
     signal_id = row.get("signal_id") or ""
     trade_id = row.get("trade_id") or ""
@@ -131,14 +148,34 @@ def _calculate_position_pnl(row: dict, current_spot: float, price_cache: dict) -
     if inst_k2 not in price_cache:
         price_cache[inst_k2] = _get_deribit_current_price(inst_k2)
 
-    current_k1_price = price_cache.get(inst_k1, 0.0)
-    current_k2_price = price_cache.get(inst_k2, 0.0)
+    current_k1_price = price_cache.get(inst_k1)
+    current_k2_price = price_cache.get(inst_k2)
+
+    # 检查 Deribit 价格是否有效
+    if current_k1_price is None or current_k2_price is None:
+        signal_id = row.get("signal_id") or ""
+        logger.warning(f"Skipping position {signal_id}: Deribit price unavailable "
+                      f"(k1={current_k1_price}, k2={current_k2_price})")
+        return None
 
     # PM 价格
     pm_cache_key = f"pm_{market_id}"
     if pm_cache_key not in price_cache:
         price_cache[pm_cache_key] = _get_pm_current_prices(market_id)
-    current_yes_price, current_no_price = price_cache.get(pm_cache_key, (0.0, 0.0))
+    current_yes_price, current_no_price = price_cache.get(pm_cache_key, (None, None))
+
+    # 检查 PM 价格是否有效
+    if current_yes_price is None or current_no_price is None:
+        signal_id = row.get("signal_id") or ""
+        logger.warning(f"Skipping position {signal_id}: PM price unavailable "
+                      f"(yes={current_yes_price}, no={current_no_price})")
+        return None
+
+    # 检查现货价格是否有效
+    if current_spot is None:
+        signal_id = row.get("signal_id") or ""
+        logger.warning(f"Skipping position {signal_id}: Spot price unavailable")
+        return None
 
     # ========== Shadow View 计算 ==========
     # strategy=2: Long K1, Short K2
@@ -449,24 +486,35 @@ def get_pnl_summary(
         )
 
     # 获取当前 BTC 现货价格
+    current_spot: Optional[float] = None
     try:
-        current_spot = DeribitAPI.get_spot_price("btc_usd")
+        spot_value = DeribitAPI.get_spot_price("btc_usd")
+        current_spot = _safe_float(spot_value, default=None)
+        if current_spot is None:
+            logger.warning("Spot price returned invalid value")
     except Exception as e:
         logger.warning(f"Failed to get spot price: {e}")
-        current_spot = 0.0
 
     # 价格缓存
     price_cache: dict = {}
 
     # 计算每个 position 的 PnL
     position_details: list[PnlPositionDetail] = []
+    skipped_count = 0
     for row in rows:
         try:
             detail = _calculate_position_pnl(row, current_spot, price_cache)
+            if detail is None:
+                # 价格获取失败，跳过此 position
+                skipped_count += 1
+                continue
             position_details.append(detail)
         except Exception as e:
             logger.error(f"Failed to calculate PnL for {row.get('trade_id')}: {e}", exc_info=True)
             continue
+
+    if skipped_count > 0:
+        logger.info(f"Skipped {skipped_count} positions due to unavailable prices")
 
     # 汇总数据
     total_positions = len(position_details)
@@ -502,3 +550,145 @@ def get_pnl_summary(
         diff_usd=diff_usd,
         positions=position_details
     )
+
+
+# ==================== 发送 PnL CSV 端点 ====================
+
+class SendPnlResponse(BaseModel):
+    """发送 PnL CSV 响应"""
+    success: bool
+    message: str
+    file_path: Optional[str] = None
+
+
+@pnl_router.post("/api/pnl/send", response_model=SendPnlResponse)
+async def send_pnl_csv():
+    """
+    立即生成并发送 PnL CSV 到 Telegram。
+
+    Returns:
+        发送结果
+    """
+    import csv
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from ..core.config import load_all_configs
+    from ..telegram.TG_bot import TG_bot
+
+    try:
+        # 获取当前 PnL 数据
+        pnl_response = get_pnl_summary()
+
+        if not pnl_response.positions:
+            return SendPnlResponse(
+                success=False,
+                message="没有可用的 position 数据"
+            )
+
+        # 生成 CSV 文件
+        now = datetime.now(timezone.utc)
+        date_str = now.strftime("%Y-%m-%d")
+        time_str = now.strftime("%H%M%S")
+
+        output_dir = Path("./data")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"pnl_{date_str}_{time_str}.csv"
+
+        # CSV 列名
+        csv_columns = [
+            "signal_id", "timestamp", "market_title",
+            "funding_usd", "cost_basis_usd", "total_unrealized_pnl_usd", "im_value_usd",
+            "shadow_pnl_usd", "real_pnl_usd",
+            "pm_pnl_usd", "dr_pnl_usd", "fee_dr_usd", "currency_pnl_usd",
+            "diff_usd", "residual_error_usd",
+            "ev_usd", "total_pnl_usd",
+            "leg1_instrument", "leg1_qty", "leg1_entry_price", "leg1_current_price", "leg1_pnl",
+            "leg2_instrument", "leg2_qty", "leg2_entry_price", "leg2_current_price", "leg2_pnl",
+        ]
+
+        # 写入 CSV
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=csv_columns, extrasaction="ignore")
+            writer.writeheader()
+
+            for position in pnl_response.positions:
+                row = {
+                    "signal_id": position.signal_id,
+                    "timestamp": position.timestamp,
+                    "market_title": position.market_title,
+                    "funding_usd": position.funding_usd,
+                    "cost_basis_usd": position.cost_basis_usd,
+                    "total_unrealized_pnl_usd": position.total_unrealized_pnl_usd,
+                    "im_value_usd": position.im_value_usd,
+                    "shadow_pnl_usd": position.shadow_view.pnl_usd,
+                    "real_pnl_usd": position.real_view.pnl_usd,
+                    "pm_pnl_usd": position.pm_pnl_usd,
+                    "dr_pnl_usd": position.dr_pnl_usd,
+                    "fee_dr_usd": position.fee_dr_usd,
+                    "currency_pnl_usd": position.currency_pnl_usd,
+                    "diff_usd": position.diff_usd,
+                    "residual_error_usd": position.residual_error_usd,
+                    "ev_usd": position.ev_usd,
+                    "total_pnl_usd": position.total_pnl_usd,
+                }
+
+                # 展开 legs
+                legs = position.shadow_view.legs
+                if len(legs) >= 1:
+                    row["leg1_instrument"] = legs[0].instrument
+                    row["leg1_qty"] = legs[0].qty
+                    row["leg1_entry_price"] = legs[0].entry_price
+                    row["leg1_current_price"] = legs[0].current_price
+                    row["leg1_pnl"] = legs[0].pnl
+                if len(legs) >= 2:
+                    row["leg2_instrument"] = legs[1].instrument
+                    row["leg2_qty"] = legs[1].qty
+                    row["leg2_entry_price"] = legs[1].entry_price
+                    row["leg2_current_price"] = legs[1].current_price
+                    row["leg2_pnl"] = legs[1].pnl
+
+                writer.writerow(row)
+
+        # 初始化 Telegram bot 并发送
+        env, _, _ = load_all_configs()
+        bot = TG_bot(
+            name="pnl_send",
+            token=env.TELEGRAM_BOT_TOKEN_TRADING,
+            chat_id=env.TELEGRAM_CHAT_ID
+        )
+
+        # 生成摘要
+        caption = f"📊 PnL Report: {date_str} {time_str}\n"
+        caption += f"Positions: {pnl_response.total_positions}\n"
+        caption += f"Shadow PnL: ${pnl_response.shadow_view.pnl_usd:.2f}\n"
+        caption += f"Real PnL: ${pnl_response.real_view.pnl_usd:.2f}\n"
+        caption += f"Cost Basis: ${pnl_response.total_cost_basis_usd:.2f}\n"
+        caption += f"Total EV: ${pnl_response.total_ev_usd:.2f}"
+
+        success, msg_id = await bot.send_document(
+            file_path=str(output_path),
+            caption=caption
+        )
+
+        if success:
+            logger.info(f"Sent PnL CSV via API: {output_path}, message_id: {msg_id}")
+            return SendPnlResponse(
+                success=True,
+                message=f"已发送 PnL CSV 到 Telegram (message_id: {msg_id})",
+                file_path=str(output_path)
+            )
+        else:
+            logger.error(f"Failed to send PnL CSV: {output_path}")
+            return SendPnlResponse(
+                success=False,
+                message="发送 Telegram 失败",
+                file_path=str(output_path)
+            )
+
+    except Exception as e:
+        logger.error(f"Error sending PnL CSV: {e}", exc_info=True)
+        return SendPnlResponse(
+            success=False,
+            message=f"发送失败: {str(e)}"
+        )
