@@ -122,6 +122,7 @@ def _calculate_position_pnl(row: dict, current_spot: Optional[float], price_cach
     timestamp = row.get("entry_timestamp") or ""
     market_title = row.get("market_title") or ""
     market_id = row.get("market_id") or ""
+    status = (row.get("status") or "").upper()
 
     # 入场数据 (使用 _safe_float 处理 NaN/inf)
     pm_entry_cost = _safe_float(row.get("pm_entry_cost", 0))
@@ -142,40 +143,68 @@ def _calculate_position_pnl(row: dict, current_spot: Optional[float], price_cach
     ev_usd = _safe_float(row.get("ev_model_usd", 0))
 
     # ========== 获取当前价格 ==========
-    # Deribit 价格
-    if inst_k1 not in price_cache:
-        price_cache[inst_k1] = _get_deribit_current_price(inst_k1)
-    if inst_k2 not in price_cache:
-        price_cache[inst_k2] = _get_deribit_current_price(inst_k2)
+    # 根据仓位状态决定使用结算价格还是实时价格
+    if status == "CLOSE":
+        # 已平仓位：使用数据库中的结算价格，不调用 API
+        # Deribit 结算价格已经是 USD 计价
+        current_k1_price = _safe_float(row.get("k1_settlement_price"), default=None)
+        current_k2_price = _safe_float(row.get("k2_settlement_price"), default=None)
 
-    current_k1_price = price_cache.get(inst_k1)
-    current_k2_price = price_cache.get(inst_k2)
+        # PM 结算价格
+        current_yes_price = _safe_float(row.get("pm_yes_settlement_price"), default=None)
+        current_no_price = _safe_float(row.get("pm_no_settlement_price"), default=None)
 
-    # 检查 Deribit 价格是否有效
-    if current_k1_price is None or current_k2_price is None:
-        signal_id = row.get("signal_id") or ""
-        logger.warning(f"Skipping position {signal_id}: Deribit price unavailable "
-                      f"(k1={current_k1_price}, k2={current_k2_price})")
-        return None
+        # 结算时的现货价格（使用 settlement_index_price 如果有，否则用入场时的 spot）
+        settlement_spot = _safe_float(row.get("settlement_index_price"), default=None)
+        if settlement_spot is not None:
+            current_spot = settlement_spot
+        elif current_spot is None:
+            # 回退到入场时的 spot
+            current_spot = entry_spot
 
-    # PM 价格
-    pm_cache_key = f"pm_{market_id}"
-    if pm_cache_key not in price_cache:
-        price_cache[pm_cache_key] = _get_pm_current_prices(market_id)
-    current_yes_price, current_no_price = price_cache.get(pm_cache_key, (None, None))
+        # 检查结算价格是否有效
+        if current_k1_price is None or current_k2_price is None:
+            logger.warning(f"Skipping closed position {signal_id}: Deribit settlement price unavailable "
+                          f"(k1={current_k1_price}, k2={current_k2_price})")
+            return None
 
-    # 检查 PM 价格是否有效
-    if current_yes_price is None or current_no_price is None:
-        signal_id = row.get("signal_id") or ""
-        logger.warning(f"Skipping position {signal_id}: PM price unavailable "
-                      f"(yes={current_yes_price}, no={current_no_price})")
-        return None
+        if current_yes_price is None or current_no_price is None:
+            logger.warning(f"Skipping closed position {signal_id}: PM settlement price unavailable "
+                          f"(yes={current_yes_price}, no={current_no_price})")
+            return None
+    else:
+        # 开仓位：正常获取实时价格
+        # Deribit 价格
+        if inst_k1 not in price_cache:
+            price_cache[inst_k1] = _get_deribit_current_price(inst_k1)
+        if inst_k2 not in price_cache:
+            price_cache[inst_k2] = _get_deribit_current_price(inst_k2)
 
-    # 检查现货价格是否有效
-    if current_spot is None:
-        signal_id = row.get("signal_id") or ""
-        logger.warning(f"Skipping position {signal_id}: Spot price unavailable")
-        return None
+        current_k1_price = price_cache.get(inst_k1)
+        current_k2_price = price_cache.get(inst_k2)
+
+        # 检查 Deribit 价格是否有效
+        if current_k1_price is None or current_k2_price is None:
+            logger.warning(f"Skipping position {signal_id}: Deribit price unavailable "
+                          f"(k1={current_k1_price}, k2={current_k2_price})")
+            return None
+
+        # PM 价格
+        pm_cache_key = f"pm_{market_id}"
+        if pm_cache_key not in price_cache:
+            price_cache[pm_cache_key] = _get_pm_current_prices(market_id)
+        current_yes_price, current_no_price = price_cache.get(pm_cache_key, (None, None))
+
+        # 检查 PM 价格是否有效
+        if current_yes_price is None or current_no_price is None:
+            logger.warning(f"Skipping position {signal_id}: PM price unavailable "
+                          f"(yes={current_yes_price}, no={current_no_price})")
+            return None
+
+        # 检查现货价格是否有效
+        if current_spot is None:
+            logger.warning(f"Skipping position {signal_id}: Spot price unavailable")
+            return None
 
     # ========== Shadow View 计算 ==========
     # strategy=2: Long K1, Short K2
