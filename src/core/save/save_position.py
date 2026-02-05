@@ -15,6 +15,8 @@ class SavePosition:
 
     trade_id: str
     signal_id: str
+    pm_order_id: str  # Polymarket 订单 ID
+    db_order_id: str  # Deribit 订单 ID（多个用逗号分隔）
     direction: str
     status: str
     strategy: int
@@ -135,6 +137,13 @@ class SavePosition:
     funding_usd: float            # Net funding payments on Deribit (for hedging vs spot BTC holdings)
     im_value_usd: float           # Deribit 初始保证金 (PME计算)
 
+    # Deribit 账户和保证金数据 (交易时记录)
+    dr_btc_balance_before: float = 0.0   # 交易前 BTC 余额
+    dr_btc_balance_after: float = 0.0    # 交易后 BTC 余额
+    dr_k1_margin: float = 0.0            # K1 腿保证金
+    dr_k2_margin: float = 0.0            # K2 腿保证金
+    dr_total_margin: float = 0.0         # 总保证金
+
     # 结算数据 (平仓时更新)
     pm_yes_settlement_price: float = 0.0   # PM YES 结算价格
     pm_no_settlement_price: float = 0.0    # PM NO 结算价格
@@ -146,6 +155,8 @@ def save_position(
         db_ctx: DeribitMarketContext,
         trade_id: str,
         signal_id: str,
+        pm_order_id: str,
+        db_order_id: str,
         direction: str,
         status: str,
         strategy: int,
@@ -159,7 +170,13 @@ def save_position(
         net_ev: float,
         roi_pct: float,
         funding_usd: float = 0.0,  # Net funding payments on Deribit
-        im_value_usd: float = 0.0  # Deribit 初始保证金 (PME计算)
+        im_value_usd: float = 0.0,  # Deribit 初始保证金 (PME计算)
+        # Deribit 账户和保证金数据
+        dr_btc_balance_before: float = 0.0,
+        dr_btc_balance_after: float = 0.0,
+        dr_k1_margin: float = 0.0,
+        dr_k2_margin: float = 0.0,
+        dr_total_margin: float = 0.0,
     ):
     # 获取 K1 和 K2 的 ticker 数据 - settlement prices
     k1_settlement_price, k2_settlement_price = 0.0, 0.0
@@ -177,6 +194,8 @@ def save_position(
         dry_run=dry_run,
         trade_id=trade_id,
         signal_id=signal_id,
+        pm_order_id=pm_order_id,
+        db_order_id=db_order_id,
         direction=direction,
         status=status,
         strategy=strategy,
@@ -291,6 +310,12 @@ def save_position(
         roi_model_pct=roi_pct,
         funding_usd=funding_usd,
         im_value_usd=im_value_usd,
+        # Deribit 账户和保证金数据
+        dr_btc_balance_before=dr_btc_balance_before,
+        dr_btc_balance_after=dr_btc_balance_after,
+        dr_k1_margin=dr_k1_margin,
+        dr_k2_margin=dr_k2_margin,
+        dr_total_margin=dr_total_margin,
     )
 
     # Save to SQLite (primary storage)

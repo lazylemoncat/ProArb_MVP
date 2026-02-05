@@ -37,8 +37,10 @@ from ..services.execute_trade import execute_trade
 from ..strategy.strategy2 import Strategy_input, cal_strategy_result
 from ..telegram.TG_bot import TG_bot
 from ..core.config import Config, Env_config, Trading_config
+from ..kill_switch import KillSwitchStateManager
 from ..core.save.save_result2 import save_result
 from ..core.save.save_raw_data import save_raw_data
+from ..core.save.save_raw_data_v2 import save_raw_data_v2
 from ..core.save.save_ev import save_ev
 from ..utils.signal_id_generator import generate_signal_id
 from ..utils.state_tracker import check_state_completed, mark_state_completed, get_state_key
@@ -248,6 +250,7 @@ async def investment_runner(
         env: Env_config,
         pm_ctx: PolymarketContext,
         deribit_ctx: DeribitMarketContext,
+        deribit_ctx_day2: Optional[DeribitMarketContext],
         inv_bases: list[float],
         signal_state: dict[str, SignalSnapshot],
         record_signal_filter: Record_signal_filter,
@@ -379,8 +382,33 @@ async def investment_runner(
             # 写入本次检测结果（使用 SQLite）
             save_raw_data(pm_ctx, deribit_ctx)
 
+            # 写入包含 day2 IV 的扩展数据
+            save_raw_data_v2(pm_ctx, deribit_ctx, deribit_ctx_day2)
+
             # Generate signal_id early so it's available for both record_signal and trade_signal paths
             signal_id = generate_signal_id(market_id=pm_ctx.market_id)
+
+            # 保存 EV 数据（每10秒记录一次，不再依赖 filter）
+            pm_shares = pm_open_selected.shares
+            pm_actual_cost = pm_open_selected.total_cost_usd
+            dr_k1_price = deribit_ctx.k1_ask_usd if strategy == 2 else deribit_ctx.k1_bid_usd
+            dr_k2_price = deribit_ctx.k2_bid_usd if strategy == 2 else deribit_ctx.k2_ask_usd
+            save_ev(
+                signal_id=signal_id,
+                pm_ctx=pm_ctx,
+                db_ctx=deribit_ctx,
+                strategy=strategy,
+                pm_entry_cost=pm_actual_cost,
+                pm_shares=pm_shares,
+                pm_slippage_usd=slippage,
+                contracts=result.contract_amount,
+                dr_k1_price=dr_k1_price,
+                dr_k2_price=dr_k2_price,
+                gross_ev=gross_ev,
+                theta_adj_ev=adjusted_gross_ev,
+                net_ev=net_ev,
+                roi_pct=result.roi_pct,
+            )
 
             # 发送套利机会到 Alert Bot
             if record_signal:
@@ -400,31 +428,12 @@ async def investment_runner(
                 # 写入本次检测结果 (使用 SQLite)
                 save_result(pm_ctx, deribit_ctx)
 
-                # 保存 EV 数据到 ev.csv
-                # Use actual shares from slippage calculation
-                pm_shares = pm_open_selected.shares
-                # Use actual cost instead of target
-                pm_actual_cost = pm_open_selected.total_cost_usd
-                dr_k1_price = deribit_ctx.k1_ask_usd if strategy == 2 else deribit_ctx.k1_bid_usd
-                dr_k2_price = deribit_ctx.k2_bid_usd if strategy == 2 else deribit_ctx.k2_ask_usd
-                save_ev(
-                    signal_id=signal_id,
-                    pm_ctx=pm_ctx,
-                    db_ctx=deribit_ctx,
-                    strategy=strategy,
-                    pm_entry_cost=pm_actual_cost,  # Use actual cost
-                    pm_shares=pm_shares,
-                    pm_slippage_usd=slippage,
-                    contracts=result.contract_amount,
-                    dr_k1_price=dr_k1_price,
-                    dr_k2_price=dr_k2_price,
-                    gross_ev=gross_ev,  # Unadjusted gross EV
-                    theta_adj_ev=adjusted_gross_ev,  # Theta-adjusted gross EV
-                    net_ev=net_ev,
-                    roi_pct=result.roi_pct,
-                )
-
             if trade_signal and time_condition:
+                # Kill Switch 检查：只有 RUNNING 状态才允许新交易
+                if not KillSwitchStateManager.can_trade():
+                    logger.warning(f"Kill Switch 激活，跳过交易: {pm_ctx.market_id}")
+                    continue
+
                 await execute_trade(
                     trade_signal=trade_signal,
                     dry_run=dry_run,
@@ -525,7 +534,7 @@ async def main_monitor(
             # 若没有该事件
             if pm_context.market_title not in instruments_map:
                 continue
-            # 构建 deribit 快照
+            # 构建 deribit 快照 (day1 - 当天到期)
             db_context = await DeribitClient.get_db_context(
                 deribitUserCfg=deribitUserCfg,
                 title=pm_context.market_title,
@@ -541,12 +550,30 @@ async def main_monitor(
             if db_context is None:
                 continue
 
+            # 构建 deribit 快照 (day2 - 第二天到期，用于 raw_v2)
+            db_context_day2 = None
+            try:
+                db_context_day2 = await DeribitClient.get_db_context(
+                    deribitUserCfg=deribitUserCfg,
+                    title=pm_context.market_title,
+                    asset=data.get("asset", ""),
+                    k1_strike=data.get("deribit", {}).get("k1_strike"),
+                    k2_strike=data.get("deribit", {}).get("k2_strike"),
+                    k_poly=data.get("deribit", {}).get("K_poly"),
+                    expiry_timestamp=instruments_map[pm_context.market_title].get("k1_expiration_timestamp"),
+                    day_offset=config.thresholds.day_off + 1  # day2 = day1 + 1
+                )
+            except Exception as e:
+                # day2 数据获取失败不影响主流程
+                logger.debug(f"获取 day2 数据失败 {pm_context.market_title}: {e}")
+
             # 对投入资金列表进行判断
             inv_bases = config.thresholds.INVESTMENTS
             await investment_runner(
                 env,
                 pm_context,
                 db_context,
+                db_context_day2,
                 inv_bases,
                 signal_state,
                 record_signal_filter,

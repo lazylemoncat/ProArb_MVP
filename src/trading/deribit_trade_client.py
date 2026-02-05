@@ -139,7 +139,10 @@ class Deribit_trade_client:
                 raise ValueError("strategy must be 1 or 2")
 
             resps.extend([r1, r2])
-            ids.extend([Deribit_trade.extract_order_id(r1), Deribit_trade.extract_order_id(r2)])
+            order_id_1 = Deribit_trade.extract_order_id(r1)
+            order_id_2 = Deribit_trade.extract_order_id(r2)
+            logger.info(f"Extracted order IDs: leg1={order_id_1}, leg2={order_id_2}")
+            ids.extend([order_id_1, order_id_2])
 
             filled1 = _filled_amount(r1, default=amount)
             filled2 = _filled_amount(r2, default=amount)
@@ -194,7 +197,9 @@ class Deribit_trade_client:
                         )
 
                 resps.append(r_rebalance)
-                ids.append(Deribit_trade.extract_order_id(r_rebalance))
+                rebalance_order_id = Deribit_trade.extract_order_id(r_rebalance)
+                logger.info(f"Rebalance order ID: {rebalance_order_id}")
+                ids.append(rebalance_order_id)
                 executed_amount = matched_amount
             else:
                 logger.info(f"No rebalance needed: imbalance={imbalance}")

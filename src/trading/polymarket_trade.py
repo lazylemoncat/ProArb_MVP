@@ -100,3 +100,37 @@ class Polymarket_trade:
                 if found:
                     return found
         return None
+
+    @staticmethod
+    def get_order_status(client: ClobClient, order_id: str) -> tuple[float, float, str]:
+        """
+        查询订单成交状态。
+
+        返回 (filled_size, filled_cost, status)
+        - filled_size: 已成交份额
+        - filled_cost: 已成交金额 (USD)
+        - status: "FILLED" | "PARTIAL" | "CANCELLED" | "UNKNOWN"
+        """
+        try:
+            order = client.get_order(order_id)
+        except Exception:
+            return 0.0, 0.0, "UNKNOWN"
+
+        if order is None:
+            return 0.0, 0.0, "UNKNOWN"
+
+        # 提取成交信息
+        filled_size = float(order.get("size_matched", 0) or 0)
+        price = float(order.get("price", 0) or 0)
+        filled_cost = filled_size * price
+
+        # 判断状态
+        original_size = float(order.get("original_size", 0) or 0)
+        if original_size > 0 and filled_size >= original_size - 1e-6:
+            status = "FILLED"
+        elif filled_size > 0:
+            status = "PARTIAL"
+        else:
+            status = "CANCELLED"
+
+        return filled_size, filled_cost, status

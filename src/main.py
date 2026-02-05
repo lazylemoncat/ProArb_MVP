@@ -12,7 +12,6 @@ This is the main entry point that:
 import asyncio
 import csv
 import logging
-import time
 from datetime import date
 from typing import List
 
@@ -139,7 +138,7 @@ async def main():
             logger.error(f"Error in main loop: {e}", exc_info=True)
 
         # 每十秒运行一次
-        time.sleep(10)
+        await asyncio.sleep(10)
 
 
 if __name__ == "__main__":

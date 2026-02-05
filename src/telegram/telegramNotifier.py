@@ -8,7 +8,7 @@ TelegramNotifier: 用于通过 Telegram Bot API 发送消息.
 """
 import io
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
@@ -132,3 +132,86 @@ class TelegramNotifier:
 
         files = {"document": file_obj}
         return await self._request("sendDocument", payload, files)
+
+    async def get_updates(
+        self,
+        offset: int = 0,
+        limit: int = 100,
+        timeout: int = 30,
+        allowed_updates: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        使用 getUpdates 长轮询获取新消息。
+
+        用于接收用户发送给机器人的消息和命令。
+
+        Args:
+            offset: 返回的第一个更新的 ID，用于确认已处理的更新
+            limit: 返回更新数量限制，1-100，默认 100
+            timeout: 长轮询超时秒数，0 表示短轮询
+            allowed_updates: 指定接收的更新类型，如 ["message"]
+
+        Returns:
+            Update 对象列表，获取失败时返回空列表
+
+        Example:
+            updates = await notifier.get_updates(offset=last_update_id + 1, timeout=30)
+            for update in updates:
+                message = update.get("message", {})
+                text = message.get("text", "")
+                # 处理消息...
+        """
+        url = f"{self.base_url}/getUpdates"
+
+        params = {
+            "offset": offset,
+            "limit": limit,
+            "timeout": timeout,
+        }
+        if allowed_updates:
+            params["allowed_updates"] = allowed_updates
+
+        try:
+            # 使用较长的超时时间（timeout + 10 秒缓冲）
+            long_timeout = aiohttp.ClientTimeout(total=timeout + 10)
+            async with aiohttp.ClientSession(trust_env=True, timeout=long_timeout) as session:
+                async with session.get(url, params=params) as resp:
+                    if resp.status != 200:
+                        self.logger.error(f"[ERROR] getUpdates 失败，状态码: {resp.status}")
+                        return []
+
+                    data = await resp.json()
+                    if not data.get("ok"):
+                        self.logger.error(f"[ERROR] getUpdates 返回错误: {data}")
+                        return []
+
+                    return data.get("result", [])
+
+        except Exception as e:
+            self.logger.error(f"[ERROR] getUpdates 异常: {type(e).__name__}: {e}")
+            return []
+
+    async def reply_to_message(
+        self,
+        text: str,
+        reply_to_message_id: int,
+        parse_mode: str = "Markdown"
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        回复指定消息。
+
+        Args:
+            text: 回复文本
+            reply_to_message_id: 要回复的消息 ID
+            parse_mode: 格式化模式
+
+        Returns:
+            Tuple of (success, message_id)
+        """
+        payload = {
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "reply_to_message_id": reply_to_message_id,
+        }
+        return await self._request("sendMessage", payload)

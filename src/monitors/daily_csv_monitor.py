@@ -25,6 +25,28 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 DAILY_CSV_MONITOR_ENABLED = True
+
+
+def _format_number(value, decimal_places: int = 6) -> str:
+    """
+    格式化数字，避免科学计数法。
+
+    Args:
+        value: 要格式化的值
+        decimal_places: 小数位数
+
+    Returns:
+        格式化后的字符串，None 值返回空字符串
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        # 整数或非常大的数字不需要小数位
+        if isinstance(value, int) or (isinstance(value, float) and value == int(value)):
+            return str(int(value))
+        # 使用 f-string 格式化，避免科学计数法
+        return f"{value:.{decimal_places}f}".rstrip('0').rstrip('.')
+    return str(value)
 DAILY_CSV_REPORT_HOUR_UTC = 0  # Midnight UTC
 DAILY_CSV_DRY_RUN = False
 
@@ -99,12 +121,30 @@ def _generate_daily_ev_csv(target_date: datetime) -> Optional[str]:
             "roi_model_pct",
         ]
 
+        # 需要格式化的数字字段
+        numeric_fields = {
+            "target_usd", "k_poly", "dr_index_price", "days_to_expiry",
+            "pm_yes_avg_price", "pm_no_avg_price", "pm_shares", "pm_slippage_usd",
+            "dr_contracts", "dr_k1_price", "dr_k2_price",
+            "k1_ask", "k1_bid", "k2_ask", "k2_bid",
+            "dr_iv", "dr_k1_iv", "dr_k2_iv", "dr_k_poly_iv",
+            "dr_iv_floor", "dr_iv_celling", "dr_prob",
+            "ev_gross_usd", "ev_theta_adj_usd", "ev_model_usd", "roi_model_pct",
+        }
+
         # Write CSV
         with open(output_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=csv_columns, extrasaction="ignore")
             writer.writeheader()
             for row in rows:
-                filtered_row = {k: row.get(k) for k in csv_columns}
+                filtered_row = {}
+                for k in csv_columns:
+                    val = row.get(k)
+                    # 对数字字段进行格式化，避免科学计数法
+                    if k in numeric_fields:
+                        filtered_row[k] = _format_number(val)
+                    else:
+                        filtered_row[k] = val if val is not None else ""
                 writer.writerow(filtered_row)
 
         logger.info(f"Generated EV CSV for {date_str}: {output_path} ({len(rows)} records)")
@@ -212,12 +252,38 @@ def _generate_daily_position_csv(target_date: datetime) -> Optional[str]:
             "settlement_index_price",
         ]
 
+        # 需要格式化的数字字段
+        numeric_fields = {
+            "pm_entry_cost", "entry_price_pm", "contracts", "dr_entry_cost",
+            "expiry_timestamp", "yes_price", "no_price", "spot",
+            "k1_strike", "k2_strike", "K_poly",
+            "k1_bid_btc", "k1_ask_btc", "k2_bid_btc", "k2_ask_btc",
+            "k1_mid_btc", "k2_mid_btc",
+            "k1_bid_usd", "k1_ask_usd", "k2_bid_usd", "k2_ask_usd",
+            "k1_mid_usd", "k2_mid_usd",
+            "k1_iv", "k2_iv", "mark_iv",
+            "k1_settlement_price", "k2_settlement_price",
+            "T", "days_to_expairy", "r", "deribit_prob",
+            "pm_shares", "pm_slippage_usd", "slippage_pct",
+            "dr_k1_price", "dr_k2_price",
+            "ev_gross_usd", "ev_theta_adj_usd", "ev_model_usd", "roi_model_pct",
+            "funding_usd",
+            "pm_yes_settlement_price", "pm_no_settlement_price", "settlement_index_price",
+        }
+
         # Write CSV
         with open(output_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=csv_columns, extrasaction="ignore")
             writer.writeheader()
             for row in rows:
-                filtered_row = {k: row.get(k) for k in csv_columns}
+                filtered_row = {}
+                for k in csv_columns:
+                    val = row.get(k)
+                    # 对数字字段进行格式化，避免科学计数法
+                    if k in numeric_fields:
+                        filtered_row[k] = _format_number(val)
+                    else:
+                        filtered_row[k] = val if val is not None else ""
                 writer.writerow(filtered_row)
 
         logger.info(f"Generated Position CSV for {date_str}: {output_path} ({len(rows)} records)")

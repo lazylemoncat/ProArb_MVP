@@ -1,4 +1,4 @@
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -214,6 +214,8 @@ class PnlPositionDetail(BaseModel):
     """单个 position 的 PnL 详情"""
     # 基础信息
     signal_id: str
+    pm_order_id: Optional[str] = None  # Polymarket 订单 ID
+    db_order_id: Optional[str] = None  # Deribit 订单 ID（多个用逗号分隔）
     timestamp: str
     market_title: str
 
@@ -319,4 +321,41 @@ class MarketResponse(BaseModel):
 
     # C. Deribit 数据
     dr_data: MarketDRData
+
+
+# ==================== Options Chain Models ====================
+
+class OptionStrikeData(BaseModel):
+    """单个行权价的期权数据"""
+    strike: int                        # 行权价
+    instrument_name: str | None = None # 合约名称
+    mark_iv: float | None = None       # 标记隐含波动率
+    mark_price: float | None = None    # 标记价格 (BTC)
+    mark_price_usd: float | None = None # 标记价格 (USD)
+    bid_price: float | None = None     # 买一价 (BTC)
+    ask_price: float | None = None     # 卖一价 (BTC)
+    bid_price_usd: float | None = None # 买一价 (USD)
+    ask_price_usd: float | None = None # 卖一价 (USD)
+    delta: float | None = None         # Delta
+    theta: float | None = None         # Theta
+    gamma: float | None = None         # Gamma
+    vega: float | None = None          # Vega
+
+
+class OptionsChainResponse(BaseModel):
+    """期权链响应 - 包含 ATM 附近的多个行权价数据"""
+    timestamp: str                     # ISO 格式
+    asset: Literal["BTC", "ETH"]       # 资产类型
+    index_price: float                 # 现货价格
+    atm_strike: int                    # ATM 行权价 (取整到 1000)
+    expiry_date: str | None = None     # 到期日期
+    expiry_timestamp: float | None = None # 到期时间戳 (ms)
+    days_to_expiry: float | None = None # 剩余到期天数
+    # k1-k6 期权数据
+    k1: OptionStrikeData | None = None # 低于 ATM 第 3 档
+    k2: OptionStrikeData | None = None # 低于 ATM 第 2 档
+    k3: OptionStrikeData | None = None # 低于 ATM 第 1 档
+    k4: OptionStrikeData | None = None # 高于 ATM 第 1 档
+    k5: OptionStrikeData | None = None # 高于 ATM 第 2 档
+    k6: OptionStrikeData | None = None # 高于 ATM 第 3 档
 

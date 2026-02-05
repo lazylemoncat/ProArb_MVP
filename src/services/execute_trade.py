@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from ..fetch_data.deribit.deribit_client import DeribitMarketContext
+from ..fetch_data.deribit.deribit_client import DeribitMarketContext, DeribitClient
 from ..fetch_data.polymarket.polymarket_client import PolymarketContext
 from ..telegram.TG_bot import TG_bot
 from ..trading.deribit_trade import DeribitUserCfg
@@ -9,6 +9,7 @@ from ..trading.deribit_trade_client import Deribit_trade_client
 from ..trading.polymarket_trade_client import Polymarket_trade_client
 from ..core.config import Env_config
 from ..core.save.save_position import save_position
+from ..kill_switch import KillSwitchStateManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,12 @@ async def execute_trade(
     # 参数验证
     if not trade_signal:
         return False
-    
+
+    # Kill Switch 检查（双重保险）
+    if not KillSwitchStateManager.can_trade():
+        logger.warning("Kill Switch 激活，拒绝执行交易")
+        return False
+
     if inv_usd <= 0:
         assert False
     
@@ -122,12 +128,48 @@ async def execute_trade(
     contract_amount = round(contract_amount, 1)
     await trading_bot.publish(f"{poly_ctx.market_id} 正在进行交易")
     pm_order_id = ""
+    db_order_id = ""
+    # Deribit 账户和保证金数据
+    dr_btc_balance_before = 0.0
+    dr_btc_balance_after = 0.0
+    dr_k1_margin = 0.0
+    dr_k2_margin = 0.0
+    dr_total_margin = 0.0
     if not dry_run:
         deribit_cfg = DeribitUserCfg(
             user_id=env_config.DERIBIT_USER_ID,
             client_id=env_config.DERIBIT_CLIENT_ID,
             client_secret=str(env_config.DERIBIT_CLIENT_SECRET),
         )
+        # 交易前获取账户余额和保证金
+        try:
+            dr_btc_balance_before = DeribitClient.get_btc_balance(deribit_cfg) or 0.0
+            logger.info(f"交易前 BTC 余额: {dr_btc_balance_before}")
+        except Exception as e:
+            logger.warning(f"获取交易前余额失败: {e}")
+
+        # 获取本次交易的保证金要求
+        try:
+            # 根据策略选择价格
+            k1_price = deribit_ctx.k1_ask_btc if strategy_choosed == 2 else deribit_ctx.k1_bid_btc
+            k2_price = deribit_ctx.k2_bid_btc if strategy_choosed == 2 else deribit_ctx.k2_ask_btc
+            margins = DeribitClient.get_vertical_spread_margins(
+                cfg=deribit_cfg,
+                inst_k1=deribit_ctx.inst_k1,
+                inst_k2=deribit_ctx.inst_k2,
+                amount=contract_amount,
+                k1_price=k1_price,
+                k2_price=k2_price,
+                strategy=strategy_choosed,
+            )
+            if margins:
+                dr_k1_margin = margins["k1_margin"]
+                dr_k2_margin = margins["k2_margin"]
+                dr_total_margin = margins["total_margin"]
+                logger.info(f"保证金: K1={dr_k1_margin}, K2={dr_k2_margin}, 总计={dr_total_margin}")
+        except Exception as e:
+            logger.warning(f"获取保证金失败: {e}")
+
         try:
             logger.info(f"limit_price: {limit_price}")
             pm_resp, pm_order_id = Polymarket_trade_client.place_buy_by_investment(
@@ -145,6 +187,15 @@ async def execute_trade(
                 strategy=strategy_choosed,
             )
             logger.warning(f"db 交易: {sps}, {db_order_ids}, {executed_contracts}")
+            # 将 Deribit 订单 ID 列表转为逗号分隔字符串
+            db_order_id = ",".join(str(oid) for oid in db_order_ids if oid)
+            logger.info(f"Deribit order IDs saved: db_order_id={db_order_id}")
+            # 交易后获取账户余额
+            try:
+                dr_btc_balance_after = DeribitClient.get_btc_balance(deribit_cfg) or 0.0
+                logger.info(f"交易后 BTC 余额: {dr_btc_balance_after}")
+            except Exception as e:
+                logger.warning(f"获取交易后余额失败: {e}")
         except Exception:
             logger.error(f"db 交易失败, market_id: {poly_ctx.market_id}")
             raise Exception
@@ -155,6 +206,8 @@ async def execute_trade(
         db_ctx=deribit_ctx,
         trade_id=str(pm_order_id),
         signal_id=signal_id,
+        pm_order_id=str(pm_order_id),
+        db_order_id=db_order_id,
         direction="no",
         status="open",
         strategy=strategy_choosed,
@@ -167,7 +220,13 @@ async def execute_trade(
         gross_ev=gross_ev,
         net_ev=net_ev,
         roi_pct=roi_pct,
-        im_value_usd=im_value_usd
+        im_value_usd=im_value_usd,
+        # Deribit 账户和保证金数据
+        dr_btc_balance_before=dr_btc_balance_before,
+        dr_btc_balance_after=dr_btc_balance_after,
+        dr_k1_margin=dr_k1_margin,
+        dr_k2_margin=dr_k2_margin,
+        dr_total_margin=dr_total_margin,
     )
     # 通知
     try:

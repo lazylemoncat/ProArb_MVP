@@ -119,6 +119,8 @@ def _calculate_position_pnl(row: dict, current_spot: Optional[float], price_cach
     """
     signal_id = row.get("signal_id") or ""
     trade_id = row.get("trade_id") or ""
+    pm_order_id = row.get("pm_order_id") or ""
+    db_order_id = row.get("db_order_id") or ""
     timestamp = row.get("entry_timestamp") or ""
     market_title = row.get("market_title") or ""
     market_id = row.get("market_id") or ""
@@ -341,6 +343,8 @@ def _calculate_position_pnl(row: dict, current_spot: Optional[float], price_cach
 
     return PnlPositionDetail(
         signal_id=signal_id,
+        pm_order_id=pm_order_id or None,
+        db_order_id=db_order_id or None,
         timestamp=timestamp,
         market_title=market_title,
         funding_usd=funding_usd,
@@ -579,145 +583,3 @@ def get_pnl_summary(
         diff_usd=diff_usd,
         positions=position_details
     )
-
-
-# ==================== 发送 PnL CSV 端点 ====================
-
-class SendPnlResponse(BaseModel):
-    """发送 PnL CSV 响应"""
-    success: bool
-    message: str
-    file_path: Optional[str] = None
-
-
-@pnl_router.post("/api/pnl/send", response_model=SendPnlResponse)
-async def send_pnl_csv():
-    """
-    立即生成并发送 PnL CSV 到 Telegram。
-
-    Returns:
-        发送结果
-    """
-    import csv
-    from datetime import datetime, timezone
-    from pathlib import Path
-
-    from ..core.config import load_all_configs
-    from ..telegram.TG_bot import TG_bot
-
-    try:
-        # 获取当前 PnL 数据
-        pnl_response = get_pnl_summary()
-
-        if not pnl_response.positions:
-            return SendPnlResponse(
-                success=False,
-                message="没有可用的 position 数据"
-            )
-
-        # 生成 CSV 文件
-        now = datetime.now(timezone.utc)
-        date_str = now.strftime("%Y-%m-%d")
-        time_str = now.strftime("%H%M%S")
-
-        output_dir = Path("./data")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"pnl_{date_str}_{time_str}.csv"
-
-        # CSV 列名
-        csv_columns = [
-            "signal_id", "timestamp", "market_title",
-            "funding_usd", "cost_basis_usd", "total_unrealized_pnl_usd", "im_value_usd",
-            "shadow_pnl_usd", "real_pnl_usd",
-            "pm_pnl_usd", "dr_pnl_usd", "fee_dr_usd", "currency_pnl_usd",
-            "diff_usd", "residual_error_usd",
-            "ev_usd", "total_pnl_usd",
-            "leg1_instrument", "leg1_qty", "leg1_entry_price", "leg1_current_price", "leg1_pnl",
-            "leg2_instrument", "leg2_qty", "leg2_entry_price", "leg2_current_price", "leg2_pnl",
-        ]
-
-        # 写入 CSV
-        with open(output_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=csv_columns, extrasaction="ignore")
-            writer.writeheader()
-
-            for position in pnl_response.positions:
-                row = {
-                    "signal_id": position.signal_id,
-                    "timestamp": position.timestamp,
-                    "market_title": position.market_title,
-                    "funding_usd": position.funding_usd,
-                    "cost_basis_usd": position.cost_basis_usd,
-                    "total_unrealized_pnl_usd": position.total_unrealized_pnl_usd,
-                    "im_value_usd": position.im_value_usd,
-                    "shadow_pnl_usd": position.shadow_view.pnl_usd,
-                    "real_pnl_usd": position.real_view.pnl_usd,
-                    "pm_pnl_usd": position.pm_pnl_usd,
-                    "dr_pnl_usd": position.dr_pnl_usd,
-                    "fee_dr_usd": position.fee_dr_usd,
-                    "currency_pnl_usd": position.currency_pnl_usd,
-                    "diff_usd": position.diff_usd,
-                    "residual_error_usd": position.residual_error_usd,
-                    "ev_usd": position.ev_usd,
-                    "total_pnl_usd": position.total_pnl_usd,
-                }
-
-                # 展开 legs
-                legs = position.shadow_view.legs
-                if len(legs) >= 1:
-                    row["leg1_instrument"] = legs[0].instrument
-                    row["leg1_qty"] = legs[0].qty
-                    row["leg1_entry_price"] = legs[0].entry_price
-                    row["leg1_current_price"] = legs[0].current_price
-                    row["leg1_pnl"] = legs[0].pnl
-                if len(legs) >= 2:
-                    row["leg2_instrument"] = legs[1].instrument
-                    row["leg2_qty"] = legs[1].qty
-                    row["leg2_entry_price"] = legs[1].entry_price
-                    row["leg2_current_price"] = legs[1].current_price
-                    row["leg2_pnl"] = legs[1].pnl
-
-                writer.writerow(row)
-
-        # 初始化 Telegram bot 并发送
-        env, _, _ = load_all_configs()
-        bot = TG_bot(
-            name="pnl_send",
-            token=env.TELEGRAM_BOT_TOKEN_TRADING,
-            chat_id=env.TELEGRAM_CHAT_ID
-        )
-
-        # 生成摘要
-        caption = f"📊 PnL Report: {date_str} {time_str}\n"
-        caption += f"Positions: {pnl_response.total_positions}\n"
-        caption += f"Shadow PnL: ${pnl_response.shadow_view.pnl_usd:.2f}\n"
-        caption += f"Real PnL: ${pnl_response.real_view.pnl_usd:.2f}\n"
-        caption += f"Cost Basis: ${pnl_response.total_cost_basis_usd:.2f}\n"
-        caption += f"Total EV: ${pnl_response.total_ev_usd:.2f}"
-
-        success, msg_id = await bot.send_document(
-            file_path=str(output_path),
-            caption=caption
-        )
-
-        if success:
-            logger.info(f"Sent PnL CSV via API: {output_path}, message_id: {msg_id}")
-            return SendPnlResponse(
-                success=True,
-                message=f"已发送 PnL CSV 到 Telegram (message_id: {msg_id})",
-                file_path=str(output_path)
-            )
-        else:
-            logger.error(f"Failed to send PnL CSV: {output_path}")
-            return SendPnlResponse(
-                success=False,
-                message="发送 Telegram 失败",
-                file_path=str(output_path)
-            )
-
-    except Exception as e:
-        logger.error(f"Error sending PnL CSV: {e}", exc_info=True)
-        return SendPnlResponse(
-            success=False,
-            message=f"发送失败: {str(e)}"
-        )

@@ -4,5 +4,13 @@
 """
 
 from .load_all_configs import load_all_configs, Env_config, Config, Trading_config
+from .load_kill_switch_config import load_kill_switch_config, KillSwitchConfig
 
-__all__ = ["load_all_configs", "Env_config", "Config", "Trading_config"]
+__all__ = [
+    "load_all_configs",
+    "Env_config",
+    "Config",
+    "Trading_config",
+    "load_kill_switch_config",
+    "KillSwitchConfig",
+]

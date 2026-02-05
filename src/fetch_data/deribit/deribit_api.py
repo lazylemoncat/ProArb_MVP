@@ -352,3 +352,139 @@ class DeribitAPI:
             "last_price": float(result.get("last_price", 0.0)),
             "timestamp": int(result.get("timestamp", 0)),
         }
+
+    @staticmethod
+    def get_account_summary(
+        cfg: DeribitUserCfg,
+        currency: Literal["BTC", "ETH"] = "BTC",
+    ) -> dict[str, Any]:
+        """
+        获取 Deribit 账户摘要信息，包括余额
+
+        参数：
+            cfg: Deribit 用户配置（包含认证信息）
+            currency: 货币类型 "BTC" 或 "ETH"
+
+        返回：
+            {
+                "balance": float,            # 账户余额 (BTC/ETH)
+                "equity": float,             # 账户权益
+                "available_funds": float,    # 可用资金
+                "initial_margin": float,     # 初始保证金
+                "maintenance_margin": float, # 维持保证金
+            }
+
+        异常：
+            requests.HTTPError: API 请求失败
+        """
+        # 1. 先获取 access_token
+        auth_url = f"{BASE_URL}/public/auth"
+        auth_params = {
+            "client_id": cfg.client_id,
+            "client_secret": cfg.client_secret,
+            "grant_type": "client_credentials",
+        }
+        auth_resp = REQUESTS_SESSION.get(auth_url, params=auth_params, timeout=HTTP_TIMEOUT)
+        auth_resp.raise_for_status()
+        auth_data = auth_resp.json()
+        access_token = auth_data.get("result", {}).get("access_token")
+
+        if not access_token:
+            raise ValueError("Failed to get access token from Deribit")
+
+        # 2. 使用 access_token 获取账户摘要
+        url = f"{BASE_URL}/private/get_account_summary"
+        headers = {"Authorization": f"Bearer {access_token}"}
+        params = {"currency": currency}
+        resp = REQUESTS_SESSION.get(url, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+        resp.raise_for_status()
+
+        data = resp.json()
+        result = data.get("result", {})
+
+        return {
+            "balance": float(result.get("balance", 0.0)),
+            "equity": float(result.get("equity", 0.0)),
+            "available_funds": float(result.get("available_funds", 0.0)),
+            "initial_margin": float(result.get("initial_margin", 0.0)),
+            "maintenance_margin": float(result.get("maintenance_margin", 0.0)),
+        }
+
+    @staticmethod
+    def get_order_margins(
+        cfg: DeribitUserCfg,
+        instrument_name: str,
+        amount: float,
+        price: float,
+    ) -> dict[str, Any] | None:
+        """
+        获取单笔订单的保证金要求
+
+        调用 Deribit private/get_margins API，在下单前估算保证金需求。
+
+        参数：
+            cfg: Deribit 用户配置（包含认证信息）
+            instrument_name: 合约名称，如 "BTC-28FEB25-100000-C"
+            amount: 订单数量（期权以 BTC 计）
+            price: 价格
+
+        返回：
+            {
+                "buy": float,       # 买入时的保证金
+                "sell": float,      # 卖出时的保证金
+                "min_price": float, # 最低价格限制
+                "max_price": float, # 最高价格限制
+            }
+            失败返回 None
+
+        异常：
+            不抛出异常，失败时返回 None 并记录日志
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            # 1. 获取 access_token
+            auth_url = f"{BASE_URL}/public/auth"
+            auth_params = {
+                "client_id": cfg.client_id,
+                "client_secret": cfg.client_secret,
+                "grant_type": "client_credentials",
+            }
+            auth_resp = REQUESTS_SESSION.get(auth_url, params=auth_params, timeout=HTTP_TIMEOUT)
+            auth_resp.raise_for_status()
+            auth_data = auth_resp.json()
+            access_token = auth_data.get("result", {}).get("access_token")
+
+            if not access_token:
+                logger.warning("get_order_margins: 无法获取 access_token")
+                return None
+
+            # 2. 调用 private/get_margins
+            url = f"{BASE_URL}/private/get_margins"
+            headers = {"Authorization": f"Bearer {access_token}"}
+            params = {
+                "instrument_name": instrument_name,
+                "amount": amount,
+                "price": price,
+            }
+            resp = REQUESTS_SESSION.get(url, headers=headers, params=params, timeout=HTTP_TIMEOUT)
+            resp.raise_for_status()
+
+            data = resp.json()
+            result = data.get("result", {})
+
+            if not result:
+                logger.warning(f"get_order_margins: 空响应 - {instrument_name}")
+                return None
+
+            return {
+                "buy": float(result.get("buy", 0.0)),
+                "sell": float(result.get("sell", 0.0)),
+                "min_price": float(result.get("min_price", 0.0)),
+                "max_price": float(result.get("max_price", 0.0)),
+            }
+
+        except Exception as e:
+            logger.warning(f"get_order_margins 失败: {instrument_name}, {e}")
+            return None

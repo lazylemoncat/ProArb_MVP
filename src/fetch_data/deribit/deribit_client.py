@@ -219,6 +219,8 @@ class DeribitClient:
             spot = DeribitAPI.get_spot_price(spot_symbol)
             deribit_list = DeribitClient.get_deribit_option_data()
             spot_lower, spot_upper, nearest = nearest_two_by_step(spot, step=1000)
+            # 获取 k_poly 附近的两个行权价，用于计算 k_poly 处的 IV
+            k_poly_lower, k_poly_upper, k_poly_nearest = nearest_two_by_step(k_poly, step=1000)
             inst_k1, k1_exp = DeribitClient.find_option_instrument(
                 k1_strike,
                 call=True,
@@ -249,7 +251,24 @@ class DeribitClient:
             )
             spot_lower_info = next((d for d in deribit_list if d.instrument_name == inst_lower), None)
             spot_upper_info = next((d for d in deribit_list if d.instrument_name == inst_upper), None)
-            if k1_info is None or k2_info is None or spot_lower_info is None or spot_upper_info is None:
+
+            # 获取 k_poly 附近行权价的期权信息
+            inst_k_poly_lower, _ = DeribitClient.find_option_instrument(
+                k_poly_lower,
+                call=True,
+                currency=asset,
+                exp_timestamp=expiry_timestamp,
+            )
+            inst_k_poly_upper, _ = DeribitClient.find_option_instrument(
+                k_poly_upper,
+                call=True,
+                currency=asset,
+                exp_timestamp=expiry_timestamp,
+            )
+            k_poly_lower_info = next((d for d in deribit_list if d.instrument_name == inst_k_poly_lower), None)
+            k_poly_upper_info = next((d for d in deribit_list if d.instrument_name == inst_k_poly_upper), None)
+
+            if k1_info is None or k2_info is None or spot_lower_info is None or spot_upper_info is None or k_poly_lower_info is None or k_poly_upper_info is None:
                 raise EmptyDeribitOptionException(inst_k1, inst_k2)
 
             k1_bid_btc = float(k1_info.bid_price)
@@ -271,20 +290,31 @@ class DeribitClient:
             k2_iv = float(k2_info.mark_iv)
             spot_iv_lower = float(spot_lower_info.mark_iv)
             spot_iv_upper = float(spot_upper_info.mark_iv)
+            # k_poly 附近行权价的 IV
+            k_poly_iv_lower = float(k_poly_lower_info.mark_iv)
+            k_poly_iv_upper = float(k_poly_upper_info.mark_iv)
             k1_fee_approx = float(k1_info.fee)
             k2_fee_approx = float(k2_info.fee)
 
-            def _choose_mark_iv(
-                    spot_lower: float, 
-                    spot_iv_lower: float, 
-                    spot_upper: float, 
-                    spot_iv_upper: float, 
-                    nearest: float
+            def _interpolate_iv(
+                    strike_lower: float,
+                    iv_lower: float,
+                    strike_upper: float,
+                    iv_upper: float,
+                    target_strike: float
             ) -> float:
-                """选择最靠近 spot 的 mark_iv"""
-                return spot_iv_lower if nearest == spot_lower else spot_iv_upper
+                """线性插值计算目标行权价处的 IV"""
+                # 如果 target 正好等于某个行权价，直接返回
+                if target_strike == strike_lower:
+                    return iv_lower
+                if target_strike == strike_upper:
+                    return iv_upper
+                # 线性插值
+                ratio = (target_strike - strike_lower) / (strike_upper - strike_lower)
+                return iv_lower + ratio * (iv_upper - iv_lower)
 
-            mark_iv = _choose_mark_iv(spot_lower, spot_iv_lower, spot_upper, spot_iv_upper, nearest)
+            # mark_iv 现在是 k_poly 处的 IV（通过线性插值计算）
+            mark_iv = _interpolate_iv(k_poly_lower, k_poly_iv_lower, k_poly_upper, k_poly_iv_upper, k_poly)
 
             inst_k1, k1_exp = DeribitClient.find_option_instrument(
                 k1_strike,
@@ -449,3 +479,84 @@ class DeribitClient:
     @staticmethod
     def get_spot_price(index_name: Literal["btc_usd", "eth_usd"] = "btc_usd"):
         return DeribitAPI.get_spot_price(index_name)
+
+    @staticmethod
+    def get_btc_balance(cfg: DeribitUserCfg) -> float | None:
+        """
+        获取账户 BTC 余额
+
+        参数：
+            cfg: Deribit 用户配置
+
+        返回：
+            BTC 余额，失败返回 None
+        """
+        try:
+            summary = DeribitAPI.get_account_summary(cfg, currency="BTC")
+            return summary.get("balance")
+        except Exception as e:
+            logger.warning(f"获取 BTC 余额失败: {e}")
+            return None
+
+    @staticmethod
+    def get_vertical_spread_margins(
+        cfg: DeribitUserCfg,
+        inst_k1: str,
+        inst_k2: str,
+        amount: float,
+        k1_price: float,
+        k2_price: float,
+        strategy: int,
+    ) -> dict[str, float] | None:
+        """
+        获取垂直价差的保证金要求（K1 + K2 两腿）
+
+        参数：
+            cfg: Deribit 用户配置
+            inst_k1: K1 合约名称
+            inst_k2: K2 合约名称
+            amount: 订单数量（BTC）
+            k1_price: K1 价格
+            k2_price: K2 价格
+            strategy: 策略类型 (1=Short Bull Call, 2=Long Bull Call)
+
+        返回：
+            {
+                "k1_margin": float,    # K1 腿保证金
+                "k2_margin": float,    # K2 腿保证金
+                "total_margin": float, # 总保证金
+            }
+            失败返回 None
+        """
+        try:
+            # 获取 K1 腿保证金
+            k1_margins = DeribitAPI.get_order_margins(cfg, inst_k1, amount, k1_price)
+            if k1_margins is None:
+                logger.warning(f"获取 K1 保证金失败: {inst_k1}")
+                return None
+
+            # 获取 K2 腿保证金
+            k2_margins = DeribitAPI.get_order_margins(cfg, inst_k2, amount, k2_price)
+            if k2_margins is None:
+                logger.warning(f"获取 K2 保证金失败: {inst_k2}")
+                return None
+
+            # 根据策略确定使用 buy 还是 sell 保证金
+            # strategy=1: Short Bull Call - K1 卖出, K2 买入
+            # strategy=2: Long Bull Call - K1 买入, K2 卖出
+            if strategy == 1:
+                k1_margin = k1_margins["sell"]
+                k2_margin = k2_margins["buy"]
+            else:  # strategy == 2
+                k1_margin = k1_margins["buy"]
+                k2_margin = k2_margins["sell"]
+
+            return {
+                "k1_margin": k1_margin,
+                "k2_margin": k2_margin,
+                "total_margin": k1_margin + k2_margin,
+            }
+
+        except Exception as e:
+            logger.warning(f"获取垂直价差保证金失败: {e}")
+            return None

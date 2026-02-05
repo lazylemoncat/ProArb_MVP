@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport
 
 from ..monitors.daily_csv_monitor import run_daily_csv_monitor
+from ..monitors.kill_switch_monitor import run_kill_switch_monitor
 from ..monitors.pnl_monitor import run_pnl_monitor
 from ..telegram.TG_bot import TG_bot
 from ..core.config import load_all_configs
@@ -47,8 +48,12 @@ async def lifespan(app: FastAPI):
     health_task = asyncio.create_task(hourly_health_job(app))
     pnl_task = asyncio.create_task(run_pnl_monitor())
     daily_csv_task = asyncio.create_task(run_daily_csv_monitor())
+    kill_switch_task = asyncio.create_task(run_kill_switch_monitor())
 
-    logging.info("Started lifespan background tasks: health_job, pnl_monitor, daily_csv_monitor")
+    logging.info(
+        "Started lifespan background tasks: "
+        "health_job, pnl_monitor, daily_csv_monitor, kill_switch_monitor"
+    )
 
     try:
         yield
@@ -57,6 +62,7 @@ async def lifespan(app: FastAPI):
         health_task.cancel()
         pnl_task.cancel()
         daily_csv_task.cancel()
+        kill_switch_task.cancel()
 
         with suppress(asyncio.CancelledError):
             await health_task
@@ -64,5 +70,7 @@ async def lifespan(app: FastAPI):
             await pnl_task
         with suppress(asyncio.CancelledError):
             await daily_csv_task
+        with suppress(asyncio.CancelledError):
+            await kill_switch_task
 
         logging.info("Stopped lifespan background tasks")

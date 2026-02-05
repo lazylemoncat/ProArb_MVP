@@ -1,0 +1,20 @@
+# Kill Switch 紧急停止控制配置
+
+# 功能开关
+enabled: true
+
+# bcrypt 加密的密码哈希
+# 生成方法: python -c "import bcrypt; print(bcrypt.hashpw(b'你的密码', bcrypt.gensalt()).decode())"
+password_hash: ""
+
+# 允许执行的 Telegram 用户 ID 列表（空列表允许所有人）
+allowed_user_ids: []
+
+# Telegram 轮询间隔（秒）
+poll_interval_seconds: 2
+
+# stop 操作确认超时（秒）
+confirm_timeout_seconds: 60
+
+# 日志文件路径
+log_file: "data/kill_switch.log"

@@ -686,8 +686,9 @@ class SqliteHandler:
 
         # Determine output path
         if output_path is None:
-            fd, output_path = tempfile.mkstemp(suffix='.csv', prefix=f'{date_str}_raw_')
-            os.close(fd)
+            # 使用固定文件名格式，避免 tempfile 添加随机后缀
+            temp_dir = tempfile.gettempdir()
+            output_path = os.path.join(temp_dir, f'{date_str}_raw.csv')
 
         # Export to CSV (exclude internal columns)
         export_cols = [col for col in df.columns if col not in ('id', 'created_at')]
